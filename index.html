@@ -1221,13 +1221,19 @@ function getTotalsForMonth(mes,ano){
   });
 
   const emCaixaLiquido     = emCaixaEntradas - emCaixaSaidas;
-  // Pior cenário: só o que já entrou no caixa, mas paga tudo previsto
-  const saldoPiorCenario   = emCaixaEntradas - totalDespPrevisao;
-  // Melhor cenário: recebe tudo previsto e paga tudo previsto
-  const saldoMelhorCenario = previstoEntradas - totalDespPrevisao;
-  const saldoProjetado     = saldoMelhorCenario; // compat
+
   const totalRecPrevisto   = recsPrevistas.reduce((s,r)=>s+valorReceita(r),0);
   const repassesPendentes  = getRepassesPendentesTotal(mes,ano);
+
+  // Pior cenário: só o que JÁ entrou − tudo que tem pra pagar
+  // (não recebe nenhum pendente: nem repasses, nem parcelas de projetos)
+  const saldoPiorCenario   = emCaixaEntradas - totalDespPrevisao;
+
+  // Melhor cenário: o que já entrou + tudo pendente a receber − tudo que tem pra pagar
+  // (recebe 100% dos repasses + parcelas pendentes de projetos extras)
+  const saldoMelhorCenario = emCaixaEntradas + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
+
+  const saldoProjetado     = saldoMelhorCenario; // compat
   const excedentAcum       = calcExcedenteAcumulado(mes,ano);
 
   const byCat={};
@@ -1318,7 +1324,7 @@ function renderDashboard(){
       <div class="kpi" style="border-top:2px solid var(--accent2)" title="Recebe tudo pendente, paga tudo">
         <div class="kpi-label" style="color:var(--accent2)">📈 Melhor Cenário</div>
         <div class="kpi-value ${saldoMelhorCenario>=0?'green':'red'}">${fmtBRL(saldoMelhorCenario)}</div>
-        <div class="kpi-sub">Previsto entradas − previsto saídas</div>
+        <div class="kpi-sub">${(totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente'}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
