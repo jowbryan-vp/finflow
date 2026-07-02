@@ -1288,7 +1288,8 @@ function toggleFaturaPaga(cardId){
 function renderDashboard(){
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
-        saldoProjetado,emCaixaLiquido,totalRecPrevisto,repassesPendentes,
+        saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
+        emCaixaLiquido,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida}=t;
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
