@@ -1393,7 +1393,7 @@ function renderDashboard(){
       <div class="kpi" style="cursor:pointer;border-top:2px solid var(--accent)" onclick="navigateReceitasFiltro('recebidas')" title="Saldo efetivo atual incluindo meses anteriores">
         <div class="kpi-label" style="color:var(--accent)">🏦 Em Caixa Agora</div>
         <div class="kpi-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
-        <div class="kpi-sub">Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}</div>
+        <div class="kpi-sub">Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?' · Anterior: +'+fmtBRL(excedentAcum):''}</div>
       </div>
     </div>`;
 
@@ -1421,12 +1421,10 @@ function renderDashboard(){
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
           <div class="kpi-label">Contribuição</div>
           <div class="kpi-value" style="font-size:18px">${fmtBRL(contrib)}</div>
-          ${contribuicaoAjustada?`<div style="font-size:10px;color:var(--warn)">Ajustado (base: ${fmtBRL(contribuicaoBase)})</div>`:`<div style="font-size:10px;color:var(--muted)">10% automático</div>`}
+          ${contribuicaoAjustada?'<div style="font-size:10px;color:var(--warn)">Ajustado (base: '+fmtBRL(contribuicaoBase)+')</div>':'<div style="font-size:10px;color:var(--muted)">10% automático</div>'}
           ${isContribuicaoPaga(currentMonth,currentYear)
-            ?`<span class="badge badge-ok" style="margin-top:6px;display:inline-flex">✓ Paga</span>
-              <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="toggleContribuicaoPaga()">Desmarcar</button>`
-            :`<span class="badge badge-yellow" style="margin-top:6px;display:inline-flex">⏳ Pendente</span>
-              <button class="btn btn-ok btn-sm" style="margin-top:6px;width:100%" onclick="toggleContribuicaoPaga()">✓ Marcar como paga</button>`}
+            ?'<span class="badge badge-ok" style="margin-top:6px;display:inline-flex">✓ Paga</span><button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="toggleContribuicaoPaga()">Desmarcar</button>'
+            :'<span class="badge badge-yellow" style="margin-top:6px;display:inline-flex">⏳ Pendente</span><button class="btn btn-ok btn-sm" style="margin-top:6px;width:100%" onclick="toggleContribuicaoPaga()">✓ Marcar como paga</button>'}
           <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="openAjusteContribuicao(${currentMonth},${currentYear})">✎ Ajustar valor</button>
         </div>
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
