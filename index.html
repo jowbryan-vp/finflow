@@ -1174,12 +1174,15 @@ function getReceitasForMonth(mes,ano){
 }
 
 // Salário é automaticamente recebido; outros tipos precisam de check
-function isAutoRecebido(r){ return r.tipo==='salario'; }
+function isAutoRecebido(r){ return false; } // nenhuma receita é auto-recebida
 
-// True se esta receita (não parcela) foi marcada como recebida neste mês
+// True se esta receita foi marcada como recebida neste mês
 function receitaRecebida(r,mes,ano){
-  if(isAutoRecebido(r)) return true;
   if(r._isParcela) return r._parcelaRecebida;
+  // Meses passados: salário recorrente considerado recebido automaticamente
+  // (evita ter que marcar retroativamente o histórico todo)
+  const isPast = ano<currentYear||(ano===currentYear&&mes<currentMonth);
+  if(isPast && r.tipo==='salario' && r.recorrente) return true;
   return !!(r.recebidaMeses&&r.recebidaMeses[mesKey(mes,ano)]);
 }
 
@@ -1275,16 +1278,18 @@ function getTotalsForMonth(mes,ano){
   const totalRecPrevisto   = recsPrevistas.reduce((s,r)=>s+valorReceita(r),0);
   const repassesPendentes  = getRepassesPendentesTotal(mes,ano);
 
-  // Pior cenário: só o que JÁ entrou − tudo que tem pra pagar
-  // (não recebe nenhum pendente: nem repasses, nem parcelas de projetos)
-  const saldoPiorCenario   = emCaixaEntradas - totalDespPrevisao;
+  const excedentAcum       = calcExcedenteAcumulado(mes,ano);
 
-  // Melhor cenário: o que já entrou + tudo pendente a receber − tudo que tem pra pagar
-  // (recebe 100% dos repasses + parcelas pendentes de projetos extras)
-  const saldoMelhorCenario = emCaixaEntradas + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
+  // Em caixa disponível = saldo do mês + excedente acumulado de meses anteriores
+  const emCaixaDisponivel  = emCaixaLiquido + excedentAcum;
+
+  // Pior cenário: só o que JÁ entrou (+ acumulado anterior) − tudo que tem pra pagar
+  const saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
+
+  // Melhor cenário: o que já entrou + acumulado + pendentes a receber − tudo previsto
+  const saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
 
   const saldoProjetado     = saldoMelhorCenario; // compat
-  const excedentAcum       = calcExcedenteAcumulado(mes,ano);
 
   const byCat={};
   desps.forEach(d=>{ if(!byCat[d.cat])byCat[d.cat]=0; byCat[d.cat]+=(d._valorParcela||0); });
@@ -1296,8 +1301,8 @@ function getTotalsForMonth(mes,ano){
   return{
     previstoEntradas, emCaixaEntradas, totalDespPrevisao, emCaixaSaidas,
     saldoProjetado, saldoPiorCenario, saldoMelhorCenario,
-    emCaixaLiquido, totalRecPrevisto, repassesPendentes,
-    excedentAcum, saldoDisponivel:emCaixaLiquido+excedentAcum,
+    emCaixaLiquido, emCaixaDisponivel, totalRecPrevisto, repassesPendentes,
+    excedentAcum, saldoDisponivel:emCaixaDisponivel,
     byCard, byCat, recs:recsEfetivas, desps, contrib, cofrinhoSaida,
     totalRec, totalDespEfetivo, saldo
   };
@@ -1345,7 +1350,7 @@ function renderDashboard(){
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
-        emCaixaLiquido,totalRecPrevisto,repassesPendentes,
+        emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida}=t;
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
@@ -1388,16 +1393,28 @@ function renderDashboard(){
         <div class="kpi-value red">${fmtBRL(emCaixaSaidas)}</div>
         <div class="kpi-sub">Faturas + despesas já pagas</div>
       </div>
-      <div class="kpi" style="cursor:pointer;border-top:2px solid var(--accent)" onclick="navigateReceitasFiltro('recebidas')" title="Saldo efetivo atual">
+      <div class="kpi" style="cursor:pointer;border-top:2px solid var(--accent)" onclick="navigateReceitasFiltro('recebidas')" title="Saldo efetivo atual incluindo meses anteriores">
         <div class="kpi-label" style="color:var(--accent)">🏦 Em Caixa Agora</div>
-        <div class="kpi-value ${emCaixaLiquido>=0?'blue':'red'}">${fmtBRL(emCaixaLiquido)}</div>
-        <div class="kpi-sub">Entrou: ${fmtBRL(emCaixaEntradas)} · Saiu: ${fmtBRL(emCaixaSaidas)}</div>
+        <div class="kpi-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
+        <div class="kpi-sub">Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}</div>
       </div>
     </div>`;
 
-  // ── Destinação do saldo ──
+  // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
+  const saldoAnteriorBanner = excedentAcum>0 ? `
+    <div style="background:rgba(56,226,180,.07);border:1px solid rgba(56,226,180,.25);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
+      <div style="font-size:22px">💼</div>
+      <div style="flex:1">
+        <div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--accent2);margin-bottom:3px">Saldo Anterior disponível</div>
+        <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:var(--accent2)">${fmtBRL(excedentAcum)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Acumulado de meses anteriores · Não é receita · Já incluído em "Em Caixa Agora" e nos cenários</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="openDetalheExcedente()">Ver detalhe</button>
+    </div>` : '';
+
   document.getElementById('dashExcedentePanel').innerHTML=`
+    ${saldoAnteriorBanner}
     <div class="card" style="margin-bottom:20px">
       <div class="card-header">
         <div class="card-title">Destinação — ${MONTHS[currentMonth-1]} ${currentYear}</div>
@@ -1417,9 +1434,9 @@ function renderDashboard(){
           <button class="btn btn-primary btn-sm" style="margin-top:8px;width:100%" onclick="openDepositarCofrinho()">+ Depositar</button>
         </div>
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
-          <div class="kpi-label">Caixa acumulado</div>
+          <div class="kpi-label">Guardar em Caixa</div>
           <div class="kpi-value" style="font-size:18px">${fmtBRL(excedenteMes)}</div>
-          <div style="font-size:10px;color:var(--muted)">Acum. anterior: ${fmtBRL(excedentAcum)}</div>
+          <div style="font-size:10px;color:var(--muted)">Total acumulado: ${fmtBRL(excedentAcum+excedenteMes)}</div>
           <button class="btn btn-success btn-sm" style="margin-top:8px;width:100%" onclick="openExcedenteCaixa()">+ Guardar</button>
         </div>
       </div>
@@ -1702,7 +1719,6 @@ function renderReceitas(){
   html+='<div class="item-list">';
   recsFiltradas.forEach(r=>{
     const recebida=receitaRecebida(r,currentMonth,currentYear);
-    const autoRec=isAutoRecebido(r);
 
     if(r._isParcela){
       const statusBtn=r._parcelaRecebida
@@ -1718,16 +1734,14 @@ function renderReceitas(){
         <button class="btn btn-danger btn-icon btn-sm" onclick="delReceita('${r.id}')">✕</button>
       </div>`;
     } else {
-      // Check button: not shown for salário (auto), shown for all others
+      // Check button para TODAS as receitas (incluindo salário)
       let checkBtn='';
-      if(!autoRec){
-        checkBtn=recebida
-          ?`<button class="btn btn-ok btn-sm" onclick="toggleReceitaRecebida('${r.id}')">✓ Recebida</button>`
-          :`<button class="btn btn-warn btn-sm" onclick="toggleReceitaRecebida('${r.id}')">⏳ Prevista</button>`;
+      if(recebida){
+        checkBtn=`<button class="btn btn-ok btn-sm" onclick="toggleReceitaRecebida('${r.id}')">✓ Recebida</button>`;
       } else {
-        checkBtn='<span class="badge badge-green" style="white-space:nowrap">Auto ✓</span>';
+        checkBtn=`<button class="btn btn-warn btn-sm" onclick="toggleReceitaRecebida('${r.id}')">⏳ Prevista</button>`;
       }
-      html+=`<div class="item-row ${!autoRec?(recebida?'pago':'previsto'):''}">
+      html+=`<div class="item-row ${recebida?'pago':'previsto'}">
         <div class="item-row-info">
           <div class="item-row-name">${r.nome||tipos[r.tipo]||r.tipo}
             ${r.recorrente?'<span class="tag" style="margin-left:4px">Recorrente</span>':''}
@@ -3397,6 +3411,31 @@ function eseConverterParaReal(){
   toast(`${eseItens.length} compra${eseItens.length>1?'s':''} lançada${eseItens.length>1?'s':''} como despesa real!`);
   eseItens=[];
   navigate('despesas');
+}
+
+function openDetalheExcedente(){
+  const entradas=Object.entries(state.excedentes||{})
+    .filter(([k,v])=>{ const[y,m]=k.split('-').map(Number); return v>0&&(y<currentYear||(y===currentYear&&m<currentMonth)); })
+    .sort(([a],[b])=>a.localeCompare(b));
+  if(!entradas.length){toast('Nenhum saldo acumulado anterior');return;}
+  document.getElementById('modalTitle').textContent='Saldo Anterior — Detalhe';
+  let rows=entradas.map(([k,v])=>{
+    const[y,m]=k.split('-').map(Number);
+    return `<div class="item-row">
+      <div class="item-row-info"><div class="item-row-name">${MONTHS[m-1]} ${y}</div></div>
+      <div class="item-row-val pos">${fmtBRL(v)}</div>
+    </div>`;
+  }).join('');
+  const total=entradas.reduce((s,[,v])=>s+v,0);
+  document.getElementById('modalBody').innerHTML=`
+    <div class="item-list" style="margin-bottom:14px">${rows}</div>
+    <div style="display:flex;justify-content:space-between;padding:10px 14px;background:var(--input-bg);border-radius:var(--radius);font-weight:600">
+      <span>Total acumulado</span>
+      <span class="mono" style="color:var(--accent2)">${fmtBRL(total)}</span>
+    </div>
+    <div class="info-box" style="margin-top:12px">💡 Este valor já está incluído em "Em Caixa Agora" e nos cenários do dashboard. Não é receita — não entra na contribuição.</div>
+    <div style="margin-top:16px"><button class="btn btn-ghost" onclick="closeModal()">Fechar</button></div>`;
+  document.getElementById('modalOverlay').classList.add('open');
 }
 
 // ════════════════════════════════════════════════
