@@ -1361,7 +1361,7 @@ function renderDashboard(){
       <div class="kpi" style="cursor:pointer;border-top:2px solid var(--accent2)" onclick="navigateReceitasFiltro('previstas')" title="Clique para ver receitas pendentes">
         <div class="kpi-label" style="color:var(--accent2)">📋 Previsão de Entrada</div>
         <div class="kpi-value green">${fmtBRL(previstoEntradas)}</div>
-        <div class="kpi-sub">${pendentesCount>0?`${pendentesCount} pendente${pendentesCount>1?'s':''} · clique para ver`:'Tudo recebido ✓'}</div>
+        <div class="kpi-sub">${pendentesCount>0?(pendentesCount+' pendente'+(pendentesCount>1?'s':'')+' · clique para ver'):'Tudo recebido ✓'}</div>
       </div>
       <div class="kpi" style="cursor:pointer;border-top:2px solid var(--danger)" onclick="navigateDespesasFiltro('todas')" title="Clique para ver todas as despesas">
         <div class="kpi-label" style="color:var(--danger)">📋 Previsão de Saída</div>
@@ -1376,7 +1376,7 @@ function renderDashboard(){
       <div class="kpi" style="border-top:2px solid var(--accent2)" title="Recebe tudo pendente, paga tudo">
         <div class="kpi-label" style="color:var(--accent2)">📈 Melhor Cenário</div>
         <div class="kpi-value ${saldoMelhorCenario>=0?'green':'red'}">${fmtBRL(saldoMelhorCenario)}</div>
-        <div class="kpi-sub">${(totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente'}</div>
+        <div class="kpi-sub">${(totalRecPrevisto+repassesPendentes)>0?('+'+fmtBRL(totalRecPrevisto+repassesPendentes)+' pendentes a receber'):'Nenhum pendente'}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
@@ -1399,16 +1399,17 @@ function renderDashboard(){
 
   // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
-  const saldoAnteriorBanner = excedentAcum>0 ? `
-    <div style="background:rgba(56,226,180,.07);border:1px solid rgba(56,226,180,.25);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
-      <div style="font-size:22px">💼</div>
-      <div style="flex:1">
-        <div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--accent2);margin-bottom:3px">Saldo Anterior disponível</div>
-        <div style="font-family:var(--mono);font-size:20px;font-weight:600;color:var(--accent2)">${fmtBRL(excedentAcum)}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">Acumulado de meses anteriores · Não é receita · Já incluído em "Em Caixa Agora" e nos cenários</div>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="openDetalheExcedente()">Ver detalhe</button>
-    </div>` : '';
+  const saldoAnteriorBanner = excedentAcum>0
+    ? '<div style="background:rgba(56,226,180,.07);border:1px solid rgba(56,226,180,.25);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px">'
+      +'<div style="font-size:22px">💼</div>'
+      +'<div style="flex:1">'
+        +'<div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--accent2);margin-bottom:3px">Saldo Anterior disponível</div>'
+        +'<div style="font-family:var(--mono);font-size:20px;font-weight:600;color:var(--accent2)">'+fmtBRL(excedentAcum)+'</div>'
+        +'<div style="font-size:11px;color:var(--muted);margin-top:2px">Acumulado de meses anteriores · Não é receita · Já incluído em "Em Caixa Agora" e nos cenários</div>'
+      +'</div>'
+      +'<button class="btn btn-ghost btn-sm" onclick="openDetalheExcedente()">Ver detalhe</button>'
+      +'</div>'
+    : '';
 
   document.getElementById('dashExcedentePanel').innerHTML=`
     ${saldoAnteriorBanner}
@@ -1465,7 +1466,7 @@ function renderDashboard(){
       <div class="bill-name">${c.name} <span style="font-size:10px;color:var(--muted);font-weight:400">→ ver</span></div>
       ${statusBadge}
       <div class="bill-value" style="color:${isCC&&paga?'var(--ok)':isCC?'var(--danger)':'var(--text)'}">${fmtBRL(valor)}</div>
-      ${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}
+      ${c.fecha?('<div class="bill-sub">Fecha '+c.fecha+' · Paga '+(c.paga||'—')+'</div>'):''}
       ${btn}
     </div>`;
   });
@@ -1564,7 +1565,7 @@ function renderRelatorio(){
   </div>
   <h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Faturas por Cartão</h4>
   <div class="card-bills" style="margin-bottom:24px">`;
-  state.cards.forEach(c=>{html+=`<div class="bill-card" style="border-top-color:${c.color}"><div class="bill-name">${c.name}</div><div class="bill-value">${fmtBRL(byCard[c.id]||0)}</div>${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}</div>`;});
+  state.cards.forEach(c=>{html+=`<div class="bill-card" style="border-top-color:${c.color}"><div class="bill-name">${c.name}</div><div class="bill-value">${fmtBRL(byCard[c.id]||0)}</div>${c.fecha?('<div class="bill-sub">Fecha '+c.fecha+' · Paga '+(c.paga||'—')+'</div>'):''}</div>`;});
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
