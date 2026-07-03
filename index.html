@@ -1033,7 +1033,7 @@ const DEFAULT_CARDS = [
   {id:'dinheiro', name:'Dinheiro/PIX', color:'#38e2b4', fecha:null, paga:null},
 ];
 
-let state = { categories:[], cards:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{} };
+let state = { categories:[], cards:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
 let currentMonth = new Date().getMonth() + 1;
 let currentYear  = new Date().getFullYear();
 let chartDonut = null, chartBar = null;
@@ -1065,7 +1065,8 @@ function migrateState() {
   if (!state.movimentacoesCofrinhos) state.movimentacoesCofrinhos = [];
   if (!state.excedentes) state.excedentes = {}; // {mesKey: valor}
   if (!state.contribuicaoAjustes) state.contribuicaoAjustes = {}; // {mesKey: valorAjustado}
-  if (!state.faturasPagas) state.faturasPagas = {}; // {"cardId_mesKey": true}
+  if (!state.faturasPagas) state.faturasPagas = {};
+  if (!state.contribuicaoPaga) state.contribuicaoPaga = {}; // {mesKey: true}
   state.despesas.forEach(d=>{
     if(!d.pagoMeses) d.pagoMeses={};
     if(!d.split) d.split=[]; // [{personId, percent}]
@@ -1197,35 +1198,20 @@ function getReceitasPrevistasForMonth(mes,ano){
 // Valor de uma receita naquele mês
 function valorReceita(r){ return r._isParcela?(r._parcelaValor||0):(r.valor||0); }
 
+function getReceitasContribuiveisPrevisao(mes,ano){ return getReceitasForMonth(mes,ano).filter(r=>!r.isRepasse); }
 function getReceitasContribuiveis(mes,ano){ return getReceitasEfetivasForMonth(mes,ano).filter(r=>!r.isRepasse); }
 function isCartaoDeCredito(id){ return id!=='dinheiro'; }
-
-function getDespesasForMonth(mes,ano){
-  const result=[];
-  state.despesas.forEach(d=>{
-    const parcelas=d.parcelas||1;
-    for(let i=0;i<parcelas;i++){
-      let m=(d.mesInicio-1)+i, y=d.anoInicio+Math.floor(m/12), mN=(m%12)+1;
-      if(mN===mes&&y===ano){
-        result.push({...d,_parcel:i+1,_total:parcelas,_valorParcela:d.valor/parcelas,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
-        break;
-      }
-    }
-    if(d.fixa&&(d.parcelas||1)===1){
-      const started=d.anoInicio<ano||(d.anoInicio===ano&&d.mesInicio<=mes);
-      if(started&&!result.find(r=>r.id===d.id))
-        result.push({...d,_parcel:1,_total:1,_valorParcela:d.valor,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
-    }
-  });
-  return result;
-}
+function isContribuicaoPaga(mes,ano){ return !!(state.contribuicaoPaga&&state.contribuicaoPaga[mesKey(mes,ano)]); }
 
 function calcContribuicao(mes,ano){
   const k=mesKey(mes,ano);
   if(state.contribuicaoAjustes&&state.contribuicaoAjustes[k]!==undefined) return state.contribuicaoAjustes[k];
-  return getReceitasContribuiveis(mes,ano).reduce((s,r)=>s+(r._isParcela?r._parcelaValor:r.valor||0),0)*0.1;
+  // Base = TODAS as receitas previstas (não só as efetivas)
+  return getReceitasContribuiveisPrevisao(mes,ano).reduce((s,r)=>s+valorReceita(r),0)*0.1;
 }
-function calcContribuicaoBase(mes,ano){ return getReceitasContribuiveis(mes,ano).reduce((s,r)=>s+(r._isParcela?r._parcelaValor:r.valor||0),0)*0.1; }
+function calcContribuicaoBase(mes,ano){
+  return getReceitasContribuiveisPrevisao(mes,ano).reduce((s,r)=>s+valorReceita(r),0)*0.1;
+}
 
 // Chave de fatura paga: cardId + mesKey
 function faturaKey(cardId,mes,ano){ return `${cardId}_${mesKey(mes,ano)}`; }
@@ -1255,11 +1241,14 @@ function getTotalsForMonth(mes,ano){
   const emCaixaEntradas = recsEfetivas.reduce((s,r)=>s+valorReceita(r),0);
 
   // ── EM CAIXA SAÍDAS:
-  //    - Dinheiro/PIX fixas: só se marcadas como pagas individualmente
-  //    - Dinheiro/PIX não-fixas (compras): saem imediatamente (já foram pagas na hora)
+  //    - Contribuição: só sai quando marcada como paga
   //    - Cartão de crédito: fatura inteira sai quando marcada como paga
-  //    - Contrib + cofrinho: saem sempre (são saídas efetivas) ──
-  let emCaixaSaidas = contrib + cofrinhoSaida;
+  //    - Dinheiro/PIX fixas: só se marcadas como pagas individualmente
+  //    - Dinheiro/PIX não-fixas: saem imediatamente
+  //    - Cofrinho: sai sempre (saída efetiva) ──
+  let emCaixaSaidas = cofrinhoSaida;
+  // Contribuição: só se paga
+  if(isContribuicaoPaga(mes,ano)) emCaixaSaidas+=contrib;
   // Cartões de crédito: soma por cartão, só entra se fatura paga
   state.cards.forEach(c=>{
     if(!isCartaoDeCredito(c.id)) return;
@@ -1338,6 +1327,14 @@ function calcExcedenteAcumulado(mes,ano){
 // ════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════
+function toggleContribuicaoPaga(){
+  const k=mesKey(currentMonth,currentYear);
+  if(!state.contribuicaoPaga) state.contribuicaoPaga={};
+  state.contribuicaoPaga[k]=!state.contribuicaoPaga[k];
+  scheduleSave(); renderDashboard();
+  toast(state.contribuicaoPaga[k]?'Contribuição marcada como paga — saiu do caixa!':'Contribuição desmarcada — voltou para previsão');
+}
+
 function toggleFaturaPaga(cardId){
   const k=faturaKey(cardId,currentMonth,currentYear);
   if(!state.faturasPagas) state.faturasPagas={};
@@ -1425,13 +1422,21 @@ function renderDashboard(){
           <div class="kpi-label">Contribuição</div>
           <div class="kpi-value" style="font-size:18px">${fmtBRL(contrib)}</div>
           ${contribuicaoAjustada?`<div style="font-size:10px;color:var(--warn)">Ajustado (base: ${fmtBRL(contribuicaoBase)})</div>`:`<div style="font-size:10px;color:var(--muted)">10% automático</div>`}
-          <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="openAjusteContribuicao(${currentMonth},${currentYear})">✎ Ajustar</button>
+          ${isContribuicaoPaga(currentMonth,currentYear)
+            ?`<span class="badge badge-ok" style="margin-top:6px;display:inline-flex">✓ Paga</span>
+              <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="toggleContribuicaoPaga()">Desmarcar</button>`
+            :`<span class="badge badge-yellow" style="margin-top:6px;display:inline-flex">⏳ Pendente</span>
+              <button class="btn btn-ok btn-sm" style="margin-top:6px;width:100%" onclick="toggleContribuicaoPaga()">✓ Marcar como paga</button>`}
+          <button class="btn btn-ghost btn-sm" style="margin-top:6px;width:100%" onclick="openAjusteContribuicao(${currentMonth},${currentYear})">✎ Ajustar valor</button>
         </div>
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
           <div class="kpi-label">Cofrinho (mês)</div>
           <div class="kpi-value" style="font-size:18px">${fmtBRL(cofrinhoSaida)}</div>
           <div style="font-size:10px;color:var(--muted)">Total: ${fmtBRL(totalCofrinho)}</div>
-          <button class="btn btn-primary btn-sm" style="margin-top:8px;width:100%" onclick="openDepositarCofrinho()">+ Depositar</button>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn btn-primary btn-sm" style="flex:1" onclick="openDepositarCofrinho()">+ Depositar</button>
+            <button class="btn btn-warn btn-sm" style="flex:1" onclick="navigate('cofrinho')" title="Resgatar do cofrinho">↩ Resgatar</button>
+          </div>
         </div>
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
           <div class="kpi-label">Guardar em Caixa</div>
@@ -2009,7 +2014,7 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
 
   // Contribuição como item simples no topo
   if(contrib>0){
-    const base=getReceitasContribuiveis(currentMonth,currentYear).reduce((s,r)=>s+(r._isParcela?r._parcelaValor:(r.valor||0)),0);
+    const base=getReceitasContribuiveisPrevisao(currentMonth,currentYear).reduce((s,r)=>s+valorReceita(r),0);
     html+=`<div class="item-row" style="border-color:rgba(91,127,255,.3);margin-bottom:8px">
       <div class="item-row-info">
         <div class="item-row-name">Contribuição <span class="badge badge-blue">Automática</span></div>
@@ -2061,7 +2066,7 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
 function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard){
   let html='<div class="item-list">';
   if(contrib>0&&!filtCard){
-    const base=getReceitasContribuiveis(currentMonth,currentYear).reduce((s,r)=>s+(r._isParcela?r._parcelaValor:(r.valor||0)),0);
+    const base=getReceitasContribuiveisPrevisao(currentMonth,currentYear).reduce((s,r)=>s+valorReceita(r),0);
     html+=`<div class="item-row" style="border-color:rgba(91,127,255,.3)">
       <div class="item-row-info">
         <div class="item-row-name">Contribuição <span class="badge badge-blue">Automática</span></div>
@@ -2979,9 +2984,87 @@ function salvarSaldoInicialCofrinho(id){
 function getSaldoCofrinho(cofrinhoId){
   const c=state.cofrinhos.find(x=>x.id===cofrinhoId);
   const saldoInicial=(c?.saldoInicial)||0;
-  const depositos=(state.movimentacoesCofrinhos||[]).filter(m=>m.cofrinhoId===cofrinhoId&&!m.saldoInicialFlag).reduce((s,m)=>s+(m.valor||0),0);
-  return saldoInicial+depositos;
+  const movs=(state.movimentacoesCofrinhos||[]).filter(m=>m.cofrinhoId===cofrinhoId&&!m.saldoInicialFlag);
+  const depositos=movs.filter(m=>m.tipo!=='resgate').reduce((s,m)=>s+(m.valor||0),0);
+  const resgates=movs.filter(m=>m.tipo==='resgate').reduce((s,m)=>s+(m.valor||0),0);
+  return saldoInicial+depositos-resgates;
 }
+
+function openResgatarCofrinho(cofrinhoId){
+  const c=state.cofrinhos.find(x=>x.id===cofrinhoId);
+  const saldoDisp=getSaldoCofrinho(cofrinhoId);
+  document.getElementById('modalTitle').textContent=`Resgatar do ${c?.name||'Cofrinho'}`;
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">
+      Saldo disponível: <strong style="color:var(--accent2)">${fmtBRL(saldoDisp)}</strong><br>
+      O valor resgatado entra no fluxo de caixa como receita <strong>não tributável</strong> (não gera contribuição).
+    </div>
+    <div class="form-grid">
+      <div class="form-group full">
+        <label>Valor a resgatar (R$)</label>
+        <input type="number" id="resgateValor" value="${saldoDisp.toFixed(2)}" min="0.01" max="${saldoDisp.toFixed(2)}" step="0.01" placeholder="0,00">
+      </div>
+      <div class="form-group">
+        <label>Mês de entrada no caixa</label>
+        <select id="resgatesMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${i+1===currentMonth?'selected':''}>${m}</option>`).join('')}</select>
+      </div>
+      <div class="form-group">
+        <label>Ano</label>
+        <input type="number" id="resgateAno" value="${currentYear}" min="2020" max="2040">
+      </div>
+      <div class="form-group full">
+        <label>Motivo (opcional)</label>
+        <input type="text" id="resgateObs" placeholder="Ex: Cobertura de déficit de Julho">
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-warn" onclick="confirmarResgateCofrinho('${cofrinhoId}')">↩ Confirmar resgate</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function confirmarResgateCofrinho(cofrinhoId){
+  const valor=parseFloat(document.getElementById('resgateValor').value);
+  const mes=parseInt(document.getElementById('resgatesMes').value);
+  const ano=parseInt(document.getElementById('resgateAno').value);
+  const obs=document.getElementById('resgateObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  const saldoDisp=getSaldoCofrinho(cofrinhoId);
+  if(valor>saldoDisp){toast(`Saldo insuficiente (disponível: ${fmtBRL(saldoDisp)})`);return;}
+  const c=state.cofrinhos.find(x=>x.id===cofrinhoId);
+
+  // Registra o resgate na movimentação do cofrinho (valor negativo)
+  state.movimentacoesCofrinhos.push({
+    id:uid(), cofrinhoId, valor, mes, ano,
+    obs:obs||`Resgate ${c?.name||''}`, tipo:'resgate', createdAt:uid()
+  });
+
+  // Cria receita não tributável (isRepasse=true = sem contribuição)
+  state.receitas.push({
+    id:uid(), tipo:'repasse',
+    nome:`Resgate cofrinho: ${c?.name||''}${obs?' — '+obs:''}`,
+    valor, mes, ano, recorrente:false,
+    isRepasse:true, isResgate:true, createdAt:uid()
+  });
+
+  scheduleSave(); closeModal(); renderCofrinho();
+  // Atualiza dashboard se estiver no mês do resgate
+  if(mes===currentMonth&&ano===currentYear) renderDashboard();
+  toast(`✓ Resgate de ${fmtBRL(valor)} registrado! Entra como receita em ${MONTHS[mes-1]} ${ano}.`);
+}
+
+function delMovimentacaoCofrinho(id){
+  const mov=state.movimentacoesCofrinhos.find(m=>m.id===id);
+  if(mov?.tipo==='resgate'){
+    // Remove também a receita vinculada se existir
+    state.receitas=state.receitas.filter(r=>!(r.isResgate&&r.mes===mov.mes&&r.ano===mov.ano&&Math.abs(r.valor-mov.valor)<0.01));
+  }
+  state.movimentacoesCofrinhos=state.movimentacoesCofrinhos.filter(m=>m.id!==id);
+  scheduleSave(); renderCofrinho(); toast('Movimentação removida');
+}
+
+function delDepositoCofrinho(id){ delMovimentacaoCofrinho(id); }
 
 function getSaldoTotalCofrinho(){
   return state.cofrinhos.reduce((s,c)=>s+getSaldoCofrinho(c.id),0);
@@ -3028,7 +3111,6 @@ function delDepositoCofrinho(id){
 }
 
 function renderCofrinho(){
-  // Saldo por banco
   const DEFAULT_IDS=['cofrinho_nubank','cofrinho_mpago','cofrinho_bb'];
   let saldoHTML='<div class="item-list">';
   const total=getSaldoTotalCofrinho();
@@ -3040,33 +3122,44 @@ function renderCofrinho(){
       <div style="width:14px;height:14px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
       <div class="item-row-info">
         <div class="item-row-name">${c.name}</div>
-        <div class="item-row-meta">${saldoIni>0?`Saldo inicial: ${fmtBRL(saldoIni)} · `:''}</div>
+        <div class="item-row-meta">${saldoIni>0?`Saldo inicial: ${fmtBRL(saldoIni)} · `:''}Disponível: ${fmtBRL(saldo)}</div>
         <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${total>0?(saldo/total*100).toFixed(0):0}%;background:${c.color}"></div></div>
       </div>
       <div class="item-row-val pos">${fmtBRL(saldo)}</div>
+      <button class="btn btn-warn btn-sm" onclick="openResgatarCofrinho('${c.id}')" ${saldo<=0?'disabled':''} title="Resgatar para o caixa">↩ Resgatar</button>
       <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSaldoInicialCofrinho('${c.id}')" title="Editar saldo inicial">✎</button>
       ${!isDef?`<button class="btn btn-danger btn-icon btn-sm" onclick="delCofrinho('${c.id}')">✕</button>`:''}
     </div>`;
   });
   if(!state.cofrinhos.length) saldoHTML+='<div class="empty-state">Nenhum cofrinho</div>';
-  saldoHTML+=`</div><div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;font-size:13px"><span style="font-weight:600">Total guardado</span><span class="mono" style="color:var(--accent2)">${fmtBRL(total)}</span></div>`;
+  saldoHTML+=`</div><div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;font-size:13px">
+    <span style="font-weight:600">Total guardado</span>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="mono" style="color:var(--accent2)">${fmtBRL(total)}</span>
+      <button class="btn btn-primary btn-sm" onclick="openDepositarCofrinho()">+ Depositar</button>
+    </div>
+  </div>`;
   document.getElementById('cofrinhoSaldoList').innerHTML=saldoHTML;
 
-  // Histórico
+  // Histórico — depósitos e resgates
   const movs=(state.movimentacoesCofrinhos||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   if(!movs.length){
-    document.getElementById('cofrinhoHistorico').innerHTML='<div class="empty-state">Nenhum depósito registrado</div>';
+    document.getElementById('cofrinhoHistorico').innerHTML='<div class="empty-state">Nenhuma movimentação registrada</div>';
     return;
   }
-  let html='<table class="data-table"><thead><tr><th>Data</th><th>Banco</th><th>Observação</th><th>Valor</th><th></th></tr></thead><tbody>';
+  let html='<table class="data-table"><thead><tr><th>Data</th><th>Tipo</th><th>Banco</th><th>Observação</th><th>Valor</th><th></th></tr></thead><tbody>';
   movs.forEach(m=>{
     const c=state.cofrinhos.find(x=>x.id===m.cofrinhoId);
+    const isResgate=m.tipo==='resgate';
     html+=`<tr>
       <td class="mono" style="font-size:12px">${MONTHS[m.mes-1].slice(0,3)} ${m.ano}</td>
+      <td>${isResgate
+        ?'<span class="badge badge-yellow">↩ Resgate</span>'
+        :'<span class="badge badge-green">+ Depósito</span>'}</td>
       <td><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:${c?.color||'#999'};display:inline-block"></span>${c?.name||'—'}</span></td>
       <td style="color:var(--muted);font-size:12px">${m.obs||'—'}</td>
-      <td class="mono" style="color:var(--accent2)">${fmtBRL(m.valor)}</td>
-      <td><button class="btn btn-danger btn-icon btn-sm" onclick="delDepositoCofrinho('${m.id}')">✕</button></td>
+      <td class="mono" style="color:${isResgate?'var(--warn)':'var(--accent2)'}">${isResgate?'-':''}${fmtBRL(m.valor)}</td>
+      <td><button class="btn btn-danger btn-icon btn-sm" onclick="delMovimentacaoCofrinho('${m.id}')">✕</button></td>
     </tr>`;
   });
   html+='</tbody></table>';
