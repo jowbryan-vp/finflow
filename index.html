@@ -303,6 +303,10 @@ select option{background:var(--card)}
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
         Análise / Filtros
       </div>
+      <div class="nav-item" data-page="eSe" onclick="navigate('eSe')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/><circle cx="12" cy="12" r="10"/></svg>
+        E se...
+      </div>
       <div class="nav-item" data-page="cofrinho" onclick="navigate('cofrinho')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/><path d="M12 6v6l4 2"/></svg>
         Cofrinho
@@ -562,6 +566,52 @@ select option{background:var(--card)}
             <button class="btn btn-primary btn-sm" onclick="openDepositarCofrinho()">+ Novo depósito</button>
           </div>
           <div id="cofrinhoHistorico"></div>
+        </div>
+      </div>
+
+      <!-- E SE... SIMULADOR -->
+      <div id="page-eSe" class="page">
+        <!-- Formulário de itens simulados -->
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header">
+            <div>
+              <div class="card-title">🤔 E se eu comprar...</div>
+              <div class="card-sub">Simule o impacto de compras nos próximos meses sem lançar na conta</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="addEseItem()">+ Adicionar compra</button>
+          </div>
+          <div id="eseItemList" class="item-list"></div>
+          <div id="eseEmptyHint" style="color:var(--muted);font-size:13px;padding:12px 0">Clique em "+ Adicionar compra" para começar a simulação.</div>
+          <div id="eseActions" style="display:none;margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="rodarSimulacao()">
+              <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Simular impacto
+            </button>
+            <button class="btn btn-ghost" onclick="limparEse()">Limpar tudo</button>
+          </div>
+        </div>
+
+        <!-- Resultado -->
+        <div id="eseResultado" style="display:none">
+          <!-- Alertas -->
+          <div id="eseAlertas" style="margin-bottom:16px"></div>
+
+          <!-- Gráfico -->
+          <div class="card" style="margin-bottom:20px">
+            <div class="card-header">
+              <div class="card-title">Impacto no saldo — próximos 12 meses</div>
+              <div class="card-sub">Azul = saldo atual · Laranja = saldo com as compras simuladas</div>
+            </div>
+            <div class="chart-wrap" style="height:280px"><canvas id="chartEse"></canvas></div>
+          </div>
+
+          <!-- Tabela -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Detalhamento mês a mês</div>
+            </div>
+            <div id="eseTabelaWrap"></div>
+          </div>
         </div>
       </div>
 
@@ -1076,7 +1126,7 @@ function importData(e) {
 // ════════════════════════════════════════════════
 // NAVIGATION
 // ════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',pessoas:'Pessoas'};
+const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',pessoas:'Pessoas'};
 function navigate(page){
   // Clear card filter when leaving despesas
   if(page!=='despesas') despCartaoFiltro=null;
@@ -1099,7 +1149,7 @@ function updatePeriodLabel(){ document.getElementById('periodLabel').textContent
 function renderAll(){ renderPage(document.querySelector('.nav-item.active')?.dataset?.page||'dashboard'); }
 function renderPage(page){
   updatePeriodLabel();
-  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,pessoas:renderPessoas}[page]||renderDashboard)();
+  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,pessoas:renderPessoas}[page]||renderDashboard)();
 }
 
 // ════════════════════════════════════════════════
@@ -3093,6 +3143,260 @@ function resetAjusteContribuicao(mes,ano){
   if(state.contribuicaoAjustes) delete state.contribuicaoAjustes[mesKey(mes,ano)];
   scheduleSave();closeModal();renderDashboard();
   toast('Contribuição voltou ao cálculo automático (10%)');
+}
+
+// ════════════════════════════════════════════════
+// E SE... SIMULADOR
+// ════════════════════════════════════════════════
+let eseItens = []; // [{id,desc,valor,parcelas,mesInicio,anoInicio,cat,cartao}]
+let chartEse = null;
+
+function renderEse(){
+  renderEseItemList();
+  // keep result hidden until user runs simulation
+}
+
+function addEseItem(){
+  const id = uid();
+  eseItens.push({
+    id, desc:'', valor:0, parcelas:1,
+    mesInicio:currentMonth, anoInicio:currentYear,
+    cat: state.categories[0]?.id||'outros',
+    cartao: state.cards[0]?.id||'dinheiro'
+  });
+  renderEseItemList();
+}
+
+function removeEseItem(id){
+  eseItens=eseItens.filter(x=>x.id!==id);
+  renderEseItemList();
+  if(!eseItens.length){ document.getElementById('eseResultado').style.display='none'; }
+}
+
+function updateEseItem(id,field,value){
+  const item=eseItens.find(x=>x.id===id);
+  if(!item)return;
+  if(['valor','parcelas','mesInicio','anoInicio'].includes(field)) item[field]=parseFloat(value)||0;
+  else item[field]=value;
+  // Update parcela preview
+  renderEseParcelaInfo(id);
+}
+
+function renderEseParcelaInfo(id){
+  const item=eseItens.find(x=>x.id===id);
+  if(!item)return;
+  const el=document.getElementById('ese-parcel-info-'+id);
+  if(!el)return;
+  if(item.parcelas>1&&item.valor>0){
+    el.textContent=`${item.parcelas}x de ${fmtBRL(item.valor/item.parcelas)} = Total ${fmtBRL(item.valor)}`;
+    el.style.display='block';
+  } else {
+    el.style.display='none';
+  }
+}
+
+function renderEseItemList(){
+  const catOpts=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  const cardOpts=state.cards.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  const mesOpts=MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
+
+  const hint=document.getElementById('eseEmptyHint');
+  const actions=document.getElementById('eseActions');
+  if(hint) hint.style.display=eseItens.length?'none':'block';
+  if(actions) actions.style.display=eseItens.length?'flex':'none';
+
+  let html='';
+  eseItens.forEach((item,idx)=>{
+    const catOptsSelected=state.categories.map(c=>`<option value="${c.id}" ${item.cat===c.id?'selected':''}>${c.name}</option>`).join('');
+    const cardOptsSelected=state.cards.map(c=>`<option value="${c.id}" ${item.cartao===c.id?'selected':''}>${c.name}</option>`).join('');
+    const mesOptsSelected=MONTHS.map((m,i)=>`<option value="${i+1}" ${item.mesInicio===i+1?'selected':''}>${m}</option>`).join('');
+    html+=`<div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span style="font-weight:600;font-size:13px;color:var(--accent)">Compra ${idx+1}</span>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="removeEseItem('${item.id}')">✕</button>
+      </div>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Descrição</label>
+          <input type="text" value="${item.desc}" placeholder="Ex: Notebook Dell, Monitor 4K..." onchange="eseItens.find(x=>x.id==='${item.id}').desc=this.value">
+        </div>
+        <div class="form-group">
+          <label>Valor Total (R$)</label>
+          <input type="number" value="${item.valor||''}" min="0" step="0.01" placeholder="0,00" oninput="updateEseItem('${item.id}','valor',this.value)">
+        </div>
+        <div class="form-group">
+          <label>Nº de Parcelas</label>
+          <input type="number" value="${item.parcelas||1}" min="1" max="120" oninput="updateEseItem('${item.id}','parcelas',this.value)">
+        </div>
+        <div class="form-group full" id="ese-parcel-info-${item.id}" style="display:${item.parcelas>1&&item.valor>0?'block':'none'};background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.2);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted)">
+          ${item.parcelas>1&&item.valor>0?`${item.parcelas}x de ${fmtBRL(item.valor/item.parcelas)} = Total ${fmtBRL(item.valor)}`:''}
+        </div>
+        <div class="form-group">
+          <label>Mês início</label>
+          <select onchange="updateEseItem('${item.id}','mesInicio',this.value)">${mesOptsSelected}</select>
+        </div>
+        <div class="form-group">
+          <label>Ano início</label>
+          <input type="number" value="${item.anoInicio}" min="2020" max="2040" oninput="updateEseItem('${item.id}','anoInicio',this.value)">
+        </div>
+        <div class="form-group">
+          <label>Categoria</label>
+          <select onchange="updateEseItem('${item.id}','cat',this.value)">${catOptsSelected}</select>
+        </div>
+        <div class="form-group">
+          <label>Cartão / Origem</label>
+          <select onchange="updateEseItem('${item.id}','cartao',this.value)">${cardOptsSelected}</select>
+        </div>
+      </div>
+    </div>`;
+  });
+  document.getElementById('eseItemList').innerHTML=html;
+}
+
+function limparEse(){
+  eseItens=[];
+  renderEseItemList();
+  document.getElementById('eseResultado').style.display='none';
+}
+
+// Calcula saída mensal dos itens simulados em um dado mês/ano
+function calcEseSaidaMes(mes,ano){
+  let total=0;
+  eseItens.forEach(item=>{
+    const parc=Math.max(1,item.parcelas||1);
+    for(let i=0;i<parc;i++){
+      let m=(item.mesInicio-1)+i;
+      let y=item.anoInicio+Math.floor(m/12);
+      let mN=(m%12)+1;
+      if(mN===mes&&y===ano){ total+=(item.valor||0)/parc; break; }
+    }
+  });
+  return total;
+}
+
+function rodarSimulacao(){
+  // Validate
+  const invalid=eseItens.filter(x=>!x.desc||!x.valor||x.valor<=0);
+  if(invalid.length){ toast('Preencha descrição e valor em todos os itens'); return; }
+
+  document.getElementById('eseResultado').style.display='block';
+  document.getElementById('eseResultado').scrollIntoView({behavior:'smooth',block:'start'});
+
+  // Build 12-month projection starting from current month
+  const meses=[];
+  for(let i=0;i<12;i++){
+    let m=currentMonth+i, y=currentYear+Math.floor((m-1)/12);
+    m=((m-1)%12)+1;
+    meses.push({mes:m,ano:y});
+  }
+
+  const rows=meses.map(({mes,ano})=>{
+    const t=getTotalsForMonth(mes,ano);
+    const eseSaida=calcEseSaidaMes(mes,ano);
+    const saldoAtual=t.saldoMelhorCenario; // melhor cenário atual
+    const saldoComCompra=saldoAtual-eseSaida;
+    return{mes,ano,saldoAtual,saldoComCompra,eseSaida,
+      previstoEntradas:t.previstoEntradas,totalDespPrevisao:t.totalDespPrevisao};
+  });
+
+  // Alertas
+  const mesesNegativos=rows.filter(r=>r.saldoComCompra<0&&r.saldoAtual>=0);
+  const mesesPiores=rows.filter(r=>r.saldoComCompra<r.saldoAtual);
+  let alertHtml='';
+  if(mesesNegativos.length){
+    alertHtml+=`<div style="background:rgba(255,95,109,.1);border:1px solid rgba(255,95,109,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
+      ⚠️ <strong>Atenção:</strong> Com essas compras, seu saldo ficaria negativo em:
+      <strong style="color:var(--danger)">${mesesNegativos.map(r=>MONTHS[r.mes-1]+' '+r.ano).join(', ')}</strong>
+    </div>`;
+  }
+  if(!mesesNegativos.length&&mesesPiores.length){
+    alertHtml+=`<div style="background:rgba(255,193,71,.08);border:1px solid rgba(255,193,71,.25);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
+      💡 Seu saldo continuaria positivo, mas reduzido em ${mesesPiores.length} mês${mesesPiores.length>1?'es':''}.
+    </div>`;
+  }
+  if(!mesesNegativos.length&&!mesesPiores.length){
+    alertHtml+=`<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
+      ✅ <strong>Boa notícia:</strong> Essa compra não afetaria negativamente seu saldo nos próximos 12 meses!
+    </div>`;
+  }
+  document.getElementById('eseAlertas').innerHTML=alertHtml;
+
+  // Gráfico
+  const labels=rows.map(r=>MONTHS[r.mes-1].slice(0,3)+'/'+String(r.ano).slice(2));
+  const dataAtual=rows.map(r=>r.saldoAtual);
+  const dataComCompra=rows.map(r=>r.saldoComCompra);
+  if(chartEse){ chartEse.destroy(); chartEse=null; }
+  chartEse=new Chart(document.getElementById('chartEse').getContext('2d'),{
+    type:'bar',
+    data:{
+      labels,
+      datasets:[
+        {label:'Saldo atual (melhor cenário)',data:dataAtual,backgroundColor:'rgba(91,127,255,.6)',borderRadius:4},
+        {label:'Saldo com as compras',data:dataComCompra,backgroundColor:dataComCompra.map(v=>v<0?'rgba(255,95,109,.8)':'rgba(255,193,71,.7)'),borderRadius:4}
+      ]
+    },
+    options:{
+      plugins:{legend:{labels:{color:'#7c84a0',font:{family:'Inter',size:11},boxWidth:10,padding:12}}},
+      scales:{
+        x:{ticks:{color:'#7c84a0',font:{family:'Inter',size:11}},grid:{color:'rgba(42,48,80,.5)'}},
+        y:{ticks:{color:'#7c84a0',font:{family:'Inter',size:11},callback:v=>'R$'+v.toLocaleString('pt-BR')},grid:{color:'rgba(42,48,80,.5)'}},
+      },
+      maintainAspectRatio:false
+    }
+  });
+
+  // Tabela
+  let tbl=`<table class="data-table">
+    <thead><tr>
+      <th>Mês</th>
+      <th>Previsto Entradas</th>
+      <th>Previsto Saídas</th>
+      <th>Parcela simulada</th>
+      <th>Saldo Atual</th>
+      <th>Saldo com Compra</th>
+      <th>Impacto</th>
+    </tr></thead><tbody>`;
+  rows.forEach(r=>{
+    const impacto=r.saldoComCompra-r.saldoAtual;
+    const negativo=r.saldoComCompra<0;
+    tbl+=`<tr ${negativo?'style="background:rgba(255,95,109,.06)"':''}>
+      <td class="mono" style="font-size:12px">${MONTHS[r.mes-1].slice(0,3)} ${r.ano}</td>
+      <td class="mono" style="color:var(--accent2)">${fmtBRL(r.previstoEntradas)}</td>
+      <td class="mono" style="color:var(--danger)">${fmtBRL(r.totalDespPrevisao)}</td>
+      <td class="mono" style="color:var(--warn)">${r.eseSaida>0?fmtBRL(r.eseSaida):'—'}</td>
+      <td class="mono" style="color:${r.saldoAtual>=0?'var(--accent)':'var(--danger)'}">${fmtBRL(r.saldoAtual)}</td>
+      <td class="mono" style="color:${r.saldoComCompra>=0?'var(--accent2)':'var(--danger)'}"><strong>${fmtBRL(r.saldoComCompra)}</strong>${negativo?' ⚠':''}
+      </td>
+      <td class="mono" style="color:var(--danger)">${fmtBRL(impacto)}</td>
+    </tr>`;
+  });
+  tbl+=`</tbody></table>`;
+  document.getElementById('eseTabelaWrap').innerHTML=tbl+`
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-success" onclick="eseConverterParaReal()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+        Lançar como despesa real
+      </button>
+      <button class="btn btn-ghost" onclick="limparEse()">Descartar simulação</button>
+    </div>`;
+}
+
+function eseConverterParaReal(){
+  if(!eseItens.length)return;
+  // Add all simulated items as real despesas
+  eseItens.forEach(item=>{
+    state.despesas.push({
+      id:uid(), desc:item.desc+'  ✦ (simulado → real)',
+      cat:item.cat, subcat:'', cartao:item.cartao,
+      valor:item.valor, parcelas:Math.max(1,item.parcelas||1),
+      mesInicio:item.mesInicio, anoInicio:item.anoInicio,
+      fixa:false, pagoMeses:{}, split:[], repasses:{}, createdAt:uid()
+    });
+  });
+  scheduleSave();
+  toast(`${eseItens.length} compra${eseItens.length>1?'s':''} lançada${eseItens.length>1?'s':''} como despesa real!`);
+  eseItens=[];
+  navigate('despesas');
 }
 
 // ════════════════════════════════════════════════
