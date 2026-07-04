@@ -1037,6 +1037,11 @@ const DEFAULT_CARDS = [
 let state = { categories:[], cards:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
 let currentMonth = new Date().getMonth() + 1;
 let currentYear  = new Date().getFullYear();
+// Referência fixa ao mês/ano real de HOJE (não muda ao navegar com as setinhas).
+// Usada para saber se o "caixa agora" pode ser considerado nos cenários ou não.
+const REAL_TODAY_MONTH = new Date().getMonth() + 1;
+const REAL_TODAY_YEAR  = new Date().getFullYear();
+function isMesAtualReal(mes,ano){ return mes===REAL_TODAY_MONTH && ano===REAL_TODAY_YEAR; }
 let chartDonut = null, chartBar = null;
 let despCartaoFiltro = null; // cartão pré-selecionado ao vir do dashboard
 
@@ -1293,11 +1298,24 @@ function getTotalsForMonth(mes,ano){
   // Em caixa disponível = saldo do mês + excedente acumulado de meses anteriores
   const emCaixaDisponivel  = emCaixaLiquido + excedentAcum;
 
-  // Pior cenário: só o que JÁ entrou (+ acumulado anterior) − tudo que tem pra pagar
-  const saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
-
-  // Melhor cenário: o que já entrou + acumulado + pendentes a receber − tudo previsto
-  const saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
+  // Pior/Melhor cenário: o "Caixa Agora" (excedente acumulado + já recebido)
+  // só pode ser considerado quando estamos olhando o MÊS REAL DE HOJE — é o
+  // único momento em que esse dinheiro existe de fato na conta. Para qualquer
+  // outro mês (passado fechado ou projeção futura), o saldo daquele mês é
+  // calculado de forma isolada: se sobrar, você gasta ou manda pro cofrinho;
+  // se faltar, você cobre com o cofrinho — nada disso "vaza" pro mês seguinte.
+  let saldoPiorCenario, saldoMelhorCenario;
+  if(isMesAtualReal(mes,ano)){
+    // Pior cenário: só o que JÁ entrou (+ acumulado anterior) − tudo que tem pra pagar
+    saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
+    // Melhor cenário: o que já entrou + acumulado + pendentes a receber − tudo previsto
+    saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
+  } else {
+    // Mês isolado (sem caixa atual): salário previsto é o "certo"; repasses
+    // de terceiros são a parte incerta.
+    saldoPiorCenario   = previstoEntradas - totalDespPrevisao;
+    saldoMelhorCenario = previstoEntradas + repassesPendentes - totalDespPrevisao;
+  }
 
   const saldoProjetado     = saldoMelhorCenario; // compat
 
@@ -1389,15 +1407,24 @@ function renderDashboard(){
         <div class="kpi-value red">${fmtBRL(totalDespPrevisao)}</div>
         <div class="kpi-sub">Todas as despesas lançadas</div>
       </div>
-      <div class="kpi" style="border-top:2px solid var(--danger)" title="Paga tudo, não recebe nada pendente">
+      <div class="kpi" style="border-top:2px solid var(--danger)" title="${isMesAtualReal(currentMonth,currentYear)?'Paga tudo, não recebe nada pendente':'Sem repasses de terceiros, mês isolado (sem caixa atual)'}">
         <div class="kpi-label" style="color:var(--muted)">📉 Pior Cenário</div>
         <div class="kpi-value ${saldoPiorCenario>=0?'blue':'red'}">${fmtBRL(saldoPiorCenario)}</div>
-        <div class="kpi-sub">Entrada real − previsto saídas</div>
+        <div class="kpi-sub">${isMesAtualReal(currentMonth,currentYear)?'Entrada real − previsto saídas':'Salário previsto (sem repasses) − saídas'}</div>
       </div>
-      <div class="kpi" style="border-top:2px solid var(--accent2)" title="Recebe tudo pendente, paga tudo">
+      <div class="kpi" style="border-top:2px solid var(--accent2)" title="${isMesAtualReal(currentMonth,currentYear)?'Recebe tudo pendente, paga tudo':'Salário + repasses do mês, mês isolado (sem caixa atual)'}">
         <div class="kpi-label" style="color:var(--accent2)">📈 Melhor Cenário</div>
         <div class="kpi-value ${saldoMelhorCenario>=0?'green':'red'}">${fmtBRL(saldoMelhorCenario)}</div>
-        <div class="kpi-sub">${(totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente'}</div>
+        <div class="kpi-sub">${isMesAtualReal(currentMonth,currentYear)
+          ? ((totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente')
+          : (repassesPendentes>0?`+${fmtBRL(repassesPendentes)} de repasses no mês`:'Sem repasses previstos')}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:8px">
+      <div style="grid-column:1/-1;font-size:11px;color:var(--muted);margin-top:-8px">
+        ${isMesAtualReal(currentMonth,currentYear)
+          ? '💡 Cenários do mês corrente incluem o caixa atual e o saldo acumulado de meses anteriores.'
+          : '💡 Mês fora do período atual: cenários calculados de forma isolada, sem considerar o caixa de hoje (sobra/falta não atravessa meses).'}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
