@@ -582,6 +582,13 @@ select option{background:var(--card)}
           </div>
           <div id="eseItemList" class="item-list"></div>
           <div id="eseEmptyHint" style="color:var(--muted);font-size:13px;padding:12px 0">Clique em "+ Adicionar compra" para começar a simulação.</div>
+          <div class="checkbox-row" style="margin-top:14px;align-items:flex-start">
+            <input type="checkbox" id="eseIgnorarAcumulado" style="width:auto;margin-top:3px">
+            <label for="eseIgnorarAcumulado" style="line-height:1.5">
+              Zerar saldo todo mês (ignorar sobra dos meses anteriores)<br>
+              <span style="color:var(--muted);font-size:12px;font-weight:400">Considera só as entradas e saídas de cada mês isoladamente, como se sua conta começasse do zero — sem carregar o excedente acumulado.</span>
+            </label>
+          </div>
           <div id="eseActions" style="display:none;margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="rodarSimulacao()">
               <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -3338,13 +3345,28 @@ function rodarSimulacao(){
   // impactoAcumulado carrega o efeito da(s) compra(s) de um mês para o próximo:
   // se um mês fica no vermelho por causa da compra, esse rombo não desaparece
   // no mês seguinte — ele continua reduzindo o saldo daí pra frente (cascata).
+  // Esse comportamento só faz sentido quando o próprio saldo real também
+  // carrega excedente entre meses. Se o usuário marcar "zerar saldo todo mês",
+  // cada mês passa a ser calculado de forma 100% isolada (sem excedente
+  // acumulado real E sem cascata da compra simulada).
+  const ignorarAcumulado = document.getElementById('eseIgnorarAcumulado')?.checked;
   let impactoAcumulado=0;
   const rows=meses.map(({mes,ano})=>{
     const t=getTotalsForMonth(mes,ano);
     const eseSaida=calcEseSaidaMes(mes,ano);
-    const saldoAtual=t.saldoMelhorCenario; // melhor cenário atual (sem a simulação)
-    impactoAcumulado-=eseSaida;
-    const saldoComCompra=saldoAtual+impactoAcumulado;
+    // saldoAtual "normal" já inclui o excedente acumulado dos meses anteriores.
+    // No modo "zerar", removemos esse componente e olhamos só o mês isolado.
+    const saldoAtual = ignorarAcumulado
+      ? (t.saldoMelhorCenario - t.excedenteAcumulado)
+      : t.saldoMelhorCenario;
+    let saldoComCompra;
+    if(ignorarAcumulado){
+      // cada mês é independente: sem cascata, sem excedente
+      saldoComCompra = saldoAtual - eseSaida;
+    } else {
+      impactoAcumulado-=eseSaida;
+      saldoComCompra = saldoAtual + impactoAcumulado;
+    }
     return{mes,ano,saldoAtual,saldoComCompra,eseSaida,
       previstoEntradas:t.previstoEntradas,totalDespPrevisao:t.totalDespPrevisao};
   });
@@ -3353,6 +3375,11 @@ function rodarSimulacao(){
   const mesesNegativos=rows.filter(r=>r.saldoComCompra<0&&r.saldoAtual>=0);
   const mesesPiores=rows.filter(r=>r.saldoComCompra<r.saldoAtual);
   let alertHtml='';
+  alertHtml+=`<div style="background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.25);border-radius:var(--radius);padding:10px 16px;margin-bottom:10px;font-size:12px;color:var(--muted)">
+    ${ignorarAcumulado
+      ? '🔄 Modo: <strong style="color:var(--text)">saldo zerado todo mês</strong> — cada mês é calculado isoladamente, sem considerar sobra dos meses anteriores.'
+      : '📈 Modo: <strong style="color:var(--text)">saldo acumulado</strong> — a sobra (ou o rombo) de um mês é carregada para o próximo.'}
+  </div>`;
   if(mesesNegativos.length){
     alertHtml+=`<div style="background:rgba(255,95,109,.1);border:1px solid rgba(255,95,109,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
       ⚠️ <strong>Atenção:</strong> Com essas compras, seu saldo ficaria negativo em:
