@@ -3335,11 +3335,16 @@ function rodarSimulacao(){
     meses.push({mes:m,ano:y});
   }
 
+  // impactoAcumulado carrega o efeito da(s) compra(s) de um mês para o próximo:
+  // se um mês fica no vermelho por causa da compra, esse rombo não desaparece
+  // no mês seguinte — ele continua reduzindo o saldo daí pra frente (cascata).
+  let impactoAcumulado=0;
   const rows=meses.map(({mes,ano})=>{
     const t=getTotalsForMonth(mes,ano);
     const eseSaida=calcEseSaidaMes(mes,ano);
-    const saldoAtual=t.saldoMelhorCenario; // melhor cenário atual
-    const saldoComCompra=saldoAtual-eseSaida;
+    const saldoAtual=t.saldoMelhorCenario; // melhor cenário atual (sem a simulação)
+    impactoAcumulado-=eseSaida;
+    const saldoComCompra=saldoAtual+impactoAcumulado;
     return{mes,ano,saldoAtual,saldoComCompra,eseSaida,
       previstoEntradas:t.previstoEntradas,totalDespPrevisao:t.totalDespPrevisao};
   });
