@@ -582,13 +582,6 @@ select option{background:var(--card)}
           </div>
           <div id="eseItemList" class="item-list"></div>
           <div id="eseEmptyHint" style="color:var(--muted);font-size:13px;padding:12px 0">Clique em "+ Adicionar compra" para começar a simulação.</div>
-          <div class="checkbox-row" style="margin-top:14px;align-items:flex-start">
-            <input type="checkbox" id="eseIgnorarAcumulado" style="width:auto;margin-top:3px">
-            <label for="eseIgnorarAcumulado" style="line-height:1.5">
-              Zerar saldo todo mês (sem carregar sobra nem falta)<br>
-              <span style="color:var(--muted);font-size:12px;font-weight:400">Cada mês é calculado sozinho: salário previsto menos despesas previstas daquele mês. O que sobra é gasto e não fica pro mês seguinte; o que falta também não vira dívida arrastada.</span>
-            </label>
-          </div>
           <div id="eseActions" style="display:none;margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="rodarSimulacao()">
               <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -607,7 +600,7 @@ select option{background:var(--card)}
           <div class="card" style="margin-bottom:20px">
             <div class="card-header">
               <div class="card-title">Impacto no saldo — próximos 12 meses</div>
-              <div class="card-sub">Azul = saldo atual · Laranja = saldo com as compras simuladas</div>
+              <div class="card-sub">Azul/Vermelho = melhor cenário (com repasses) · Amarelo/Vermelho = pior cenário (sem repasses)</div>
             </div>
             <div class="chart-wrap" style="height:280px"><canvas id="chartEse"></canvas></div>
           </div>
@@ -3342,72 +3335,57 @@ function rodarSimulacao(){
     meses.push({mes:m,ano:y});
   }
 
-  // impactoAcumulado carrega o efeito da(s) compra(s) de um mês para o próximo,
-  // usado apenas no modo "saldo acumulado" (ver abaixo).
-  const ignorarAcumulado = document.getElementById('eseIgnorarAcumulado')?.checked;
-  let impactoAcumulado=0;
+  // Cada mês é calculado de forma isolada (sem carregar sobra/falta do mês
+  // anterior): o que sobra é gasto ou vai pro cofrinho, o que falta é coberto
+  // pelo cofrinho. Dois cenários lado a lado:
+  //  - Melhor cenário: entradas previstas + repasses pendentes (Neuza, Sol, etc)
+  //  - Pior cenário: entradas previstas SEM contar com nenhum repasse
+  // Em ambos, subtraímos as despesas previstas do mês e a parcela simulada.
   const rows=meses.map(({mes,ano})=>{
     const t=getTotalsForMonth(mes,ano);
     const eseSaida=calcEseSaidaMes(mes,ano);
-    let saldoAtual, saldoComCompra;
-    if(ignorarAcumulado){
-      // Modo "zerar todo mês": cada mês é 100% independente.
-      // Salário previsto do mês − despesas previstas do mês = resultado do mês.
-      // Nada disso carrega para o mês seguinte (sobra é gasta, falta não vira dívida
-      // arrastada) — cada mês recomeça do zero, só com a parcela simulada somando
-      // nos meses em que ela existir.
-      saldoAtual = t.previstoEntradas - t.totalDespPrevisao;
-      saldoComCompra = saldoAtual - eseSaida;
-    } else {
-      // Modo "saldo acumulado": usa o melhor cenário (que já carrega excedente
-      // real de meses anteriores) e acumula o efeito da compra simulada (cascata).
-      saldoAtual = t.saldoMelhorCenario;
-      impactoAcumulado-=eseSaida;
-      saldoComCompra = saldoAtual + impactoAcumulado;
-    }
-    return{mes,ano,saldoAtual,saldoComCompra,eseSaida,
-      previstoEntradas:t.previstoEntradas,totalDespPrevisao:t.totalDespPrevisao};
+    const entradasMelhor = t.previstoEntradas + t.repassesPendentes;
+    const entradasPior   = t.previstoEntradas;
+    const saidas = t.totalDespPrevisao;
+    const saldoMelhor = entradasMelhor - saidas - eseSaida;
+    const saldoPior   = entradasPior - saidas - eseSaida;
+    return{mes,ano,entradasMelhor,entradasPior,saidas,eseSaida,saldoMelhor,saldoPior,
+      repassesPendentes:t.repassesPendentes};
   });
 
   // Alertas
-  const mesesNegativos=rows.filter(r=>r.saldoComCompra<0&&r.saldoAtual>=0);
-  const mesesPiores=rows.filter(r=>r.saldoComCompra<r.saldoAtual);
+  const mesesPiorNegativo = rows.filter(r=>r.saldoPior<0);
+  const mesesMelhorNegativo = rows.filter(r=>r.saldoMelhor<0);
   let alertHtml='';
-  alertHtml+=`<div style="background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.25);border-radius:var(--radius);padding:10px 16px;margin-bottom:10px;font-size:12px;color:var(--muted)">
-    ${ignorarAcumulado
-      ? '🔄 Modo: <strong style="color:var(--text)">saldo zerado todo mês</strong> — cada mês recomeça do zero (salário previsto − despesas previstas), sem herdar sobra ou falta do mês anterior.'
-      : '📈 Modo: <strong style="color:var(--text)">saldo acumulado</strong> — a sobra (ou o rombo) de um mês é carregada para o próximo.'}
-  </div>`;
-  if(mesesNegativos.length){
+  if(mesesMelhorNegativo.length){
     alertHtml+=`<div style="background:rgba(255,95,109,.1);border:1px solid rgba(255,95,109,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
-      ⚠️ <strong>Atenção:</strong> Com essas compras, seu saldo ficaria negativo em:
-      <strong style="color:var(--danger)">${mesesNegativos.map(r=>MONTHS[r.mes-1]+' '+r.ano).join(', ')}</strong>
+      ⚠️ <strong>Atenção:</strong> Mesmo recebendo todos os repasses, o saldo ficaria negativo em:
+      <strong style="color:var(--danger)">${mesesMelhorNegativo.map(r=>MONTHS[r.mes-1]+' '+r.ano).join(', ')}</strong>
     </div>`;
-  }
-  if(!mesesNegativos.length&&mesesPiores.length){
+  } else if(mesesPiorNegativo.length){
     alertHtml+=`<div style="background:rgba(255,193,71,.08);border:1px solid rgba(255,193,71,.25);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
-      💡 Seu saldo continuaria positivo, mas reduzido em ${mesesPiores.length} mês${mesesPiores.length>1?'es':''}.
+      💡 No melhor cenário o saldo fica positivo, mas <strong>se os repasses não caírem</strong>, o saldo ficaria negativo em:
+      <strong style="color:var(--warn)">${mesesPiorNegativo.map(r=>MONTHS[r.mes-1]+' '+r.ano).join(', ')}</strong> — precisaria cobrir com o cofrinho.
     </div>`;
-  }
-  if(!mesesNegativos.length&&!mesesPiores.length){
+  } else {
     alertHtml+=`<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:var(--radius);padding:12px 16px;margin-bottom:10px;font-size:13px">
-      ✅ <strong>Boa notícia:</strong> Essa compra não afetaria negativamente seu saldo nos próximos 12 meses!
+      ✅ <strong>Boa notícia:</strong> Essa compra não deixaria o saldo negativo em nenhum dos 12 meses, mesmo no pior cenário (sem repasses)!
     </div>`;
   }
   document.getElementById('eseAlertas').innerHTML=alertHtml;
 
   // Gráfico
   const labels=rows.map(r=>MONTHS[r.mes-1].slice(0,3)+'/'+String(r.ano).slice(2));
-  const dataAtual=rows.map(r=>r.saldoAtual);
-  const dataComCompra=rows.map(r=>r.saldoComCompra);
+  const dataMelhor=rows.map(r=>r.saldoMelhor);
+  const dataPior=rows.map(r=>r.saldoPior);
   if(chartEse){ chartEse.destroy(); chartEse=null; }
   chartEse=new Chart(document.getElementById('chartEse').getContext('2d'),{
     type:'bar',
     data:{
       labels,
       datasets:[
-        {label:'Saldo atual (melhor cenário)',data:dataAtual,backgroundColor:'rgba(91,127,255,.6)',borderRadius:4},
-        {label:'Saldo com as compras',data:dataComCompra,backgroundColor:dataComCompra.map(v=>v<0?'rgba(255,95,109,.8)':'rgba(255,193,71,.7)'),borderRadius:4}
+        {label:'Melhor cenário (com repasses)',data:dataMelhor,backgroundColor:dataMelhor.map(v=>v<0?'rgba(255,95,109,.8)':'rgba(91,127,255,.6)'),borderRadius:4},
+        {label:'Pior cenário (sem repasses)',data:dataPior,backgroundColor:dataPior.map(v=>v<0?'rgba(255,95,109,.5)':'rgba(255,193,71,.7)'),borderRadius:4}
       ]
     },
     options:{
@@ -3424,25 +3402,24 @@ function rodarSimulacao(){
   let tbl=`<table class="data-table">
     <thead><tr>
       <th>Mês</th>
-      <th>Previsto Entradas</th>
+      <th>Entradas (Melhor)</th>
+      <th>Entradas (Pior)</th>
       <th>Previsto Saídas</th>
       <th>Parcela simulada</th>
-      <th>Saldo Atual</th>
-      <th>Saldo com Compra</th>
-      <th>Impacto</th>
+      <th>Saldo Melhor Cenário</th>
+      <th>Saldo Pior Cenário</th>
     </tr></thead><tbody>`;
   rows.forEach(r=>{
-    const impacto=r.saldoComCompra-r.saldoAtual;
-    const negativo=r.saldoComCompra<0;
-    tbl+=`<tr ${negativo?'style="background:rgba(255,95,109,.06)"':''}>
+    const negMelhor=r.saldoMelhor<0;
+    const negPior=r.saldoPior<0;
+    tbl+=`<tr ${negMelhor?'style="background:rgba(255,95,109,.06)"':''}>
       <td class="mono" style="font-size:12px">${MONTHS[r.mes-1].slice(0,3)} ${r.ano}</td>
-      <td class="mono" style="color:var(--accent2)">${fmtBRL(r.previstoEntradas)}</td>
-      <td class="mono" style="color:var(--danger)">${fmtBRL(r.totalDespPrevisao)}</td>
+      <td class="mono" style="color:var(--accent2)">${fmtBRL(r.entradasMelhor)}</td>
+      <td class="mono" style="color:var(--muted)">${fmtBRL(r.entradasPior)}</td>
+      <td class="mono" style="color:var(--danger)">${fmtBRL(r.saidas)}</td>
       <td class="mono" style="color:var(--warn)">${r.eseSaida>0?fmtBRL(r.eseSaida):'—'}</td>
-      <td class="mono" style="color:${r.saldoAtual>=0?'var(--accent)':'var(--danger)'}">${fmtBRL(r.saldoAtual)}</td>
-      <td class="mono" style="color:${r.saldoComCompra>=0?'var(--accent2)':'var(--danger)'}"><strong>${fmtBRL(r.saldoComCompra)}</strong>${negativo?' ⚠':''}
-      </td>
-      <td class="mono" style="color:var(--danger)">${fmtBRL(impacto)}</td>
+      <td class="mono" style="color:${r.saldoMelhor>=0?'var(--accent)':'var(--danger)'}"><strong>${fmtBRL(r.saldoMelhor)}</strong>${negMelhor?' ⚠':''}</td>
+      <td class="mono" style="color:${r.saldoPior>=0?'var(--accent2)':'var(--danger)'}"><strong>${fmtBRL(r.saldoPior)}</strong>${negPior?' ⚠':''}</td>
     </tr>`;
   });
   tbl+=`</tbody></table>`;
