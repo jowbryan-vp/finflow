@@ -394,6 +394,7 @@ select option{background:var(--card)}
             <div class="chart-wrap" style="height:260px"><canvas id="chartBar"></canvas></div>
           </div>
         </div>
+        <div id="dashPrevisaoMedia"></div>
         <div class="card mt-20">
           <div class="card-header">
             <div class="card-title">Últimos lançamentos do mês</div>
@@ -1551,6 +1552,9 @@ function renderDashboard(){
     }
   });
 
+  // ── Previsão de gastos variáveis por média histórica ──
+  renderPrevisaoMediaHistorica();
+
   // ── Recent table ──
   if(!desps.length){
     document.getElementById('recentList').innerHTML='<div class="empty-state">Nenhum lançamento neste mês</div>';
@@ -1570,6 +1574,88 @@ function renderDashboard(){
   });
   html+='</tbody></table>';
   document.getElementById('recentList').innerHTML=html;
+}
+
+// ════════════════════════════════════════════════
+// PREVISÃO DE GASTOS VARIÁVEIS (MÉDIA HISTÓRICA)
+// ════════════════════════════════════════════════
+// Considera só despesas variáveis (não fixas, não parceladas), já que
+// fixas/parceladas já têm valor conhecido e não precisam de estimativa.
+// Usa os meses anteriores que tiverem algum lançamento (até 12), exige
+// no mínimo 3 meses de histórico para começar a exibir.
+function getMesesHistoricoDisponiveis(maxN){
+  const meses=[];
+  for(let i=1;i<=maxN;i++){
+    let m=currentMonth-i, y=currentYear;
+    while(m<=0){ m+=12; y-=1; }
+    const desps=getDespesasForMonth(m,y);
+    const recs=getReceitasForMonth(m,y);
+    if(!desps.length && !recs.length) break; // sem dado nesse mês = fim do histórico
+    meses.push({mes:m,ano:y});
+  }
+  return meses; // do mais recente para o mais antigo
+}
+
+function calcPrevisaoMediaHistorica(){
+  const meses=getMesesHistoricoDisponiveis(12);
+  if(meses.length<3) return null; // histórico insuficiente
+
+  const n=meses.length;
+  const totalPorCat={};
+  let totalGeral=0;
+  meses.forEach(({mes,ano})=>{
+    const desps=getDespesasForMonth(mes,ano)
+      .filter(d=>!d.fixa && (d.parcelas||1)===1); // só variáveis
+    desps.forEach(d=>{
+      const val=d._valorParcela||0;
+      totalPorCat[d.cat]=(totalPorCat[d.cat]||0)+val;
+      totalGeral+=val;
+    });
+  });
+
+  const porCategoria=Object.entries(totalPorCat)
+    .map(([catId,total])=>({catId,media:total/n}))
+    .sort((a,b)=>b.media-a.media);
+
+  return{n,mediaTotal:totalGeral/n,porCategoria};
+}
+
+function renderPrevisaoMediaHistorica(){
+  const el=document.getElementById('dashPrevisaoMedia');
+  if(!el) return;
+  const prev=calcPrevisaoMediaHistorica();
+  if(!prev){
+    el.innerHTML=`<div class="card mt-20">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📊 Previsão de Gastos Variáveis</div>
+          <div class="card-sub">Baseada na média dos meses anteriores</div>
+        </div>
+      </div>
+      <div class="empty-state">Ainda não há histórico suficiente (mínimo 3 meses de lançamentos) para calcular essa previsão.</div>
+    </div>`;
+    return;
+  }
+  const rows=prev.porCategoria.map(({catId,media})=>{
+    const cat=state.categories.find(c=>c.id===catId);
+    return `<div class="item-row" style="margin-bottom:8px">
+      <div class="item-row-info"><div class="item-row-name">${cat?.name||catId}</div></div>
+      <div class="item-row-val neg">${fmtBRL(media)}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML=`<div class="card mt-20">
+    <div class="card-header">
+      <div>
+        <div class="card-title">📊 Previsão de Gastos Variáveis</div>
+        <div class="card-sub">Média dos últimos ${prev.n} mês${prev.n>1?'es':''} · só despesas variáveis (exclui fixas e parceladas)</div>
+      </div>
+      <span class="badge badge-blue">${fmtBRL(prev.mediaTotal)}/mês</span>
+    </div>
+    ${rows || '<div class="empty-state">Nenhuma despesa variável registrada no período.</div>'}
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)">
+      💡 Essa é uma estimativa baseada no seu histórico — use como referência de planejamento, não como valor fixo previsto.
+    </div>
+  </div>`;
 }
 
 // ════════════════════════════════════════════════
