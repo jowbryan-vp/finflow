@@ -1251,6 +1251,7 @@ function migrateState() {
   if (!state.faturasPagas) state.faturasPagas = {};
   if (!state.faturasContas) state.faturasContas = {}; // {faturaKey: contaId} — de qual conta saiu o pagamento da fatura
   if (!state.contribuicaoPaga) state.contribuicaoPaga = {}; // {mesKey: true}
+  if (!state.contribuicaoContas) state.contribuicaoContas = {}; // {mesKey: {contaId, valor, dataPagamento}} — de qual conta saiu o pagamento da contribuição
   state.despesas.forEach(d=>{
     if(!d.pagoMeses) d.pagoMeses={};
     if(!d.split) d.split=[]; // [{personId, percent}]
@@ -1643,8 +1644,8 @@ function getDespesasForMonth(mes,ano){
   return result;
 }
 
-function getReceitasContribuiveisPrevisao(mes,ano){ return getReceitasForMonth(mes,ano).filter(r=>!r.isRepasse); }
-function getReceitasContribuiveis(mes,ano){ return getReceitasEfetivasForMonth(mes,ano).filter(r=>!r.isRepasse); }
+function getReceitasContribuiveisPrevisao(mes,ano){ return getReceitasForMonth(mes,ano).filter(r=>!r.isRepasse && r.tributavel!==false); }
+function getReceitasContribuiveis(mes,ano){ return getReceitasEfetivasForMonth(mes,ano).filter(r=>!r.isRepasse && r.tributavel!==false); }
 function isCartaoDeCredito(id){ return id!=='dinheiro'; }
 function isContribuicaoPaga(mes,ano){ return !!(state.contribuicaoPaga&&state.contribuicaoPaga[mesKey(mes,ano)]); }
 
@@ -1788,10 +1789,47 @@ function calcExcedenteAcumulado(mes,ano){
 // ════════════════════════════════════════════════
 function toggleContribuicaoPaga(){
   const k=mesKey(currentMonth,currentYear);
+  const jaPaga=!!(state.contribuicaoPaga&&state.contribuicaoPaga[k]);
+  if(jaPaga){
+    // Desmarcar: não precisa perguntar nada
+    state.contribuicaoPaga[k]=false;
+    if(state.contribuicaoContas) delete state.contribuicaoContas[k];
+    scheduleSave(); renderDashboard();
+    toast('Contribuição desmarcada — voltou para previsão');
+    return;
+  }
+  openPagarContribuicaoModal();
+}
+function openPagarContribuicaoModal(){
+  const valor=calcContribuicao(currentMonth,currentYear);
+  const contaOpts = state.contas.length
+    ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+    : `<option value="">— Cadastre uma conta primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Pagar Contribuição';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Contribuição de ${MONTHS[currentMonth-1]} ${currentYear}: <strong style="color:var(--danger)">${fmtBRL(valor)}</strong></div>
+    <div class="form-grid">
+      <div class="form-group full"><label>De qual conta bancária sai o pagamento?</label><select id="pagarContribuicaoConta">${contaOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="confirmarPagamentoContribuicao()">✓ Confirmar pagamento</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarPagamentoContribuicao(){
+  const contaId=document.getElementById('pagarContribuicaoConta')?.value;
+  if(!contaId){toast('Cadastre e selecione a conta bancária de origem');return;}
+  const k=mesKey(currentMonth,currentYear);
+  const valor=calcContribuicao(currentMonth,currentYear);
   if(!state.contribuicaoPaga) state.contribuicaoPaga={};
-  state.contribuicaoPaga[k]=!state.contribuicaoPaga[k];
-  scheduleSave(); renderDashboard();
-  toast(state.contribuicaoPaga[k]?'Contribuição marcada como paga — saiu do caixa!':'Contribuição desmarcada — voltou para previsão');
+  if(!state.contribuicaoContas) state.contribuicaoContas={};
+  state.contribuicaoPaga[k]=true;
+  // Segue o mesmo padrão de faturasContas: mapa separado {mesKey: contaId},
+  // mais um registro detalhado (valor e data) pra histórico/auditoria.
+  state.contribuicaoContas[k]={contaId,valor,dataPagamento:new Date().toISOString()};
+  scheduleSave(); closeModal(); renderDashboard();
+  toast('Contribuição marcada como paga — saiu do caixa!');
 }
 
 function toggleFaturaPaga(cardId){
@@ -2163,9 +2201,9 @@ function renderRelatorio(){
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
-    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse'};
+    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
-    recs.forEach(r=>{html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${r.nome||'—'}</td><td>${r.isRepasse?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
+    recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${r.nome||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
   }
   html+=`<h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Despesas</h4>`;
@@ -2281,7 +2319,7 @@ function renderReceitas(){
     bannerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:12px;gap:10px"><span>✓ Mostrando só as receitas <strong>já recebidas</strong></span><button class="btn btn-ghost btn-sm" onclick="window._recFiltro='todas';renderReceitas()">✕ Ver todas</button></div>`;
   }
 
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
   let html=bannerHTML;
 
   // ── Seção de Repasses agrupada por pessoa ──
@@ -2351,7 +2389,8 @@ function renderReceitas(){
         <div class="item-row-info">
           <div class="item-row-name">${r.nome||tipos[r.tipo]||r.tipo}
             ${r.recorrente?'<span class="tag" style="margin-left:4px">Recorrente</span>':''}
-            ${r.isRepasse?'<span class="badge badge-yellow" style="margin-left:4px">Sem contribuição</span>':''}
+            ${r.isResgate?'<span class="badge badge-blue" style="margin-left:4px">Resgate do Cofrinho</span>':''}
+            ${(r.isRepasse||r.tributavel===false)?'<span class="badge badge-yellow" style="margin-left:4px">Sem contribuição</span>':''}
           </div>
           <div class="item-row-meta">${tipos[r.tipo]||r.tipo} · ${MONTHS[r.mes-1]} ${r.ano}</div>
         </div>
@@ -2385,7 +2424,7 @@ function delReceita(id){state.receitas=state.receitas.filter(r=>r.id!==id);sched
 
 function openEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
-  const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse'};
+  const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
       state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
@@ -3229,6 +3268,13 @@ function calcSaldoConta(contaId){
     if(!ano||!mes) return;
     const tm=getTotalsForMonth(mes,ano);
     saldo-=(tm.byCard&&tm.byCard[card.id])||0;
+  });
+  // Contribuição (10%) paga: debita a conta escolhida no momento do pagamento
+  Object.keys(state.contribuicaoContas||{}).forEach(k=>{
+    const info=state.contribuicaoContas[k];
+    if(!info||info.contaId!==contaId) return;
+    if(!state.contribuicaoPaga||!state.contribuicaoPaga[k]) return;
+    saldo-=(info.valor||0);
   });
   return saldo;
 }
@@ -4488,7 +4534,10 @@ function confirmarResgateCofrinho(cofrinhoId){
   const movId=uid(); // ID compartilhado entre a movimentação do cofrinho e a receita gerada, pra exclusão exata
   state.movimentacoesCofrinhos.push({id:movId,cofrinhoId,valor,mes,ano,obs:obs||'Resgate '+nomeCofr,tipo:'resgate',createdAt:uid()});
   // Já entra creditado e recebido na conta escolhida — é um movimento imediato e real.
-  state.receitas.push({id:uid(),tipo:'repasse',nome:'Resgate cofrinho: '+nomeCofr+(obs?' - '+obs:''),valor,mes,ano,conta:contaId,recorrente:false,isRepasse:true,isResgate:true,cofrinhoMovId:movId,recebidaMeses:{[mesKey(mes,ano)]:true},createdAt:uid()});
+  // tipo:'resgate' (não 'repasse') — é dinheiro que já era seu, não uma nova
+  // entrada operacional; tributavel:false garante que fica fora da base de 10%
+  // mesmo sem depender do flag isRepasse (que é conceito de terceiros).
+  state.receitas.push({id:uid(),tipo:'resgate',nome:'Resgate do Cofrinho: '+nomeCofr+(obs?' - '+obs:''),valor,mes,ano,conta:contaId,recorrente:false,isResgate:true,tributavel:false,cofrinhoMovId:movId,recebidaMeses:{[mesKey(mes,ano)]:true},createdAt:uid()});
   scheduleSave();closeModal();renderCofrinho();
   if(mes===currentMonth&&ano===currentYear) renderDashboard();
   toast('Resgate de '+fmtBRL(valor)+' registrado! Já creditado na conta.');
@@ -4580,7 +4629,7 @@ function exportarRepassePessoaPDF(personId){
 // Relatório de caixa (balanço consolidado do mês)
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
   let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${r.nome||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
   if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
