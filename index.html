@@ -52,6 +52,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .logo-mark{width:32px;height:32px;background:linear-gradient(135deg,var(--accent),var(--accent2));border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff;flex-shrink:0}
 .logo-text{font-weight:700;font-size:16px;letter-spacing:-.3px}
 .logo-sub{font-size:10px;color:var(--muted);font-weight:400}
+.perfil-switcher{display:flex;align-items:center;gap:8px;margin:0 14px 14px;padding:9px 12px;background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:12px;font-weight:600;transition:border-color .15s}
+.perfil-switcher:hover{border-color:var(--accent)}
+.perfil-dot{width:9px;height:9px;border-radius:3px;background:var(--accent);flex-shrink:0}
 .sidebar-nav{flex:1;padding:14px 10px;overflow-y:auto}
 .nav-section-label{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--muted);padding:10px 10px 4px;text-transform:uppercase}
 .nav-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--radius);cursor:pointer;color:var(--muted);font-size:13px;font-weight:500;transition:background .15s,color .15s;user-select:none}
@@ -357,6 +360,11 @@ select option{background:var(--card)}
         <div class="logo-text">FinFlow</div>
         <div class="logo-sub">Controle Financeiro</div>
       </div>
+    </div>
+    <div class="perfil-switcher" onclick="openPerfilModal()" title="Trocar de perfil">
+      <div id="perfilAtivoDot" class="perfil-dot"></div>
+      <span id="perfilAtivoNome">—</span>
+      <span style="margin-left:auto;opacity:.6;font-size:11px">▾</span>
     </div>
     <nav class="sidebar-nav">
       <div class="nav-section-label">Visão Geral</div>
@@ -1060,13 +1068,10 @@ async function syncFromDrive() {
     const fid = await findDataFile();
     if (fid) {
       const data = await readDataFile(fid);
-      if (data && data.categories) {
-        state = data;
-        migrateState();
-      }
+      if (data) migrateAppData(data);
     } else {
       // First time — push local/default data
-      await createDataFile(state);
+      await createDataFile(buildSaveObject());
     }
     setDriveStatus('synced', 'Sincronizado ✓');
   } catch(e) {
@@ -1078,12 +1083,13 @@ async function syncFromDrive() {
 async function saveToDrive() {
   setDriveStatus('saving', 'Salvando…');
   try {
+    const saveObj = buildSaveObject();
     if (driveFileId) {
-      await updateDataFile(driveFileId, state);
+      await updateDataFile(driveFileId, saveObj);
     } else {
-      await createDataFile(state);
+      await createDataFile(saveObj);
     }
-    localStorage.setItem('finflow_local_cache', JSON.stringify(state));
+    localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
     setDriveStatus('synced', 'Sincronizado ✓');
   } catch(e) {
     console.error(e);
@@ -1094,7 +1100,7 @@ async function saveToDrive() {
 
 function scheduleSave() {
   // Always cache locally first
-  localStorage.setItem('finflow_local_cache', JSON.stringify(state));
+  localStorage.setItem('finflow_local_cache', JSON.stringify(buildSaveObject()));
   setDriveStatus('saving', 'Aguardando…');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveToDrive(), 2500);
@@ -1132,6 +1138,12 @@ const DEFAULT_CARDS = [
 ];
 
 let state = { categories:[], cards:[], contas:[], movimentacoesContas:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
+// ── Perfis (multi-usuário) ──
+// perfis = { id: { id, name, color, data:{...campos do state...} } }
+// state SEMPRE aponta para perfis[perfilAtivo].data — um objeto por perfil.
+let perfis = {};
+let perfilAtivo = null;
+const PERFIL_CORES = ['#5b7fff','#38e2b4','#ff9900','#820ad1','#ff5f6d','#00b2e3','#f7d100'];
 let currentMonth = new Date().getMonth() + 1;
 let currentYear  = new Date().getFullYear();
 // Referência fixa ao mês/ano real de HOJE (não muda ao navegar com as setinhas).
@@ -1200,11 +1212,141 @@ function migrateState() {
   addSub('assinaturas','Tecnologia'); addSub('comidas','Restaurante');
 }
 
+// ════════════════════════════════════════════════
+// PERFIS (multi-usuário)
+// ════════════════════════════════════════════════
+// Recebe o objeto bruto vindo do Drive/localStorage/import e monta perfis+state.
+// Compatível com o formato antigo (state "flat", sem perfis) — migra automaticamente
+// pro novo formato na primeira vez que abrir.
+function migrateAppData(raw){
+  if(raw && raw.perfis && Object.keys(raw.perfis).length){
+    perfis = raw.perfis;
+    perfilAtivo = raw.perfilAtivo && perfis[raw.perfilAtivo] ? raw.perfilAtivo : Object.keys(perfis)[0];
+  } else if(raw && (raw.categories || raw.receitas || raw.despesas || raw.cards)){
+    // Formato antigo (sem perfis): vira o primeiro perfil automaticamente
+    const id='perfil_'+uid();
+    perfis = { [id]: { id, name:'Meu Perfil', color:PERFIL_CORES[0], data: raw } };
+    perfilAtivo = id;
+  } else {
+    // Nada salvo ainda: cria o perfil inicial vazio
+    const id='perfil_'+uid();
+    perfis = { [id]: { id, name:'Meu Perfil', color:PERFIL_CORES[0], data:{} } };
+    perfilAtivo = id;
+  }
+  state = perfis[perfilAtivo].data || {};
+  migrateState();
+  renderPerfilSwitcher();
+}
+// Monta o objeto completo que vai pro Drive/localStorage/export — sempre grava o
+// state em memória de volta no perfil ativo antes de serializar.
+function buildSaveObject(){
+  if(perfilAtivo && perfis[perfilAtivo]) perfis[perfilAtivo].data = state;
+  return { version:2, perfilAtivo, perfis };
+}
+function renderPerfilSwitcher(){
+  const el=document.getElementById('perfilAtivoNome');
+  if(el && perfilAtivo && perfis[perfilAtivo]) el.textContent=perfis[perfilAtivo].name;
+  const dot=document.getElementById('perfilAtivoDot');
+  if(dot && perfilAtivo && perfis[perfilAtivo]) dot.style.background=perfis[perfilAtivo].color;
+}
+function switchPerfil(id){
+  if(!perfis[id]) return;
+  if(perfilAtivo && perfis[perfilAtivo]) perfis[perfilAtivo].data = state; // salva o que estava em memória
+  perfilAtivo = id;
+  state = perfis[id].data || {};
+  migrateState();
+  despCartaoFiltro=null; window._recFiltro='todas'; window._despFiltro='todas';
+  scheduleSave();
+  renderPerfilSwitcher();
+  closeModal();
+  navigate('dashboard');
+  toast('Perfil ativo: '+perfis[id].name);
+}
+function openPerfilModal(){
+  document.getElementById('modalTitle').textContent='Perfis';
+  document.getElementById('modalBody').innerHTML=renderPerfilModalBody();
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function renderPerfilModalBody(){
+  const rows=Object.values(perfis).map(p=>`
+    <div class="item-row" style="cursor:pointer" onclick="${p.id!==perfilAtivo?`switchPerfil('${p.id}')`:''}">
+      <div style="width:12px;height:12px;border-radius:4px;background:${p.color};flex-shrink:0"></div>
+      <div class="item-row-info"><div class="item-row-name">${p.name}</div></div>
+      ${p.id===perfilAtivo?'<span class="badge badge-blue">Ativo</span>':''}
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openRenamePerfil('${p.id}')">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="event.stopPropagation();confirmDeletePerfil('${p.id}')">✕</button>
+    </div>`).join('');
+  return `
+    <div class="item-list" style="margin-bottom:16px">${rows}</div>
+    <div class="form-grid">
+      <div class="form-group full"><label>Novo perfil</label><input type="text" id="novoPerfilNome" placeholder="Ex: Neuza"></div>
+    </div>
+    <button class="btn btn-primary mt-16" onclick="criarNovoPerfil()">+ Criar perfil</button>`;
+}
+function criarNovoPerfil(){
+  const nome=document.getElementById('novoPerfilNome').value.trim();
+  if(!nome){toast('Informe um nome');return;}
+  const id='perfil_'+uid();
+  const color=PERFIL_CORES[Object.keys(perfis).length % PERFIL_CORES.length];
+  perfis[id]={id,name:nome,color,data:{}};
+  switchPerfil(id);
+  toast('Perfil "'+nome+'" criado!');
+}
+function openRenamePerfil(id){
+  const p=perfis[id]; if(!p) return;
+  document.getElementById('modalTitle').textContent='Renomear Perfil';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Nome</label><input type="text" id="renamePerfilNome" value="${p.name}"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="renamePerfilCor" value="${p.color}" style="height:38px;padding:4px"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="salvarRenamePerfil('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="openPerfilModal()">Cancelar</button>
+    </div>`;
+}
+function salvarRenamePerfil(id){
+  const p=perfis[id]; if(!p) return;
+  const nome=document.getElementById('renamePerfilNome').value.trim();
+  if(!nome){toast('Informe um nome');return;}
+  p.name=nome;
+  p.color=document.getElementById('renamePerfilCor').value;
+  scheduleSave();
+  openPerfilModal();
+  renderPerfilSwitcher();
+  toast('Perfil atualizado!');
+}
+function confirmDeletePerfil(id){
+  if(Object.keys(perfis).length<=1){toast('Precisa manter pelo menos 1 perfil');return;}
+  const p=perfis[id]; if(!p) return;
+  document.getElementById('modalTitle').textContent='Excluir Perfil';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:16px">⚠️ Tem certeza que quer excluir o perfil <strong>${p.name}</strong>? Todas as receitas, despesas, contas e demais dados desse perfil serão apagados <strong>permanentemente</strong>. Essa ação não pode ser desfeita.</div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-danger" onclick="executarDeletePerfil('${id}')">Sim, excluir permanentemente</button>
+      <button class="btn btn-ghost" onclick="openPerfilModal()">Cancelar</button>
+    </div>`;
+}
+function executarDeletePerfil(id){
+  if(id===perfilAtivo){
+    const outros=Object.keys(perfis).filter(x=>x!==id);
+    if(!outros.length){toast('Precisa manter pelo menos 1 perfil');return;}
+    delete perfis[id];
+    switchPerfil(outros[0]);
+    return;
+  }
+  delete perfis[id];
+  scheduleSave();
+  openPerfilModal();
+  toast('Perfil excluído');
+}
+
 async function initApp() {
   // Load local cache first for instant render
   const cache = localStorage.getItem('finflow_local_cache');
-  if (cache) { try { state = JSON.parse(cache); } catch(e) {} }
-  migrateState();
+  let cachedObj = null;
+  if (cache) { try { cachedObj = JSON.parse(cache); } catch(e) {} }
+  migrateAppData(cachedObj);
 
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
@@ -1218,7 +1360,7 @@ async function initApp() {
 
 // ── Export / Import ──
 function exportData() {
-  const blob = new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const blob = new Blob([JSON.stringify(buildSaveObject(),null,2)],{type:'application/json'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href=url; a.download=`finflow_backup_${new Date().toISOString().slice(0,10)}.json`;
@@ -1228,7 +1370,7 @@ function exportData() {
 function importData(e) {
   const file=e.target.files[0]; if(!file)return;
   const reader=new FileReader();
-  reader.onload=ev=>{try{state=JSON.parse(ev.target.result);migrateState();scheduleSave();renderAll();toast('Importado!');}catch{toast('Arquivo inválido!')}};
+  reader.onload=ev=>{try{const raw=JSON.parse(ev.target.result);migrateAppData(raw);scheduleSave();renderAll();toast('Importado!');}catch{toast('Arquivo inválido!')}};
   reader.readAsText(file); e.target.value='';
 }
 
@@ -2040,7 +2182,8 @@ function openEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse'};
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+    ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
+      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Receita';
   document.getElementById('modalBody').innerHTML=`
@@ -2070,7 +2213,8 @@ function saveEditReceita(id){
   r.valor=parseFloat(document.getElementById('eRecValor').value)||0;
   r.mes=parseInt(document.getElementById('eRecMes').value);
   r.ano=parseInt(document.getElementById('eRecAno').value);
-  r.conta=document.getElementById('eRecConta')?.value||r.conta||null;
+  const contaSelecionada=document.getElementById('eRecConta')?.value;
+  r.conta=contaSelecionada!==undefined?(contaSelecionada||null):(r.conta||null);
   r.recorrente=document.getElementById('eRecFixo').checked;
   r.isRepasse=r.tipo==='repasse';
   scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
@@ -2358,7 +2502,8 @@ function openEditDespesa(id){
   const catOpts=state.categories.map(c=>`<option value="${c.id}" ${d.cat===c.id?'selected':''}>${c.name}</option>`).join('');
   const cardOpts=state.cards.map(c=>`<option value="${c.id}" ${d.cartao===c.id?'selected':''}>${c.name}</option>`).join('');
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}" ${d.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+    ? `<option value="" ${!d.conta?'selected':''}>— Sem conta vinculada —</option>` +
+      state.contas.map(c=>`<option value="${c.id}" ${d.conta===c.id?'selected':''}>${c.name}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   const cat=state.categories.find(c=>c.id===d.cat);
   const subOpts=(cat?.subs||[]).map(s=>`<option value="${s}" ${d.subcat===s?'selected':''}>${s}</option>`).join('');
@@ -2440,7 +2585,8 @@ function saveEditDespesa(id){
   d.cat=document.getElementById('eDespCat').value;
   d.subcat=document.getElementById('eDespSubcat').value;
   d.cartao=document.getElementById('eDespCartao').value;
-  d.conta=document.getElementById('eDespConta')?.value||d.conta||null;
+  const contaSelecionadaDesp=document.getElementById('eDespConta')?.value;
+  d.conta=contaSelecionadaDesp!==undefined?(contaSelecionadaDesp||null):(d.conta||null);
   d.valor=parseFloat(document.getElementById('eDespValor').value)||0;
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
   d.mesInicio=parseInt(document.getElementById('eDespMes').value);
