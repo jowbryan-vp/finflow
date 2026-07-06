@@ -455,6 +455,7 @@ select option{background:var(--card)}
       <!-- DASHBOARD -->
       <div id="page-dashboard" class="page active">
         <div id="kpiGrid"></div>
+        <div id="dashSaldoContas"></div>
         <div id="dashExcedentePanel"></div>
         <div class="card-bills" id="billCards"></div>
         <div class="two-col">
@@ -1555,7 +1556,7 @@ function renderDashboard(){
       </div>
     </div>`;
 
-  html+=renderSaldoContasCard();
+  document.getElementById('dashSaldoContas').innerHTML=renderSaldoContasCard();
 
   // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
@@ -2038,6 +2039,9 @@ function delReceita(id){state.receitas=state.receitas.filter(r=>r.id!==id);sched
 function openEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse'};
+  const contaOpts = state.contas.length
+    ? state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+    : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Receita';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
@@ -2050,6 +2054,7 @@ function openEditReceita(id){
         <select id="eRecMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${r.mes===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano</label><input type="number" id="eRecAno" value="${r.ano}" min="2020" max="2040"></div>
+      <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta">${contaOpts}</select></div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eRecFixo" style="width:auto" ${r.recorrente?'checked':''}><label for="eRecFixo">Recorrente (mensal)</label></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -2065,6 +2070,7 @@ function saveEditReceita(id){
   r.valor=parseFloat(document.getElementById('eRecValor').value)||0;
   r.mes=parseInt(document.getElementById('eRecMes').value);
   r.ano=parseInt(document.getElementById('eRecAno').value);
+  r.conta=document.getElementById('eRecConta')?.value||r.conta||null;
   r.recorrente=document.getElementById('eRecFixo').checked;
   r.isRepasse=r.tipo==='repasse';
   scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
@@ -2351,6 +2357,9 @@ function openEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
   const catOpts=state.categories.map(c=>`<option value="${c.id}" ${d.cat===c.id?'selected':''}>${c.name}</option>`).join('');
   const cardOpts=state.cards.map(c=>`<option value="${c.id}" ${d.cartao===c.id?'selected':''}>${c.name}</option>`).join('');
+  const contaOpts = state.contas.length
+    ? state.contas.map(c=>`<option value="${c.id}" ${d.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+    : `<option value="">— Nenhuma conta cadastrada —</option>`;
   const cat=state.categories.find(c=>c.id===d.cat);
   const subOpts=(cat?.subs||[]).map(s=>`<option value="${s}" ${d.subcat===s?'selected':''}>${s}</option>`).join('');
   currentSplitRows=(d.split||[]).map(s=>({personId:s.personId,percent:s.percent}));
@@ -2368,6 +2377,7 @@ function openEditDespesa(id){
         <select id="eDespMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${d.mesInicio===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
+      <div class="form-group full"><label>Conta bancária (de onde sai o dinheiro)</label><select id="eDespConta">${contaOpts}</select></div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eDespFixa" style="width:auto" ${d.fixa?'checked':''}><label for="eDespFixa">Despesa fixa (recorrente)</label></div>
       <div class="checkbox-row form-group full">
         <input type="checkbox" id="eDespDividida" style="width:auto" ${hasSplit?'checked':''} onchange="eOnDespDivididaChange()">
@@ -2430,6 +2440,7 @@ function saveEditDespesa(id){
   d.cat=document.getElementById('eDespCat').value;
   d.subcat=document.getElementById('eDespSubcat').value;
   d.cartao=document.getElementById('eDespCartao').value;
+  d.conta=document.getElementById('eDespConta')?.value||d.conta||null;
   d.valor=parseFloat(document.getElementById('eDespValor').value)||0;
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
   d.mesInicio=parseInt(document.getElementById('eDespMes').value);
