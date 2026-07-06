@@ -198,6 +198,71 @@ select option{background:var(--card)}
 .step-desc code{background:var(--input-bg);padding:1px 6px;border-radius:4px;font-family:var(--mono);font-size:11px;color:var(--accent2)}
 .step-desc a{color:var(--accent);text-decoration:none}
 .step-desc a:hover{text-decoration:underline}
+/* ══════════════════════════════════════════════
+   RESPONSIVO — MOBILE
+   ══════════════════════════════════════════════ */
+.mobile-menu-btn{
+  display:none;position:fixed;top:12px;left:14px;z-index:150;
+  width:40px;height:40px;border-radius:10px;background:var(--surface);
+  border:1px solid var(--border);color:var(--text);align-items:center;justify-content:center;
+}
+.sidebar-overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;
+  opacity:0;pointer-events:none;transition:opacity .2s;
+}
+.sidebar-overlay.open{opacity:1;pointer-events:all}
+
+@media (max-width:860px){
+  .mobile-menu-btn{display:flex}
+  .sidebar-overlay{display:block}
+
+  .sidebar{
+    transform:translateX(-100%);
+    transition:transform .25s ease;
+    z-index:120;
+    box-shadow:var(--shadow);
+  }
+  .sidebar.open{transform:translateX(0)}
+
+  .main{margin-left:0}
+  .topbar{padding:0 16px 0 62px;flex-wrap:wrap;height:auto;min-height:56px;gap:8px;padding-top:8px;padding-bottom:8px}
+  .topbar-title{font-size:14px;flex:1 1 100%;order:1}
+  .drive-badge{order:3;font-size:11px}
+  .period-nav{order:2;margin-left:auto}
+  .content{padding:14px}
+
+  .kpi-grid,.kpi-grid.four-col,
+  .card-bills,
+  .two-col{grid-template-columns:1fr!important}
+
+  div[style*="grid-template-columns:repeat(3,1fr)"],
+  div[style*="grid-template-columns:repeat(4,1fr)"]{
+    grid-template-columns:1fr!important;
+  }
+
+  .form-grid{grid-template-columns:1fr}
+
+  .card{padding:16px;overflow-x:auto}
+  .kpi{padding:14px}
+  .kpi-value{font-size:20px}
+
+  /* Tabelas: rolagem horizontal em vez de quebrar layout */
+  table.data-table{display:block;overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+  table.data-table thead,table.data-table tbody{display:table;width:100%}
+
+  .modal{max-width:100%;width:100%;margin:0;border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    position:fixed;left:0;right:0;bottom:0;max-height:85vh}
+  .modal-overlay{padding:0;align-items:flex-end}
+
+  .btn{padding:10px 14px;font-size:13px}
+  .sidebar-footer .btn{font-size:12px}
+}
+
+@media (max-width:480px){
+  .kpi-value{font-size:18px}
+  .card{padding:14px}
+  .content{padding:10px}
+}
 </style>
 </head>
 <body>
@@ -281,7 +346,11 @@ select option{background:var(--card)}
 
 <!-- ═══ APP ═══ -->
 <div class="shell" id="appShell" style="display:none">
-  <aside class="sidebar">
+  <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleMobileMenu()" aria-label="Abrir menu">
+    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileMenu()"></div>
+  <aside class="sidebar" id="sidebar">
     <div class="sidebar-logo">
       <div class="logo-mark">F</div>
       <div>
@@ -340,6 +409,10 @@ select option{background:var(--card)}
       <div class="nav-item" data-page="cartoes" onclick="navigate('cartoes')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
         Cartões
+      </div>
+      <div class="nav-item" data-page="contas" onclick="navigate('contas')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 10h18"/><circle cx="7" cy="15" r="1"/></svg>
+        Contas Bancárias
       </div>
     </nav>
     <div class="sidebar-footer">
@@ -445,6 +518,10 @@ select option{background:var(--card)}
                   <label>Ano início</label>
                   <input type="number" id="recAno" value="2025" min="2020" max="2040">
                 </div>
+                <div class="form-group full">
+                  <label>Conta bancária (destino)</label>
+                  <select id="recConta"></select>
+                </div>
                 <div class="checkbox-row form-group full" id="recRecorrenteRow">
                   <input type="checkbox" id="recFixo" style="width:auto">
                   <label for="recFixo">Recorrente (mensal)</label>
@@ -500,6 +577,10 @@ select option{background:var(--card)}
                 <div class="form-group full" id="parcelInfoDiv" style="display:none"><div class="info-box" id="parcelInfoText">—</div></div>
                 <div class="form-group"><label>Mês Início</label><select id="despMes"><option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option></select></div>
                 <div class="form-group"><label>Ano Início</label><input type="number" id="despAno" value="2025" min="2020" max="2040"></div>
+                <div class="form-group full">
+                  <label>Conta bancária (de onde sai o dinheiro)</label>
+                  <select id="despConta"></select>
+                </div>
                 <div class="checkbox-row form-group">
                   <input type="checkbox" id="despFixa" style="width:auto" onchange="onDespFixaChange()">
                   <label for="despFixa">Despesa fixa (recorrente)</label>
@@ -782,6 +863,21 @@ select option{background:var(--card)}
         </div>
       </div>
 
+      <div id="page-contas" class="page">
+        <div class="two-col" style="align-items:start">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Nova Conta Bancária</div></div>
+            <div class="form-grid">
+              <div class="form-group full"><label>Nome</label><input type="text" id="newContaName" placeholder="Ex: Mercado Pago, Nubank, Inter"></div>
+              <div class="form-group"><label>Cor</label><input type="color" id="newContaColor" value="#38e2b4" style="height:38px;padding:4px"></div>
+              <div class="form-group"><label>Saldo inicial</label><input type="number" id="newContaSaldoInicial" placeholder="0,00" step="0.01"></div>
+            </div>
+            <button class="btn btn-primary mt-16" onclick="addConta()">Adicionar Conta</button>
+          </div>
+          <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div></div><div id="contasList"></div></div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1034,7 +1130,7 @@ const DEFAULT_CARDS = [
   {id:'dinheiro', name:'Dinheiro/PIX', color:'#38e2b4', fecha:null, paga:null},
 ];
 
-let state = { categories:[], cards:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
+let state = { categories:[], cards:[], contas:[], movimentacoesContas:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
 let currentMonth = new Date().getMonth() + 1;
 let currentYear  = new Date().getFullYear();
 // Referência fixa ao mês/ano real de HOJE (não muda ao navegar com as setinhas).
@@ -1052,6 +1148,9 @@ function mesKey(mes,ano){ return `${ano}-${String(mes).padStart(2,'0')}`; }
 function migrateState() {
   if (!state.categories || !state.categories.length) state.categories = DEFAULT_CATEGORIES.map(c=>({...c,subs:[...c.subs]}));
   if (!state.cards      || !state.cards.length)      state.cards      = DEFAULT_CARDS.map(c=>({...c}));
+  if (!state.contas)    state.contas    = []; // contas bancárias: {id,name,color,saldoInicial}
+  state.contas.forEach(c=>{ if(c.saldoInicial===undefined) c.saldoInicial=0; });
+  if (!state.movimentacoesContas) state.movimentacoesContas = []; // ajustes manuais de saldo: {id,contaId,valor,data,obs}
   if (!state.receitas)  state.receitas  = [];
   if (!state.despesas)  state.despesas  = [];
   if (!state.pessoas)   state.pessoas   = [];
@@ -1078,9 +1177,11 @@ function migrateState() {
     if(!d.split) d.split=[]; // [{personId, percent}]
     if(!d.repasses) d.repasses={}; // {mesKey: {personId: {recebido:bool, comoReceita:bool, receitaId:string|null}}}
     if(!d.createdAt) d.createdAt = d.id; // fallback ordering using uid (time-based)
+    if(d.conta===undefined) d.conta=null; // conta bancária de origem (opcional p/ lançamentos antigos)
   });
   state.receitas.forEach(r=>{
     if(!r.createdAt) r.createdAt = r.id;
+    if(r.conta===undefined) r.conta=null; // conta bancária de destino (opcional p/ lançamentos antigos)
   });
   state.cards.forEach(c=>{ if(c.fecha===undefined)c.fecha=null; if(c.paga===undefined)c.paga=null; });
   // Ensure new default categories exist
@@ -1133,8 +1234,17 @@ function importData(e) {
 // ════════════════════════════════════════════════
 // NAVIGATION
 // ════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',pessoas:'Pessoas'};
+const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas'};
+function toggleMobileMenu(){
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarOverlay').classList.toggle('open');
+}
+function closeMobileMenu(){
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarOverlay').classList.remove('open');
+}
 function navigate(page){
+  closeMobileMenu();
   // Clear card filter when leaving despesas
   if(page!=='despesas') despCartaoFiltro=null;
   if(page!=='receitas') window._recFiltro='todas';
@@ -1156,7 +1266,7 @@ function updatePeriodLabel(){ document.getElementById('periodLabel').textContent
 function renderAll(){ renderPage(document.querySelector('.nav-item.active')?.dataset?.page||'dashboard'); }
 function renderPage(page){
   updatePeriodLabel();
-  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,pessoas:renderPessoas}[page]||renderDashboard)();
+  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,contas:renderContas,pessoas:renderPessoas}[page]||renderDashboard)();
 }
 
 // ════════════════════════════════════════════════
@@ -1444,6 +1554,8 @@ function renderDashboard(){
         <div class="kpi-sub">Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}</div>
       </div>
     </div>`;
+
+  html+=renderSaldoContasCard();
 
   // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
@@ -1782,11 +1894,13 @@ function addReceita(){
   const valor=parseFloat(document.getElementById('recValor').value);
   const mes=parseInt(document.getElementById('recMes').value);
   const ano=parseInt(document.getElementById('recAno').value);
+  const conta=document.getElementById('recConta')?.value||'';
   const rec=document.getElementById('recFixo').checked&&tipo!=='repasse'&&tipo!=='extra';
   const parcelado=tipo==='extra'&&document.getElementById('recParcelado')?.checked;
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!conta){toast('Cadastre e selecione uma conta bancária de destino');return;}
   if(parcelado&&recParcelasData.length<2){toast('Gere as parcelas primeiro');return;}
-  const novaRec={id:uid(),tipo,nome,valor,mes,ano,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
+  const novaRec={id:uid(),tipo,nome,valor,mes,ano,conta,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
   if(parcelado) novaRec.parcelas=recParcelasData.map(p=>({...p}));
   state.receitas.push(novaRec);
   scheduleSave();renderReceitas();toast('Receita adicionada!');
@@ -1798,6 +1912,12 @@ function addReceita(){
 function renderReceitas(){
   document.getElementById('recPeriodLabel').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
   document.getElementById('recMes').value=currentMonth;document.getElementById('recAno').value=currentYear;
+  const recContaSel=document.getElementById('recConta');
+  if(recContaSel){
+    recContaSel.innerHTML = state.contas.length
+      ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+      : `<option value="">— Cadastre uma conta primeiro —</option>`;
+  }
   let recs=getReceitasForMonth(currentMonth,currentYear);
   recs=recs.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
 
@@ -1967,6 +2087,12 @@ function populateDespForma(){
     // Pre-select card if coming from dashboard
     if(despCartaoFiltro) cardSel.value=despCartaoFiltro;
   }
+  const contaSel=document.getElementById('despConta');
+  if(contaSel){
+    contaSel.innerHTML = state.contas.length
+      ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+      : `<option value="">— Cadastre uma conta primeiro —</option>`;
+  }
   currentSplitRows=[];
   const dividida=document.getElementById('despDividida');
   if(dividida) dividida.checked=false;
@@ -2007,6 +2133,7 @@ function addDespesa(){
   const cat=document.getElementById('despCat').value;
   const subcat=document.getElementById('despSubcat').value;
   const cartao=document.getElementById('despCartao').value;
+  const conta=document.getElementById('despConta')?.value||'';
   const valor=parseFloat(document.getElementById('despValor').value);
   const parcelas=parseInt(document.getElementById('despParcelas').value)||1;
   const mesI=parseInt(document.getElementById('despMes').value);
@@ -2016,11 +2143,12 @@ function addDespesa(){
   const statusInicial=statusEl&&document.getElementById('despPagoRow').style.display!=='none'?statusEl.value:'previsto';
   if(!desc){toast('Informe a descrição');return;}
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!conta){toast('Cadastre e selecione a conta bancária de onde sai o dinheiro');return;}
   const pagoMeses={};
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
   const split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
-  state.despesas.push({id:uid(),desc,cat,subcat,cartao,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,pagoMeses,split,repasses:{},createdAt:uid()});
+  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,pagoMeses,split,repasses:{},createdAt:uid()});
   scheduleSave();renderDespesas();toast('Despesa adicionada!');
   document.getElementById('despDesc').value='';document.getElementById('despValor').value='';
   document.getElementById('despParcelas').value=1;document.getElementById('parcelInfoDiv').style.display='none';
@@ -2453,8 +2581,148 @@ function renderCartoes(){
 }
 
 // ════════════════════════════════════════════════
+// CONTAS BANCÁRIAS
+// ════════════════════════════════════════════════
+function addConta(){
+  const name=document.getElementById('newContaName').value.trim();
+  const color=document.getElementById('newContaColor').value;
+  const saldoInicial=parseFloat(document.getElementById('newContaSaldoInicial').value)||0;
+  if(!name){toast('Informe o nome');return;}
+  const id=name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'')+'_'+uid().slice(-4);
+  if(state.contas.find(c=>c.id===id)){toast('Já existe');return;}
+  state.contas.push({id,name,color,saldoInicial});
+  scheduleSave();renderContas();
+  document.getElementById('newContaName').value='';
+  document.getElementById('newContaSaldoInicial').value='';
+  toast('Conta adicionada!');
+}
+function delConta(id){
+  const emUso = state.receitas.some(r=>r.conta===id) || state.despesas.some(d=>d.conta===id);
+  if(emUso){ toast('Essa conta tem lançamentos vinculados e não pode ser removida'); return; }
+  state.contas=state.contas.filter(c=>c.id!==id);
+  state.movimentacoesContas=state.movimentacoesContas.filter(m=>m.contaId!==id);
+  scheduleSave();renderContas();toast('Removida');
+}
+function openEditConta(id){
+  const c=state.contas.find(x=>x.id===id);if(!c)return;
+  document.getElementById('modalTitle').textContent='Editar Conta';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Nome</label><input type="text" id="eContaName" value="${c.name}"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="eContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Saldo inicial</label><input type="number" id="eContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditConta('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function saveEditConta(id){
+  const c=state.contas.find(x=>x.id===id);if(!c)return;
+  c.name=document.getElementById('eContaName').value.trim()||c.name;
+  c.color=document.getElementById('eContaColor').value;
+  c.saldoInicial=parseFloat(document.getElementById('eContaSaldoInicial').value)||0;
+  scheduleSave();closeModal();renderContas();toast('Conta atualizada!');
+}
+function openAjusteSaldoConta(id){
+  const c=state.contas.find(x=>x.id===id);if(!c)return;
+  const saldoAtual=calcSaldoConta(id);
+  document.getElementById('modalTitle').textContent='Ajustar Saldo — '+c.name;
+  document.getElementById('modalBody').innerHTML=`
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Saldo calculado automaticamente: <strong style="color:var(--text)">${fmtBRL(saldoAtual)}</strong></div>
+    <div class="form-grid">
+      <div class="form-group full"><label>Novo saldo real da conta</label><input type="number" id="ajusteContaValor" value="${saldoAtual.toFixed(2)}" step="0.01"></div>
+      <div class="form-group full"><label>Motivo do ajuste (opcional)</label><input type="text" id="ajusteContaObs" placeholder="Ex: conferência com extrato do banco"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="salvarAjusteSaldoConta('${id}')">Salvar ajuste</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function salvarAjusteSaldoConta(id){
+  const novoSaldo=parseFloat(document.getElementById('ajusteContaValor').value);
+  const obs=document.getElementById('ajusteContaObs').value.trim();
+  if(isNaN(novoSaldo)){toast('Informe um valor válido');return;}
+  const saldoAtual=calcSaldoConta(id);
+  const diferenca=novoSaldo-saldoAtual;
+  if(Math.abs(diferenca)>0.004){
+    state.movimentacoesContas.push({id:uid(),contaId:id,valor:diferenca,data:new Date().toISOString(),obs:obs||'Ajuste manual'});
+  }
+  scheduleSave();closeModal();renderContas();renderDashboard();toast('Saldo ajustado!');
+}
+// Saldo = saldo inicial + ajustes manuais + receitas recebidas − despesas pagas, vinculadas a essa conta
+function calcSaldoConta(contaId){
+  const c=state.contas.find(x=>x.id===contaId);
+  if(!c) return 0;
+  let saldo=c.saldoInicial||0;
+  state.movimentacoesContas.forEach(m=>{ if(m.contaId===contaId) saldo+=m.valor; });
+  // Percorre todos os meses com lançamentos (varre receitas/despesas diretamente,
+  // já que recebido/pago pode ter ocorrido em qualquer mês)
+  state.receitas.forEach(r=>{
+    if(r.conta!==contaId) return;
+    if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
+      r.parcelas.forEach(p=>{ if(p.recebida) saldo+=(p.valor||0); });
+    } else {
+      // recorrente ou única: soma os meses marcados como recebidos
+      Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk]) saldo+=(r.valor||0); });
+    }
+  });
+  state.despesas.forEach(d=>{
+    if(d.conta!==contaId) return;
+    const valorParcela=(d.valor||0)/(d.parcelas||1);
+    Object.keys(d.pagoMeses||{}).forEach(mk=>{ if(d.pagoMeses[mk]) saldo-=valorParcela; });
+  });
+  return saldo;
+}
+function renderContas(){
+  let html='<div class="item-list">';
+  if(!state.contas.length)html+='<div class="empty-state">Nenhuma conta cadastrada ainda. Adicione a primeira ao lado.</div>';
+  state.contas.forEach(c=>{
+    const saldo=calcSaldoConta(c.id);
+    html+=`<div class="item-row">
+      <div style="width:16px;height:16px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
+      <div class="item-row-info">
+        <div class="item-row-name">${c.name}</div>
+        <div class="item-row-meta">Saldo inicial: ${fmtBRL(c.saldoInicial)}</div>
+      </div>
+      <div class="item-row-val ${saldo>=0?'pos':'neg'}" style="font-size:15px">${fmtBRL(saldo)}</div>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjusteSaldoConta('${c.id}')" title="Ajustar saldo">⚖</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditConta('${c.id}')">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delConta('${c.id}')">✕</button>
+    </div>`;
+  });
+  html+='</div>';document.getElementById('contasList').innerHTML=html;
+}
+
+// ════════════════════════════════════════════════
 // PESSOAS (cadastro)
 // ════════════════════════════════════════════════
+// Card compacto pro Dashboard mostrando saldo de cada conta bancária cadastrada
+function renderSaldoContasCard(){
+  if(!state.contas.length) return '';
+  const total=state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+  const itens=state.contas.map(c=>{
+    const saldo=calcSaldoConta(c.id);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="width:10px;height:10px;border-radius:3px;background:${c.color};flex-shrink:0"></div>
+      <div style="flex:1;font-size:13px;font-weight:500">${c.name}</div>
+      <div class="mono" style="font-size:14px;font-weight:600;color:${saldo>=0?'var(--accent2)':'var(--danger)'}">${fmtBRL(saldo)}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card mt-20">
+    <div class="card-header">
+      <div>
+        <div class="card-title">🏦 Saldo por Conta Bancária</div>
+        <div class="card-sub">Baseado nos recebimentos/pagamentos vinculados a cada conta</div>
+      </div>
+      <span class="badge badge-blue">${fmtBRL(total)}</span>
+    </div>
+    ${itens}
+  </div>`;
+}
+
 function addPessoa(){
   const name=document.getElementById('newPersonName').value.trim();
   const color=document.getElementById('newPersonColor').value;
