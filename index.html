@@ -1259,19 +1259,8 @@ function migrateState() {
     if(!d.createdAt) d.createdAt = d.id; // fallback ordering using uid (time-based)
     if(d.conta===undefined) d.conta=null; // conta bancária de origem (só se aplica a despesas em Dinheiro/PIX; cartão de crédito usa a conta vinculada ao pagamento da fatura)
     if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
-    // Retroativo: despesas avulsas (não-fixas) em Dinheiro/PIX = débito imediato.
-    // Marca como pagas todas as ocorrências até o mês real de hoje que ainda não
-    // estavam marcadas, preservando o comportamento antigo (que já contava essas
-    // saídas incondicionalmente) agora usando o mesmo sinalizador pagoMeses.
-    if(d.cartao==='dinheiro' && !d.fixa){
-      const parcelas=d.parcelas||1;
-      for(let i=0;i<parcelas;i++){
-        let m=(d.mesInicio-1)+i, y=d.anoInicio+Math.floor(m/12); m=(m%12)+1;
-        const jaOcorreu = y<REAL_TODAY_YEAR || (y===REAL_TODAY_YEAR && m<=REAL_TODAY_MONTH);
-        const k=mesKey(m,y);
-        if(jaOcorreu && d.pagoMeses[k]===undefined) d.pagoMeses[k]=true;
-      }
-    }
+    // Despesas em Dinheiro/PIX (fixas ou avulsas) respeitam o status escolhido
+    // manualmente no lançamento (Previsto/Pago) — sem nenhum forçamento retroativo.
   });
   state.receitas.forEach(r=>{
     if(!r.createdAt) r.createdAt = r.id;
@@ -1716,8 +1705,16 @@ function getTotalsForMonth(mes,ano){
 
   const excedentAcum       = calcExcedenteAcumulado(mes,ano);
 
-  // Em caixa disponível = saldo do mês + excedente acumulado de meses anteriores
-  const emCaixaDisponivel  = emCaixaLiquido + excedentAcum;
+  // Em caixa disponível = saldo do mês + excedente acumulado de meses anteriores.
+  // MAS: se estamos no mês real de hoje e já existem Contas Bancárias cadastradas,
+  // a fonte de verdade passa a ser a soma do saldo de todas as contas (que já
+  // rastreia saldo inicial, receitas, despesas, faturas, contribuição e cofrinho
+  // vinculados) — evita ter dois números de "quanto eu tenho agora" divergentes.
+  let emCaixaDisponivel  = emCaixaLiquido + excedentAcum;
+  const usaContasComoFonte = isMesAtualReal(mes,ano) && state.contas && state.contas.length>0;
+  if(usaContasComoFonte){
+    emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+  }
 
   // Pior/Melhor cenário: o "Caixa Agora" (excedente acumulado + já recebido)
   // só pode ser considerado quando estamos olhando o MÊS REAL DE HOJE — é o
@@ -1751,7 +1748,7 @@ function getTotalsForMonth(mes,ano){
     previstoEntradas, emCaixaEntradas, totalDespPrevisao, emCaixaSaidas,
     saldoProjetado, saldoPiorCenario, saldoMelhorCenario,
     emCaixaLiquido, emCaixaDisponivel, totalRecPrevisto, repassesPendentes,
-    excedentAcum, saldoDisponivel:emCaixaDisponivel,
+    excedentAcum, saldoDisponivel:emCaixaDisponivel, usaContasComoFonte,
     byCard, byCat, recs:recsEfetivas, desps, contrib, cofrinhoSaida,
     totalRec, totalDespEfetivo, saldo
   };
@@ -1883,7 +1880,7 @@ function renderDashboard(){
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
-        excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida}=t;
+        excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte}=t;
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
@@ -1937,7 +1934,9 @@ function renderDashboard(){
       <div class="kpi" style="cursor:pointer;border-top:2px solid var(--accent)" onclick="navigateReceitasFiltro('recebidas')" title="Saldo efetivo atual incluindo meses anteriores">
         <div class="kpi-label" style="color:var(--accent)">🏦 Em Caixa Agora</div>
         <div class="kpi-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
-        <div class="kpi-sub">Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}</div>
+        <div class="kpi-sub">${usaContasComoFonte
+          ? 'Soma do saldo de todas as Contas Bancárias'
+          : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
       </div>
     </div>`;
 
@@ -2210,14 +2209,14 @@ function renderRelatorio(){
   if(contrib>0)html+=`<div class="item-row" style="margin-bottom:8px"><div class="item-row-info"><div class="item-row-name">Contribuição (automática)</div><div class="item-row-meta">10% das receitas tributáveis</div></div><div class="item-row-val neg">${fmtBRL(contrib)}</div></div>`;
   desps.forEach(d=>{
     const cat=state.categories.find(c=>c.id===d.cat), card=state.cards.find(c=>c.id===d.cartao);
-    const isFixaSem=d.fixa&&!isCartaoDeCredito(d.cartao);
-    const st=isFixaSem?(d._pago?'<span class="badge badge-ok" style="margin-left:6px">Pago</span>':'<span class="badge badge-yellow" style="margin-left:6px">Previsto</span>'):'';
-    html+=`<div class="item-row ${isFixaSem?(d._pago?'pago':'previsto'):''}" style="margin-bottom:8px">
+    const isDinheiroPix=!isCartaoDeCredito(d.cartao);
+    const st=isDinheiroPix?(d._pago?'<span class="badge badge-ok" style="margin-left:6px">Pago</span>':'<span class="badge badge-yellow" style="margin-left:6px">Previsto</span>'):'';
+    html+=`<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}" style="margin-bottom:8px">
       <div class="item-row-info">
         <div class="item-row-name">${d.desc}${d.fixa?' <span class="tag">Fixo</span>':''}${st}</div>
         <div class="item-row-meta">${cat?.name||''} · <span style="color:${card?.color||'inherit'}">${card?.name||d.cartao}</span> · Parcela ${d._parcel}/${d._total}</div>
       </div>
-      <div class="item-row-val ${isFixaSem&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
+      <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
     </div>`;
   });
   document.getElementById('relatorioContent').innerHTML=html;
@@ -2508,11 +2507,12 @@ function onDespFixaChange(){
 }
 function onCartaoChange(){
   const cartaoId=document.getElementById('despCartao')?.value;
-  const fixa=document.getElementById('despFixa')?.checked;
-  const showPago=fixa&&cartaoId==='dinheiro';
-  const row=document.getElementById('despPagoRow');
-  if(row)row.style.display=showPago?'flex':'none';
   const isDinheiro=cartaoId==='dinheiro';
+  // Status (Previsto/Pago) agora vale pra QUALQUER despesa em Dinheiro/PIX,
+  // fixa ou avulsa — permite planejar uma compra à vista futura sem que ela
+  // debite o caixa/conta na hora do lançamento.
+  const row=document.getElementById('despPagoRow');
+  if(row)row.style.display=isDinheiro?'flex':'none';
   const contaGroup=document.getElementById('despContaGroup');
   const contaInfo=document.getElementById('despContaCartaoInfo');
   if(contaGroup) contaGroup.style.display=isDinheiro?'block':'none';
@@ -2541,15 +2541,15 @@ function addDespesa(){
   const anoI=parseInt(document.getElementById('despAno').value);
   const fixa=document.getElementById('despFixa').checked;
   const statusEl=document.getElementById('despPagoStatus');
-  const statusInicial=statusEl&&document.getElementById('despPagoRow').style.display!=='none'?statusEl.value:'previsto';
+  // Status agora vale pra QUALQUER despesa em Dinheiro/PIX (fixa ou avulsa) —
+  // dá pra planejar uma compra à vista futura como "Prevista" e só marcar
+  // "Pago" manualmente quando o dinheiro realmente sair.
+  const statusInicial=(isDinheiro&&statusEl&&document.getElementById('despPagoRow').style.display!=='none')?statusEl.value:'previsto';
   if(!desc){toast('Informe a descrição');return;}
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   if(isDinheiro&&!conta){toast('Cadastre e selecione a conta bancária de onde sai o dinheiro');return;}
   const pagoMeses={};
-  // Dinheiro/PIX avulso (não-fixo) = débito imediato: nasce automaticamente pago,
-  // pra "Em Caixa Agora" e "Saldo por Conta Bancária" baterem sempre.
-  const autoPagoDinheiroAvulso = isDinheiro && !fixa;
-  if(statusInicial==='pago' || autoPagoDinheiroAvulso) pagoMeses[mesKey(mesI,anoI)]=true;
+  if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
   const split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
   state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,pagoMeses,split,repasses:{},createdAt:uid()});
@@ -2634,25 +2634,25 @@ function toggleAccordion(id){
 
 function despItemHTML(d){
   const cat=state.categories.find(c=>c.id===d.cat), card=state.cards.find(c=>c.id===d.cartao);
-  const isFixaSem=d.fixa&&!isCartaoDeCredito(d.cartao);
+  const isDinheiroPix=!isCartaoDeCredito(d.cartao);
   let dots='<div class="parcel-dots">';
   for(let i=1;i<=Math.min(d._total,16);i++) dots+=`<div class="parcel-dot ${i<d._parcel?'paid':i===d._parcel?'active':'future'}"></div>`;
   if(d._total>16) dots+=`<span style="font-size:10px;color:var(--muted)">+${d._total-16}</span>`;
   dots+='</div>';
-  const actions=isFixaSem
+  const actions=isDinheiroPix
     ?(d._pago
       ?`<button class="btn btn-ok btn-sm" onclick="togglePago('${d.id}',${currentMonth},${currentYear})">✓ Pago</button>`
       :`<button class="btn btn-warn btn-sm" onclick="togglePago('${d.id}',${currentMonth},${currentYear})">⏳ Previsto</button>`)
     :'';
   const splitBadge=(d.split&&d.split.length)
     ?`<span class="badge badge-yellow">👥</span>`:'';
-  return `<div class="item-row ${isFixaSem?(d._pago?'pago':'previsto'):''}">
+  return `<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}">
     <div class="item-row-info">
       <div class="item-row-name">${d.desc}${d.fixa?' <span class="tag">Fixo</span>':''} ${splitBadge}</div>
       <div class="item-row-meta">${cat?.name||d.cat} › ${d.subcat||''} · ${d._parcel}/${d._total}</div>
       ${d._total>1?dots:''}
     </div>
-    <div class="item-row-val ${isFixaSem&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
+    <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
     ${actions}
     <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditDespesa('${d.id}')" title="Editar">✎</button>
     <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa('${d.id}')">✕</button>
