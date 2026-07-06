@@ -586,9 +586,12 @@ select option{background:var(--card)}
                 <div class="form-group full" id="parcelInfoDiv" style="display:none"><div class="info-box" id="parcelInfoText">—</div></div>
                 <div class="form-group"><label>Mês Início</label><select id="despMes"><option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option></select></div>
                 <div class="form-group"><label>Ano Início</label><input type="number" id="despAno" value="2025" min="2020" max="2040"></div>
-                <div class="form-group full">
+                <div class="form-group full" id="despContaGroup">
                   <label>Conta bancária (de onde sai o dinheiro)</label>
                   <select id="despConta"></select>
+                </div>
+                <div class="form-group full" id="despContaCartaoInfo" style="display:none">
+                  <div class="info-box">💡 Pago no crédito: a conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard), já que o dinheiro não sai agora.</div>
                 </div>
                 <div class="checkbox-row form-group">
                   <input type="checkbox" id="despFixa" style="width:auto" onchange="onDespFixaChange()">
@@ -1184,13 +1187,15 @@ function migrateState() {
   if (!state.excedentes) state.excedentes = {}; // {mesKey: valor}
   if (!state.contribuicaoAjustes) state.contribuicaoAjustes = {}; // {mesKey: valorAjustado}
   if (!state.faturasPagas) state.faturasPagas = {};
+  if (!state.faturasContas) state.faturasContas = {}; // {faturaKey: contaId} — de qual conta saiu o pagamento da fatura
   if (!state.contribuicaoPaga) state.contribuicaoPaga = {}; // {mesKey: true}
   state.despesas.forEach(d=>{
     if(!d.pagoMeses) d.pagoMeses={};
     if(!d.split) d.split=[]; // [{personId, percent}]
     if(!d.repasses) d.repasses={}; // {mesKey: {personId: {recebido:bool, comoReceita:bool, receitaId:string|null}}}
     if(!d.createdAt) d.createdAt = d.id; // fallback ordering using uid (time-based)
-    if(d.conta===undefined) d.conta=null; // conta bancária de origem (opcional p/ lançamentos antigos)
+    if(d.conta===undefined) d.conta=null; // conta bancária de origem (só se aplica a despesas em Dinheiro/PIX; cartão de crédito usa a conta vinculada ao pagamento da fatura)
+    if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
   });
   state.receitas.forEach(r=>{
     if(!r.createdAt) r.createdAt = r.id;
@@ -1629,10 +1634,48 @@ function toggleContribuicaoPaga(){
 
 function toggleFaturaPaga(cardId){
   const k=faturaKey(cardId,currentMonth,currentYear);
+  const jaPaga=!!(state.faturasPagas&&state.faturasPagas[k]);
+  if(jaPaga){
+    // Desmarcar: não precisa perguntar nada
+    state.faturasPagas[k]=false;
+    if(state.faturasContas) delete state.faturasContas[k];
+    scheduleSave(); renderDashboard();
+    if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+    toast('Fatura desmarcada — voltou para previsão');
+    return;
+  }
+  openPagarFaturaModal(cardId);
+}
+function openPagarFaturaModal(cardId){
+  const card=state.cards.find(c=>c.id===cardId);
+  const t=getTotalsForMonth(currentMonth,currentYear);
+  const valor=(t.byCard&&t.byCard[cardId])||0;
+  const contaOpts = state.contas.length
+    ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+    : `<option value="">— Cadastre uma conta primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Pagar Fatura — '+(card?.name||cardId);
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Valor da fatura de ${MONTHS[currentMonth-1]} ${currentYear}: <strong style="color:var(--danger)">${fmtBRL(valor)}</strong></div>
+    <div class="form-grid">
+      <div class="form-group full"><label>De qual conta bancária sai o pagamento?</label><select id="pagarFaturaConta">${contaOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="confirmarPagamentoFatura('${cardId}')">✓ Confirmar pagamento</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarPagamentoFatura(cardId){
+  const contaId=document.getElementById('pagarFaturaConta')?.value;
+  if(!contaId){toast('Cadastre e selecione a conta bancária de origem');return;}
+  const k=faturaKey(cardId,currentMonth,currentYear);
   if(!state.faturasPagas) state.faturasPagas={};
-  state.faturasPagas[k]=!state.faturasPagas[k];
-  scheduleSave(); renderDashboard();
-  toast(state.faturasPagas[k]?'Fatura marcada como paga — saiu do caixa!':'Fatura desmarcada — voltou para previsão');
+  if(!state.faturasContas) state.faturasContas={};
+  state.faturasPagas[k]=true;
+  state.faturasContas[k]=contaId;
+  scheduleSave(); closeModal(); renderDashboard();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  toast('Fatura marcada como paga — saiu do caixa!');
 }
 
 function renderDashboard(){
@@ -2243,6 +2286,7 @@ function populateDespForma(){
       ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
   }
+  onCartaoChange();
   currentSplitRows=[];
   const dividida=document.getElementById('despDividida');
   if(dividida) dividida.checked=false;
@@ -2267,6 +2311,11 @@ function onCartaoChange(){
   const showPago=fixa&&cartaoId==='dinheiro';
   const row=document.getElementById('despPagoRow');
   if(row)row.style.display=showPago?'flex':'none';
+  const isDinheiro=cartaoId==='dinheiro';
+  const contaGroup=document.getElementById('despContaGroup');
+  const contaInfo=document.getElementById('despContaCartaoInfo');
+  if(contaGroup) contaGroup.style.display=isDinheiro?'block':'none';
+  if(contaInfo) contaInfo.style.display=isDinheiro?'none':'block';
 }
 function calcParcel(){
   const val=parseFloat(document.getElementById('despValor')?.value)||0;
@@ -2283,7 +2332,8 @@ function addDespesa(){
   const cat=document.getElementById('despCat').value;
   const subcat=document.getElementById('despSubcat').value;
   const cartao=document.getElementById('despCartao').value;
-  const conta=document.getElementById('despConta')?.value||'';
+  const isDinheiro=cartao==='dinheiro';
+  const conta=isDinheiro?(document.getElementById('despConta')?.value||''):null;
   const valor=parseFloat(document.getElementById('despValor').value);
   const parcelas=parseInt(document.getElementById('despParcelas').value)||1;
   const mesI=parseInt(document.getElementById('despMes').value);
@@ -2293,7 +2343,7 @@ function addDespesa(){
   const statusInicial=statusEl&&document.getElementById('despPagoRow').style.display!=='none'?statusEl.value:'previsto';
   if(!desc){toast('Informe a descrição');return;}
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
-  if(!conta){toast('Cadastre e selecione a conta bancária de onde sai o dinheiro');return;}
+  if(isDinheiro&&!conta){toast('Cadastre e selecione a conta bancária de onde sai o dinheiro');return;}
   const pagoMeses={};
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
@@ -2515,14 +2565,20 @@ function openEditDespesa(id){
       <div class="form-group full"><label>Descrição</label><input type="text" id="eDespDesc" value="${d.desc}"></div>
       <div class="form-group"><label>Categoria</label><select id="eDespCat" onchange="eUpdateSubcats()">${catOpts}</select></div>
       <div class="form-group"><label>Subcategoria</label><select id="eDespSubcat">${subOpts}</select></div>
-      <div class="form-group"><label>Cartão / Origem</label><select id="eDespCartao">${cardOpts}</select></div>
+      <div class="form-group"><label>Cartão / Origem</label><select id="eDespCartao" onchange="eOnCartaoChange()">${cardOpts}</select></div>
       <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="eDespValor" value="${d.valor}" min="0" step="0.01"></div>
       <div class="form-group"><label>Nº Parcelas</label><input type="number" id="eDespParcelas" value="${d.parcelas||1}" min="1" max="120"></div>
       <div class="form-group"><label>Mês Início</label>
         <select id="eDespMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${d.mesInicio===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
-      <div class="form-group full"><label>Conta bancária (de onde sai o dinheiro)</label><select id="eDespConta">${contaOpts}</select></div>
+      <div class="form-group full" id="eDespContaGroup" style="display:${d.cartao==='dinheiro'?'block':'none'}">
+        <label>Conta bancária (de onde sai o dinheiro)</label>
+        <select id="eDespConta">${contaOpts}</select>
+      </div>
+      <div class="form-group full" id="eDespContaCartaoInfo" style="display:${d.cartao==='dinheiro'?'none':'block'}">
+        <div class="info-box">💡 Pago no crédito: a conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard).</div>
+      </div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eDespFixa" style="width:auto" ${d.fixa?'checked':''}><label for="eDespFixa">Despesa fixa (recorrente)</label></div>
       <div class="checkbox-row form-group full">
         <input type="checkbox" id="eDespDividida" style="width:auto" ${hasSplit?'checked':''} onchange="eOnDespDivididaChange()">
@@ -2579,14 +2635,23 @@ function eUpdateSubcats(){
   const sub=document.getElementById('eDespSubcat');
   if(sub)sub.innerHTML=(cat?.subs||[]).map(s=>`<option value="${s}">${s}</option>`).join('');
 }
+function eOnCartaoChange(){
+  const cartaoId=document.getElementById('eDespCartao')?.value;
+  const isDinheiro=cartaoId==='dinheiro';
+  const g=document.getElementById('eDespContaGroup');
+  const info=document.getElementById('eDespContaCartaoInfo');
+  if(g) g.style.display=isDinheiro?'block':'none';
+  if(info) info.style.display=isDinheiro?'none':'block';
+}
 function saveEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
   d.desc=document.getElementById('eDespDesc').value.trim();
   d.cat=document.getElementById('eDespCat').value;
   d.subcat=document.getElementById('eDespSubcat').value;
   d.cartao=document.getElementById('eDespCartao').value;
+  const isDinheiro=d.cartao==='dinheiro';
   const contaSelecionadaDesp=document.getElementById('eDespConta')?.value;
-  d.conta=contaSelecionadaDesp!==undefined?(contaSelecionadaDesp||null):(d.conta||null);
+  d.conta=isDinheiro?(contaSelecionadaDesp!==undefined?(contaSelecionadaDesp||null):(d.conta||null)):null;
   d.valor=parseFloat(document.getElementById('eDespValor').value)||0;
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
   d.mesInicio=parseInt(document.getElementById('eDespMes').value);
@@ -2826,10 +2891,25 @@ function calcSaldoConta(contaId){
       Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk]) saldo+=(r.valor||0); });
     }
   });
+  // Despesas em Dinheiro/PIX debitam a conta diretamente na data do pagamento
   state.despesas.forEach(d=>{
+    if(d.cartao!=='dinheiro') return; // cartão de crédito é debitado só no pagamento da fatura (abaixo)
     if(d.conta!==contaId) return;
     const valorParcela=(d.valor||0)/(d.parcelas||1);
     Object.keys(d.pagoMeses||{}).forEach(mk=>{ if(d.pagoMeses[mk]) saldo-=valorParcela; });
+  });
+  // Faturas de cartão de crédito pagas: debita o total da fatura da conta escolhida no pagamento
+  Object.keys(state.faturasContas||{}).forEach(k=>{
+    if(state.faturasContas[k]!==contaId) return;
+    if(!state.faturasPagas||!state.faturasPagas[k]) return;
+    const card=state.cards.find(c2=>k.startsWith(c2.id+'_'));
+    if(!card) return;
+    const rest=k.slice(card.id.length+1); // "ano-mm"
+    const [anoStr,mmStr]=rest.split('-');
+    const ano=parseInt(anoStr), mes=parseInt(mmStr);
+    if(!ano||!mes) return;
+    const tm=getTotalsForMonth(mes,ano);
+    saldo-=(tm.byCard&&tm.byCard[card.id])||0;
   });
   return saldo;
 }
