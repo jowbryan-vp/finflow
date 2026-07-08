@@ -1179,6 +1179,11 @@ async function sincronizarAgora(){
   if(btn){ btn.disabled=true; btn.classList.add('spinning'); }
   try{
     await syncFromDrive(true);
+    // Limpa os contextos do Chart.js antes de re-renderizar — sem isso, o
+    // Chart.js pode desenhar o gráfico novo por cima do antigo no mesmo
+    // <canvas>, gerando sobreposição visual depois de sincronizar.
+    if(typeof chartBar!=='undefined' && chartBar){ chartBar.destroy(); chartBar=null; }
+    if(typeof chartDonut!=='undefined' && chartDonut){ chartDonut.destroy(); chartDonut=null; }
     renderAll();
     toast('Dados atualizados a partir do Drive!');
   }catch(e){
@@ -1874,8 +1879,9 @@ function confirmarPagamentoContribuicao(){
   toast('Contribuição marcada como paga — saiu do caixa!');
 }
 
-function toggleFaturaPaga(cardId){
-  const k=faturaKey(cardId,currentMonth,currentYear);
+function toggleFaturaPaga(cardId,mesParam,anoParam){
+  const mes=mesParam||currentMonth, ano=anoParam||currentYear;
+  const k=faturaKey(cardId,mes,ano);
   const jaPaga=!!(state.faturasPagas&&state.faturasPagas[k]);
   if(jaPaga){
     // Desmarcar: não precisa perguntar nada
@@ -1886,31 +1892,33 @@ function toggleFaturaPaga(cardId){
     toast('Fatura desmarcada — voltou para previsão');
     return;
   }
-  openPagarFaturaModal(cardId);
+  openPagarFaturaModal(cardId,mes,ano);
 }
-function openPagarFaturaModal(cardId){
+function openPagarFaturaModal(cardId,mesParam,anoParam){
+  const mes=mesParam||currentMonth, ano=anoParam||currentYear;
   const card=state.cards.find(c=>c.id===cardId);
-  const t=getTotalsForMonth(currentMonth,currentYear);
+  const t=getTotalsForMonth(mes,ano);
   const valor=(t.byCard&&t.byCard[cardId])||0;
   const contaOpts = state.contas.length
     ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Pagar Fatura — '+(card?.name||cardId);
   document.getElementById('modalBody').innerHTML=`
-    <div class="info-box" style="margin-bottom:14px">Valor da fatura de ${MONTHS[currentMonth-1]} ${currentYear}: <strong style="color:var(--danger)">${fmtBRL(valor)}</strong></div>
+    <div class="info-box" style="margin-bottom:14px">Valor da fatura de ${MONTHS[mes-1]} ${ano}: <strong style="color:var(--danger)">${fmtBRL(valor)}</strong></div>
     <div class="form-grid">
       <div class="form-group full"><label>De qual conta bancária sai o pagamento?</label><select id="pagarFaturaConta">${contaOpts}</select></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="confirmarPagamentoFatura('${cardId}')">✓ Confirmar pagamento</button>
+      <button class="btn btn-success" onclick="confirmarPagamentoFatura('${cardId}',${mes},${ano})">✓ Confirmar pagamento</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
 }
-function confirmarPagamentoFatura(cardId){
+function confirmarPagamentoFatura(cardId,mesParam,anoParam){
+  const mes=mesParam||currentMonth, ano=anoParam||currentYear;
   const contaId=document.getElementById('pagarFaturaConta')?.value;
   if(!contaId){toast('Cadastre e selecione a conta bancária de origem');return;}
-  const k=faturaKey(cardId,currentMonth,currentYear);
+  const k=faturaKey(cardId,mes,ano);
   if(!state.faturasPagas) state.faturasPagas={};
   if(!state.faturasContas) state.faturasContas={};
   state.faturasPagas[k]=true;
@@ -3333,12 +3341,19 @@ function calcSaldoConta(contaId){
     const tm=getTotalsForMonth(mes,ano);
     saldo-=(tm.byCard&&tm.byCard[card.id])||0;
   });
-  // Contribuição (10%) paga: debita a conta escolhida no momento do pagamento
+  // Contribuição (10%) paga: debita a conta escolhida no momento do pagamento.
+  // Usa o valor DINÂMICO recalculado agora (calcContribuicao), não o valor
+  // estático salvo no momento do pagamento — assim, se uma receita daquele mês
+  // for editada depois, o Saldo por Conta continua batendo com o Em Caixa Agora
+  // (que também sempre recalcula na hora).
   Object.keys(state.contribuicaoContas||{}).forEach(k=>{
     const info=state.contribuicaoContas[k];
     if(!info||info.contaId!==contaId) return;
     if(!state.contribuicaoPaga||!state.contribuicaoPaga[k]) return;
-    saldo-=(info.valor||0);
+    const [anoStr,mesStr]=k.split('-');
+    const mes=parseInt(mesStr), ano=parseInt(anoStr);
+    if(!mes||!ano) return;
+    saldo-=calcContribuicao(mes,ano);
   });
   return saldo;
 }
@@ -3411,6 +3426,7 @@ function calcProximosVencimentos(){
   const hoje=new Date();
   const hojeY=hoje.getFullYear(), hojeM=hoje.getMonth()+1, hojeD=hoje.getDate();
   const resultado=[];
+  // Contas fixas em Dinheiro/PIX com dia de vencimento cadastrado
   state.despesas.forEach(d=>{
     if(!d.fixa || d.cartao!=='dinheiro' || !d.diaVencimento) return;
     const started = d.anoInicio<hojeY || (d.anoInicio===hojeY && d.mesInicio<=hojeM);
@@ -3423,11 +3439,30 @@ function calcProximosVencimentos(){
       if(!d.pagoMeses || !d.pagoMeses[k]){
         const dataVenc=new Date(ano, mes-1, d.diaVencimento);
         const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
-        resultado.push({despesa:d, mes, ano, diffDias});
+        resultado.push({tipo:'despesa', despesa:d, mes, ano, diffDias});
         break;
       }
       mes++; if(mes>12){mes=1;ano++;}
     }
+  });
+  // Faturas de cartão de crédito: a partir do dia seguinte ao fechamento,
+  // mostra a fatura já fechada contando os dias até o dia de pagamento.
+  state.cards.forEach(c=>{
+    if(c.id==='dinheiro' || !c.fecha || !c.paga) return;
+    // Ciclo mais recentemente fechado: se hoje ainda não passou do dia de
+    // fechamento deste mês, o último ciclo fechado foi o do mês anterior.
+    let fechoMes=hojeM, fechoAno=hojeY;
+    if(hojeD<=c.fecha){ fechoMes--; if(fechoMes<1){fechoMes=12;fechoAno--;} }
+    if(isFaturaPaga(c.id,fechoMes,fechoAno)) return; // já paga, não aparece mais
+    const t=getTotalsForMonth(fechoMes,fechoAno);
+    const valor=(t.byCard&&t.byCard[c.id])||0;
+    if(valor<=0) return; // fatura zerada, nada a cobrar
+    // Data de pagamento: mesmo mês do fechamento se paga>=fecha, senão vira o mês
+    let pagaMes=fechoMes, pagaAno=fechoAno;
+    if(c.paga<c.fecha){ pagaMes++; if(pagaMes>12){pagaMes=1;pagaAno++;} }
+    const dataVenc=new Date(pagaAno, pagaMes-1, c.paga);
+    const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
+    resultado.push({tipo:'fatura', card:c, fechoMes, fechoAno, pagaMes, pagaAno, valor, diffDias});
   });
   resultado.sort((a,b)=>a.diffDias-b.diffDias);
   return resultado;
@@ -3438,8 +3473,6 @@ function renderProximosVencimentos(){
   const lista=calcProximosVencimentos();
   if(!lista.length){ el.innerHTML=''; return; }
   const itens=lista.slice(0,10).map(item=>{
-    const d=item.despesa;
-    const cat=state.categories.find(c=>c.id===d.cat);
     let statusLabel, statusColor, borderColor;
     if(item.diffDias<0){
       statusLabel='Vencido há '+Math.abs(item.diffDias)+' dia'+(Math.abs(item.diffDias)>1?'s':'');
@@ -3451,6 +3484,19 @@ function renderProximosVencimentos(){
     } else {
       statusLabel='Em '+item.diffDias+' dias'; statusColor='var(--muted)'; borderColor='var(--border)';
     }
+    if(item.tipo==='fatura'){
+      const c=item.card;
+      return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
+        <div class="item-row-info">
+          <div class="item-row-name">💳 Fatura ${c.name}</div>
+          <div class="item-row-meta">Fechou dia ${c.fecha} · paga dia ${c.paga} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
+        </div>
+        <div class="item-row-val neg">${fmtBRL(item.valor)}</div>
+        <button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${c.id}',${item.fechoMes},${item.fechoAno})">✓ Pago</button>
+      </div>`;
+    }
+    const d=item.despesa;
+    const cat=state.categories.find(c=>c.id===d.cat);
     return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
       <div class="item-row-info">
         <div class="item-row-name">${d.desc}</div>
@@ -3464,7 +3510,7 @@ function renderProximosVencimentos(){
     <div class="card-header">
       <div>
         <div class="card-title">📅 Próximos Vencimentos</div>
-        <div class="card-sub">Contas fixas em Dinheiro/PIX ainda não pagas</div>
+        <div class="card-sub">Contas fixas em Dinheiro/PIX e faturas de cartão ainda não pagas</div>
       </div>
     </div>
     ${itens}
