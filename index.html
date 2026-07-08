@@ -506,6 +506,7 @@ select option{background:var(--card)}
       <div id="page-dashboard" class="page active">
         <div id="kpiGrid"></div>
         <div id="dashSaldoContas"></div>
+        <div id="dashProximosVencimentos"></div>
         <div id="dashExcedentePanel"></div>
         <div class="card-bills" id="billCards"></div>
         <div class="two-col">
@@ -650,6 +651,10 @@ select option{background:var(--card)}
                     <option value="previsto">Previsto (ainda não pago)</option>
                     <option value="pago">Pago</option>
                   </select>
+                </div>
+                <div class="form-group" id="despVencimentoGroup" style="display:none">
+                  <label>Dia de vencimento (todo mês)</label>
+                  <input type="number" id="despDiaVencimento" placeholder="Ex: 10" min="1" max="31">
                 </div>
                 <div class="checkbox-row form-group full">
                   <input type="checkbox" id="despDividida" style="width:auto" onchange="onDespDivididaChange()">
@@ -1298,6 +1303,7 @@ function migrateState() {
     if(!d.createdAt) d.createdAt = d.id; // fallback ordering using uid (time-based)
     if(d.conta===undefined) d.conta=null; // conta bancária de origem (só se aplica a despesas em Dinheiro/PIX; cartão de crédito usa a conta vinculada ao pagamento da fatura)
     if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
+    if(d.diaVencimento===undefined) d.diaVencimento=null; // dia de vencimento (só despesas fixas em Dinheiro/PIX)
     // Despesas em Dinheiro/PIX (fixas ou avulsas) respeitam o status escolhido
     // manualmente no lançamento (Previsto/Pago) — sem nenhum forçamento retroativo.
   });
@@ -1980,6 +1986,7 @@ function renderDashboard(){
     </div>`;
 
   document.getElementById('dashSaldoContas').innerHTML=renderSaldoContasCard();
+  renderProximosVencimentos();
 
   // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
@@ -2547,6 +2554,7 @@ function onDespFixaChange(){
 function onCartaoChange(){
   const cartaoId=document.getElementById('despCartao')?.value;
   const isDinheiro=cartaoId==='dinheiro';
+  const fixa=document.getElementById('despFixa')?.checked;
   // Status (Previsto/Pago) agora vale pra QUALQUER despesa em Dinheiro/PIX,
   // fixa ou avulsa — permite planejar uma compra à vista futura sem que ela
   // debite o caixa/conta na hora do lançamento.
@@ -2556,6 +2564,10 @@ function onCartaoChange(){
   const contaInfo=document.getElementById('despContaCartaoInfo');
   if(contaGroup) contaGroup.style.display=isDinheiro?'block':'none';
   if(contaInfo) contaInfo.style.display=isDinheiro?'none':'block';
+  // Dia de vencimento só faz sentido pra conta fixa em Dinheiro/PIX (boleto,
+  // aluguel, etc pagos à vista todo mês) — usado no card "Próximos Vencimentos".
+  const vencGroup=document.getElementById('despVencimentoGroup');
+  if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
 }
 function calcParcel(){
   const val=parseFloat(document.getElementById('despValor')?.value)||0;
@@ -2579,6 +2591,7 @@ function addDespesa(){
   const mesI=parseInt(document.getElementById('despMes').value);
   const anoI=parseInt(document.getElementById('despAno').value);
   const fixa=document.getElementById('despFixa').checked;
+  const diaVencimento=(isDinheiro&&fixa)?(parseInt(document.getElementById('despDiaVencimento')?.value)||null):null;
   const statusEl=document.getElementById('despPagoStatus');
   // Status agora vale pra QUALQUER despesa em Dinheiro/PIX (fixa ou avulsa) —
   // dá pra planejar uma compra à vista futura como "Prevista" e só marcar
@@ -2591,9 +2604,10 @@ function addDespesa(){
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
   const split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
-  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,pagoMeses,split,repasses:{},createdAt:uid()});
+  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,diaVencimento,pagoMeses,split,repasses:{},createdAt:uid()});
   scheduleSave();renderDespesas();toast('Despesa adicionada!');
   document.getElementById('despDesc').value='';document.getElementById('despValor').value='';
+  document.getElementById('despDiaVencimento').value='';
   document.getElementById('despParcelas').value=1;document.getElementById('parcelInfoDiv').style.display='none';
   currentSplitRows=[];document.getElementById('despDividida').checked=false;document.getElementById('despSplitBox').style.display='none';
 }
@@ -2602,7 +2616,10 @@ function togglePago(id,mes,ano){
   if(!d.pagoMeses)d.pagoMeses={};
   const k=mesKey(mes,ano);
   d.pagoMeses[k]=!d.pagoMeses[k];
-  scheduleSave();renderDespesas();
+  scheduleSave();
+  const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+  if(paginaAtiva==='despesas') renderDespesas();
+  if(paginaAtiva==='dashboard') renderDashboard();
   toast(d.pagoMeses[k]?'Marcado como pago ✓':'Desmarcado — voltou para previsão');
 }
 function renderDespesas(){
@@ -2828,7 +2845,11 @@ function openEditDespesa(id){
       <div class="form-group full" id="eDespContaCartaoInfo" style="display:${d.cartao==='dinheiro'?'none':'block'}">
         <div class="info-box">💡 Pago no crédito: a conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard).</div>
       </div>
-      <div class="checkbox-row form-group full"><input type="checkbox" id="eDespFixa" style="width:auto" ${d.fixa?'checked':''}><label for="eDespFixa">Despesa fixa (recorrente)</label></div>
+      <div class="checkbox-row form-group full"><input type="checkbox" id="eDespFixa" style="width:auto" ${d.fixa?'checked':''} onchange="eOnCartaoChange()"><label for="eDespFixa">Despesa fixa (recorrente)</label></div>
+      <div class="form-group full" id="eDespVencimentoGroup" style="display:${(d.cartao==='dinheiro'&&d.fixa)?'block':'none'}">
+        <label>Dia de vencimento (todo mês)</label>
+        <input type="number" id="eDespDiaVencimento" value="${d.diaVencimento||''}" min="1" max="31" placeholder="Ex: 10">
+      </div>
       <div class="checkbox-row form-group full">
         <input type="checkbox" id="eDespDividida" style="width:auto" ${hasSplit?'checked':''} onchange="eOnDespDivididaChange()">
         <label for="eDespDividida">Despesa compartilhada com outras pessoas</label>
@@ -2887,10 +2908,13 @@ function eUpdateSubcats(){
 function eOnCartaoChange(){
   const cartaoId=document.getElementById('eDespCartao')?.value;
   const isDinheiro=cartaoId==='dinheiro';
+  const fixa=document.getElementById('eDespFixa')?.checked;
   const g=document.getElementById('eDespContaGroup');
   const info=document.getElementById('eDespContaCartaoInfo');
   if(g) g.style.display=isDinheiro?'block':'none';
   if(info) info.style.display=isDinheiro?'none':'block';
+  const vencGroup=document.getElementById('eDespVencimentoGroup');
+  if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
 }
 function saveEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
@@ -2906,6 +2930,7 @@ function saveEditDespesa(id){
   d.mesInicio=parseInt(document.getElementById('eDespMes').value);
   d.anoInicio=parseInt(document.getElementById('eDespAno').value);
   d.fixa=document.getElementById('eDespFixa').checked;
+  d.diaVencimento=(isDinheiro&&d.fixa)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
   const dividida=document.getElementById('eDespDividida').checked;
   d.split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
   scheduleSave();closeModal();renderDespesas();toast('Despesa atualizada!');
@@ -3373,6 +3398,76 @@ function renderSaldoContasCard(){
       <span class="badge badge-blue">${fmtBRL(total)}</span>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px">${itens}</div>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════
+// PRÓXIMOS VENCIMENTOS (contas fixas em Dinheiro/PIX)
+// ════════════════════════════════════════════════
+// Calcula, a partir de hoje, a próxima ocorrência não paga de cada despesa
+// fixa em Dinheiro/PIX que tenha dia de vencimento cadastrado. Pula meses
+// já marcados como pagos e considera "vencido" o que já passou sem pagamento.
+function calcProximosVencimentos(){
+  const hoje=new Date();
+  const hojeY=hoje.getFullYear(), hojeM=hoje.getMonth()+1, hojeD=hoje.getDate();
+  const resultado=[];
+  state.despesas.forEach(d=>{
+    if(!d.fixa || d.cartao!=='dinheiro' || !d.diaVencimento) return;
+    const started = d.anoInicio<hojeY || (d.anoInicio===hojeY && d.mesInicio<=hojeM);
+    if(!started) return;
+    let mes=hojeM, ano=hojeY;
+    if(d.diaVencimento < hojeD){ mes++; if(mes>12){mes=1;ano++;} }
+    // acha a primeira ocorrência (a partir daqui) ainda não paga, olhando até 12 meses à frente
+    for(let i=0;i<12;i++){
+      const k=mesKey(mes,ano);
+      if(!d.pagoMeses || !d.pagoMeses[k]){
+        const dataVenc=new Date(ano, mes-1, d.diaVencimento);
+        const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
+        resultado.push({despesa:d, mes, ano, diffDias});
+        break;
+      }
+      mes++; if(mes>12){mes=1;ano++;}
+    }
+  });
+  resultado.sort((a,b)=>a.diffDias-b.diffDias);
+  return resultado;
+}
+function renderProximosVencimentos(){
+  const el=document.getElementById('dashProximosVencimentos');
+  if(!el) return;
+  const lista=calcProximosVencimentos();
+  if(!lista.length){ el.innerHTML=''; return; }
+  const itens=lista.slice(0,10).map(item=>{
+    const d=item.despesa;
+    const cat=state.categories.find(c=>c.id===d.cat);
+    let statusLabel, statusColor, borderColor;
+    if(item.diffDias<0){
+      statusLabel='Vencido há '+Math.abs(item.diffDias)+' dia'+(Math.abs(item.diffDias)>1?'s':'');
+      statusColor='var(--danger)'; borderColor='rgba(255,95,109,.4)';
+    } else if(item.diffDias===0){
+      statusLabel='Vence hoje'; statusColor='var(--danger)'; borderColor='rgba(255,95,109,.4)';
+    } else if(item.diffDias===1){
+      statusLabel='Vence amanhã'; statusColor='var(--warn)'; borderColor='rgba(255,193,71,.4)';
+    } else {
+      statusLabel='Em '+item.diffDias+' dias'; statusColor='var(--muted)'; borderColor='var(--border)';
+    }
+    return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
+      <div class="item-row-info">
+        <div class="item-row-name">${d.desc}</div>
+        <div class="item-row-meta">${cat?.name||''} · dia ${d.diaVencimento} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
+      </div>
+      <div class="item-row-val neg">${fmtBRL(d.valor)}</div>
+      <button class="btn btn-ok btn-sm" onclick="togglePago('${d.id}',${item.mes},${item.ano})">✓ Pago</button>
+    </div>`;
+  }).join('');
+  el.innerHTML=`<div class="card mt-20">
+    <div class="card-header">
+      <div>
+        <div class="card-title">📅 Próximos Vencimentos</div>
+        <div class="card-sub">Contas fixas em Dinheiro/PIX ainda não pagas</div>
+      </div>
+    </div>
+    ${itens}
   </div>`;
 }
 
