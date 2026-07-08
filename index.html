@@ -39,6 +39,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 
 /* ── Drive Status ── */
 .drive-badge{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);background:var(--card);border:1px solid var(--border);border-radius:20px;padding:4px 12px;cursor:default}
+.sync-now-btn{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:var(--text);background:var(--card);border:1px solid var(--border);border-radius:20px;padding:4px 12px;cursor:pointer;transition:border-color .15s}
+.sync-now-btn:hover{border-color:var(--accent)}
+.sync-now-btn:disabled{opacity:.6;cursor:default}
+.sync-now-btn.spinning svg{animation:spin .8s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .drive-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:background .3s}
 .drive-dot.synced{background:var(--ok)}
 .drive-dot.saving{background:var(--warn);animation:blink .8s infinite}
@@ -235,6 +240,7 @@ select option{background:var(--card)}
   .topbar{padding:0 16px 0 62px;flex-wrap:wrap;height:auto;min-height:56px;gap:8px;padding-top:8px;padding-bottom:8px}
   .topbar-title{font-size:14px;flex:1 1 100%;order:1}
   .drive-badge{order:3;font-size:11px}
+  .sync-now-btn{order:3;font-size:10px;padding:4px 10px}
   .period-nav{order:2;margin-left:auto}
   .period-context-badge{order:4;flex:1 1 100%;text-align:center;margin-left:0;margin-top:4px}
   .content{padding:14px}
@@ -482,6 +488,10 @@ select option{background:var(--card)}
         <div class="drive-dot" id="driveDot"></div>
         <span id="driveLabel">—</span>
       </div>
+      <button class="sync-now-btn" id="syncNowBtn" onclick="sincronizarAgora()" title="Buscar dados mais recentes do Drive agora">
+        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Sincronizar
+      </button>
       <div class="period-nav">
         <button class="period-btn" onclick="changeMonth(-1)">&#8249;</button>
         <span class="period-label" id="periodLabel">—</span>
@@ -1082,18 +1092,26 @@ async function driveRequest(method, url, body, contentType) {
   return res;
 }
 
-async function findDataFile() {
+async function findDataFile(forceRefresh) {
   const cached = localStorage.getItem('finflow_drive_file_id');
-  if (cached) { driveFileId = cached; return cached; }
+  if (cached && !forceRefresh) { driveFileId = cached; return cached; }
+  // orderBy modifiedTime desc: se existir mais de um arquivo com esse nome
+  // (duplicado), sempre pega o mais recente em vez do primeiro que a API
+  // devolver (que não tem ordem garantida).
   const res = await driveRequest('GET',
-    `https://www.googleapis.com/drive/v3/files?q=name='${DATA_FILENAME}' and trashed=false&fields=files(id,name)&spaces=drive`
+    `https://www.googleapis.com/drive/v3/files?q=name='${DATA_FILENAME}' and trashed=false&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&spaces=drive`
   );
   const data = await res.json();
   if (data.files && data.files.length > 0) {
+    if (data.files.length > 1) {
+      console.warn('FinFlow: encontrados', data.files.length, 'arquivos finflow_data.json no Drive — usando o mais recente:', data.files[0].id);
+    }
     driveFileId = data.files[0].id;
     localStorage.setItem('finflow_drive_file_id', driveFileId);
     return driveFileId;
   }
+  driveFileId = null;
+  localStorage.removeItem('finflow_drive_file_id');
   return null;
 }
 
@@ -1127,10 +1145,10 @@ async function updateDataFile(fileId, content) {
   return await res.json();
 }
 
-async function syncFromDrive() {
+async function syncFromDrive(forceRefresh) {
   setDriveStatus('saving', 'Carregando…');
   try {
-    const fid = await findDataFile();
+    const fid = await findDataFile(forceRefresh);
     if (fid) {
       const data = await readDataFile(fid);
       if (data) migrateAppData(data);
@@ -1143,6 +1161,27 @@ async function syncFromDrive() {
     console.error(e);
     setDriveStatus('error', 'Erro Drive');
   }
+}
+
+// Botão "Sincronizar agora": ignora o cache local de qual arquivo usar,
+// busca de novo no Drive (sempre pegando o mais recente) e recarrega a tela
+// sem precisar dar F5. Útil quando um outro aparelho salvou algo novo.
+let sincronizando=false;
+async function sincronizarAgora(){
+  if(sincronizando) return;
+  sincronizando=true;
+  const btn=document.getElementById('syncNowBtn');
+  if(btn){ btn.disabled=true; btn.classList.add('spinning'); }
+  try{
+    await syncFromDrive(true);
+    renderAll();
+    toast('Dados atualizados a partir do Drive!');
+  }catch(e){
+    console.error(e);
+    toast('Não foi possível sincronizar agora. Tente de novo.');
+  }
+  if(btn){ btn.disabled=false; btn.classList.remove('spinning'); }
+  sincronizando=false;
 }
 
 async function saveToDrive() {
