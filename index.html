@@ -1795,6 +1795,22 @@ function calcContribuicaoBase(mes,ano){
 }
 
 // Chave de fatura paga: cardId + mesKey
+// ════════════════════════════════════════════════
+// PROTEÇÃO CONTRA QUEBRA SILENCIOSA (item J)
+// Isola cada bloco do Dashboard/Relatório: se um cálculo falhar, só aquele
+// bloco fica vazio — o resto da tela continua funcionando normalmente.
+// ════════════════════════════════════════════════
+function safeRender(label, fn){
+  try{ fn(); }
+  catch(e){ console.error('[FinFlow] Falha ao renderizar "'+label+'":', e); }
+}
+function safeHTML(elId, label, fn){
+  const el=document.getElementById(elId);
+  if(!el) return;
+  try{ el.innerHTML=fn()||''; }
+  catch(e){ console.error('[FinFlow] Falha ao renderizar "'+label+'":', e); el.innerHTML=''; }
+}
+
 function faturaKey(cardId,mes,ano){ return `${cardId}_${mesKey(mes,ano)}`; }
 function isFaturaPaga(cardId,mes,ano){ return !!(state.faturasPagas&&state.faturasPagas[faturaKey(cardId,mes,ano)]); }
 function isFaturaFechada(cardId,mes,ano){ return !!(state.faturasFechadas&&state.faturasFechadas[faturaKey(cardId,mes,ano)]); }
@@ -1955,34 +1971,41 @@ function dataRecebimentoPrincipal(mes,ano){
 // - modoFinanceiro === "ciclo" (padrão) → abre pela data real de recebimento da receita principal
 //   daquela competência; se não houver, usa diaPadraoInicioCiclo. Fim = dia anterior ao início do próximo ciclo.
 function getCicloFinanceiro(perfilId,mes,ano){
-  perfilId=perfilId||perfilAtivo;
-  const perfil=perfis[perfilId];
-  const modo=(perfil&&perfil.modoFinanceiro)||'ciclo';
+  try{
+    perfilId=perfilId||perfilAtivo;
+    const perfil=perfis[perfilId];
+    const modo=(perfil&&perfil.modoFinanceiro)||'ciclo';
 
-  if(modo==='calendario'){
-    const inicio=new Date(ano,mes-1,1);
-    const fim=new Date(ano,mes,0); // último dia do mês
-    return {perfilId,mes,ano,inicio,fim,modo,diaPadrao:1,origemInicio:'mes_calendario'};
+    if(modo==='calendario'){
+      const inicio=new Date(ano,mes-1,1);
+      const fim=new Date(ano,mes,0); // último dia do mês
+      return {perfilId,mes,ano,inicio,fim,modo,diaPadrao:1,origemInicio:'mes_calendario'};
+    }
+
+    const diaPadrao=diaPadraoDoPerfil(perfilId);
+    const dataRealStr=dataRecebimentoPrincipal(mes,ano);
+    const inicio = dataRealStr ? parseDateStr(dataRealStr) : dataCicloPadrao(diaPadrao,mes,ano);
+    let mProx=mes+1, aProx=ano; if(mProx>12){mProx=1;aProx++;}
+    const dataRealProxStr=dataRecebimentoPrincipal(mProx,aProx);
+    const inicioProx = dataRealProxStr ? parseDateStr(dataRealProxStr) : dataCicloPadrao(diaPadrao,mProx,aProx);
+    const fim=new Date(inicioProx); fim.setDate(fim.getDate()-1);
+    return {perfilId,mes,ano,inicio,fim,modo,diaPadrao,origemInicio:dataRealStr?'receita_principal':'dia_padrao'};
+  }catch(e){
+    console.error('[FinFlow] getCicloFinanceiro falhou, usando fallback de mês calendário:', e);
+    return {perfilId:perfilId||perfilAtivo,mes,ano,inicio:new Date(ano,mes-1,1),fim:new Date(ano,mes,0),modo:'calendario',diaPadrao:1,origemInicio:'fallback_erro'};
   }
-
-  const diaPadrao=diaPadraoDoPerfil(perfilId);
-  const dataRealStr=dataRecebimentoPrincipal(mes,ano);
-  const inicio = dataRealStr ? parseDateStr(dataRealStr) : dataCicloPadrao(diaPadrao,mes,ano);
-  let mProx=mes+1, aProx=ano; if(mProx>12){mProx=1;aProx++;}
-  const dataRealProxStr=dataRecebimentoPrincipal(mProx,aProx);
-  const inicioProx = dataRealProxStr ? parseDateStr(dataRealProxStr) : dataCicloPadrao(diaPadrao,mProx,aProx);
-  const fim=new Date(inicioProx); fim.setDate(fim.getDate()-1);
-  return {perfilId,mes,ano,inicio,fim,modo,diaPadrao,origemInicio:dataRealStr?'receita_principal':'dia_padrao'};
 }
 // getTotalsForCiclo(ciclo): totais do ciclo financeiro (não do mês calendário).
 // Opera sobre o perfil ativo em memória (state) — troque de perfil antes de chamar
 // para consultar o ciclo de outro perfil.
 function getTotalsForCiclo(ciclo){
+ try{
   const {inicio,fim}=ciclo;
   const meses=[];
   let cur=new Date(inicio.getFullYear(),inicio.getMonth(),1);
   const limite=new Date(fim.getFullYear(),fim.getMonth(),1);
   while(cur<=limite){ meses.push({mes:cur.getMonth()+1,ano:cur.getFullYear()}); cur.setMonth(cur.getMonth()+1); }
+
 
   let receitaPrincipal=0, outrasReceitas=0, repasses=0;
   let faturasPagasTotal=0, fixosPagos=0, fixosPrevistos=0, variaveisPagos=0, reservas=0;
@@ -2045,15 +2068,33 @@ function getTotalsForCiclo(ciclo){
   // (ajusteSaldo altera saldo de conta sem entrar em nenhum totalizador de renda/gasto — item 12/17).
   const transferencias=0;
 
+  receitaPrincipal=receitaPrincipal||0; outrasReceitas=outrasReceitas||0; repasses=repasses||0;
+  faturasPagasTotal=faturasPagasTotal||0; fixosPagos=fixosPagos||0; fixosPrevistos=fixosPrevistos||0;
+  variaveisPagos=variaveisPagos||0; reservas=reservas||0;
+
   const saldoLivreReal = receitaPrincipal+outrasReceitas+repasses - faturasPagasTotal - fixosPagos - variaveisPagos - reservas;
   const saldoComprometido = fixosPrevistos;
+  const totalReceitas = receitaPrincipal+outrasReceitas+repasses;
+  const totalDespesas = faturasPagasTotal+fixosPagos+variaveisPagos;
 
   return {
     ciclo, receitaPrincipal, outrasReceitas, repasses,
     faturasPagas:faturasPagasTotal, fixosPagos, fixosPrevistos, variaveisPagos, reservas, transferencias,
     saldoLivreReal, saldoComprometido,
-    saldoPrevistoProximoCiclo: saldoLivreReal - saldoComprometido
+    saldoPrevistoProximoCiclo: saldoLivreReal - saldoComprometido,
+    // Aliases genéricos (item B) — sempre presentes, mesmo que 0, pra qualquer
+    // parte do Dashboard que espere esses nomes em vez dos específicos acima.
+    receitas: totalReceitas, despesas: totalDespesas, saldo: saldoLivreReal, faturas: faturasPagasTotal
   };
+ }catch(e){
+  console.error('[FinFlow] getTotalsForCiclo falhou, retornando totais zerados:', e);
+  return {
+    ciclo, receitaPrincipal:0, outrasReceitas:0, repasses:0,
+    faturasPagas:0, fixosPagos:0, fixosPrevistos:0, variaveisPagos:0, reservas:0, transferencias:0,
+    saldoLivreReal:0, saldoComprometido:0, saldoPrevistoProximoCiclo:0,
+    receitas:0, despesas:0, saldo:0, faturas:0
+  };
+ }
 }
 
 function getRepassesPendentesTotal(mes,ano){
@@ -2202,81 +2243,131 @@ function renderDashViewToggle(){
 // ── KPIs do Ciclo Financeiro (item 18 do escopo) ──
 function renderCicloDashboard(){
   const ciclo=getCicloFinanceiro(perfilAtivo,currentMonth,currentYear);
-  const tc=getTotalsForCiclo(ciclo);
+  const tc=getTotalsForCiclo(ciclo)||{};
   const fmtData=d=>d?d.toLocaleDateString('pt-BR'):'—';
-  document.getElementById('cicloInfoBar').innerHTML=`
+  const g=(v)=>v||0; // fallback numérico (item J)
+  safeHTML('cicloInfoBar','resumo do ciclo financeiro',()=>`
     <div class="info-box" style="margin-bottom:14px">
       🔄 Ciclo financeiro: <strong>${fmtData(ciclo.inicio)} → ${fmtData(ciclo.fim)}</strong>
       ${ciclo.origemInicio==='receita_principal'
         ? ' · início definido pela <strong>receita principal recebida</strong>'
-        : ` · início pelo <strong>dia padrão do perfil (${ciclo.diaPadrao})</strong>, ainda sem receita principal marcada como recebida nesta competência`}
-    </div>`;
-  document.getElementById('kpiGrid').innerHTML=`
+        : ciclo.origemInicio==='mes_calendario'
+          ? ' · perfil em modo <strong>mês calendário</strong>'
+          : ` · início pelo <strong>dia padrão do perfil (${ciclo.diaPadrao})</strong>, ainda sem receita principal marcada como recebida nesta competência`}
+    </div>`);
+  safeHTML('kpiGrid','KPIs do ciclo financeiro',()=>`
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px">
       <div class="kpi" style="border-top:2px solid var(--accent2)">
         <div class="kpi-label" style="color:var(--accent2)">💰 Receita Principal do Ciclo</div>
-        <div class="kpi-value green">${fmtBRL(tc.receitaPrincipal)}</div>
+        <div class="kpi-value green">${fmtBRL(g(tc.receitaPrincipal))}</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--accent)">
         <div class="kpi-label" style="color:var(--accent)">➕ Outras Receitas Recebidas</div>
-        <div class="kpi-value blue">${fmtBRL(tc.outrasReceitas)}</div>
+        <div class="kpi-value blue">${fmtBRL(g(tc.outrasReceitas))}</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--warn)">
         <div class="kpi-label" style="color:var(--warn)">🔁 Repasses / Reembolsos</div>
-        <div class="kpi-value">${fmtBRL(tc.repasses)}</div>
+        <div class="kpi-value">${fmtBRL(g(tc.repasses))}</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--danger)">
         <div class="kpi-label" style="color:var(--danger)">💳 Faturas Pagas</div>
-        <div class="kpi-value red">${fmtBRL(tc.faturasPagas)}</div>
+        <div class="kpi-value red">${fmtBRL(g(tc.faturasPagas))}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px">
       <div class="kpi" style="border-top:2px solid var(--danger)">
         <div class="kpi-label" style="color:var(--danger)">📌 Fixos Pagos</div>
-        <div class="kpi-value red">${fmtBRL(tc.fixosPagos)}</div>
+        <div class="kpi-value red">${fmtBRL(g(tc.fixosPagos))}</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--muted)">
         <div class="kpi-label" style="color:var(--muted)">📋 Fixos Previstos</div>
-        <div class="kpi-value">${fmtBRL(tc.fixosPrevistos)}</div>
+        <div class="kpi-value">${fmtBRL(g(tc.fixosPrevistos))}</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--danger)">
         <div class="kpi-label" style="color:var(--danger)">🛒 Variáveis Pagos</div>
-        <div class="kpi-value red">${fmtBRL(tc.variaveisPagos)}</div>
+        <div class="kpi-value red">${fmtBRL(g(tc.variaveisPagos))}</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--accent2)">
         <div class="kpi-label" style="color:var(--accent2)">🐷 Reservas</div>
-        <div class="kpi-value">${fmtBRL(tc.reservas)}</div>
+        <div class="kpi-value">${fmtBRL(g(tc.reservas))}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:24px">
       <div class="kpi" style="border-top:2px solid var(--accent2)">
         <div class="kpi-label" style="color:var(--accent2)">✅ Saldo Livre Real</div>
-        <div class="kpi-value ${tc.saldoLivreReal>=0?'green':'red'}">${fmtBRL(tc.saldoLivreReal)}</div>
+        <div class="kpi-value ${g(tc.saldoLivreReal)>=0?'green':'red'}">${fmtBRL(g(tc.saldoLivreReal))}</div>
         <div class="kpi-sub">Recebido − faturas/fixos/variáveis pagos − reservas</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--warn)">
         <div class="kpi-label" style="color:var(--warn)">⏳ Saldo Comprometido até o Próximo Ciclo</div>
-        <div class="kpi-value ${tc.saldoComprometido>0?'red':''}">${fmtBRL(tc.saldoComprometido)}</div>
+        <div class="kpi-value ${g(tc.saldoComprometido)>0?'red':''}">${fmtBRL(g(tc.saldoComprometido))}</div>
         <div class="kpi-sub">Fixos ainda previstos dentro do ciclo atual</div>
       </div>
-    </div>`;
+    </div>`);
 }
 
-// Painéis reaproveitados pelas duas visões (Saldo por Conta, Próximos Vencimentos, Últimos lançamentos)
+// ── Cards de fatura por cartão (item D/E/F/G) — usados nas duas visões do Dashboard ──
+function renderBillCards(){
+  if(!state.cards || !state.cards.length){ const el=document.getElementById('billCards'); if(el) el.innerHTML=''; return; }
+  const t=getTotalsForMonth(currentMonth,currentYear)||{};
+  const byCard=t.byCard||{};
+  let html='';
+  state.cards.forEach(c=>{
+    if(!isCartaoDeCredito(c.id)) return; // "dinheiro" não é fatura de cartão
+    const valor=byCard[c.id]||0;
+    const status=getFaturaStatus(c.id,currentMonth,currentYear);
+    const statusBadge = status==='paga'
+      ? `<span class="badge badge-ok" style="margin-bottom:6px">✓ Paga</span>`
+      : status==='fechada'
+        ? `<span class="badge badge-blue" style="margin-bottom:6px">🔒 Fechada</span>`
+        : `<span class="badge badge-yellow" style="margin-bottom:6px">⏳ Aberta</span>`;
+    const payBtn = status==='paga'
+      ? `<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">Desmarcar pagamento</button>`
+      : `<button class="btn btn-ok btn-sm" style="width:100%;margin-top:6px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">💰 Pagar fatura</button>`;
+    html+=`<div class="bill-card" style="border-top-color:${c.color}">
+      <div class="bill-name">${c.name}</div>
+      ${statusBadge}
+      <div class="bill-value" style="color:${status==='paga'?'var(--ok)':'var(--danger)'}">${fmtBRL(valor)}</div>
+      ${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation();abrirDespesaComCartao('${c.id}')">+ compra</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation();navigateToDespesasCartao('${c.id}')">ver fatura</button>
+      </div>
+      ${payBtn}
+    </div>`;
+  });
+  const el=document.getElementById('billCards');
+  if(el) el.innerHTML=html;
+}
+// Item F: abre Despesas já com o cartão selecionado, pronto pra lançar a compra.
+function abrirDespesaComCartao(cartaoId){
+  despCartaoFiltro=cartaoId;
+  navigate('despesas');
+  const sel=document.getElementById('despCartao');
+  if(sel) sel.value=cartaoId;
+  if(typeof onCartaoChange==='function') onCartaoChange();
+  const descField=document.getElementById('despDesc');
+  if(descField) descField.focus();
+}
+
+// Painéis reaproveitados pelas duas visões (Saldo por Conta, Cards de Fatura, Próximos Vencimentos, Últimos lançamentos)
+// Cada bloco é isolado com safeRender/safeHTML: se um cálculo falhar, só aquele bloco fica vazio (item A/J).
 function renderDashboardCommonPanels(){
-  document.getElementById('dashSaldoContas').innerHTML=renderSaldoContasCard();
-  renderProximosVencimentos();
-  const desps=getDespesasForMonth(currentMonth,currentYear);
-  document.getElementById('dashExcedentePanel').innerHTML='';
-  document.getElementById('billCards').innerHTML='';
-  document.getElementById('dashPrevisaoMedia').innerHTML='';
-  if(!desps.length){
-    document.getElementById('recentList').innerHTML='<div class="empty-state">Nenhum lançamento neste mês</div>';
-  } else {
+  safeHTML('dashSaldoContas','saldo por conta bancária', renderSaldoContasCard);
+  safeRender('cards de fatura por cartão', renderBillCards);
+  safeRender('próximos vencimentos', renderProximosVencimentos);
+  safeHTML('dashExcedentePanel','painel de excedente', ()=>'');
+  safeHTML('dashPrevisaoMedia','previsão de gastos médios', ()=>'');
+  safeRender('últimos lançamentos', ()=>{
+    const desps=getDespesasForMonth(currentMonth,currentYear)||[];
+    if(!desps.length){
+      document.getElementById('recentList').innerHTML='<div class="empty-state">Nenhum lançamento neste mês</div>';
+      return;
+    }
     let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
     desps.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,10).forEach(d=>{
-      const cat=state.categories.find(c=>c.id===d.cat);
-      const card=state.cards.find(c=>c.id===d.cartao);
+      const cat=(state.categories||[]).find(c=>c.id===d.cat);
+      const card=(state.cards||[]).find(c=>c.id===d.cartao);
       html+=`<tr>
         <td>${d.desc}</td>
         <td><span class="badge badge-blue">${cat?.name||d.cat}</span></td>
@@ -2287,17 +2378,17 @@ function renderDashboardCommonPanels(){
     });
     html+='</tbody></table>';
     document.getElementById('recentList').innerHTML=html;
-  }
+  });
 }
 
 function renderDashboard(){
-  renderDashViewToggle();
+  safeRender('alternador Ciclo/Mês', renderDashViewToggle);
   if(window._dashView!=='mes'){
-    renderCicloDashboard();
+    safeRender('KPIs do ciclo financeiro', renderCicloDashboard);
     renderDashboardCommonPanels();
     return;
   }
-  document.getElementById('cicloInfoBar').innerHTML='';
+  safeHTML('cicloInfoBar','', ()=>'');
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
@@ -2310,7 +2401,7 @@ function renderDashboard(){
   const pendentesCount=getReceitasPrevistasForMonth(currentMonth,currentYear).length;
 
   // ── KPIs: linha 1 (previsão) 4 cols + linha 2 (real) 3 cols ──
-  document.getElementById('kpiGrid').innerHTML=`
+  safeHTML('kpiGrid','KPIs do mês', ()=>`
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px">
       <div class="kpi" style="cursor:pointer;border-top:2px solid var(--accent2)" onclick="navigateReceitasFiltro('previstas')" title="Clique para ver receitas pendentes">
         <div class="kpi-label" style="color:var(--accent2)">📋 Previsão de Entrada</div>
@@ -2360,10 +2451,10 @@ function renderDashboard(){
           ? 'Soma do saldo de todas as Contas Bancárias'
           : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
       </div>
-    </div>`;
+    </div>`);
 
-  document.getElementById('dashSaldoContas').innerHTML=renderSaldoContasCard();
-  renderProximosVencimentos();
+  safeHTML('dashSaldoContas','saldo por conta bancária', renderSaldoContasCard);
+  safeRender('próximos vencimentos', renderProximosVencimentos);
 
   // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
@@ -2415,33 +2506,11 @@ function renderDashboard(){
       </div>
     </div>`;
 
-  // ── Cards de fatura por cartão ──
-  let billHTML='';
-  state.cards.forEach(c=>{
-    const valor=byCard[c.id]||0;
-    const isCC=isCartaoDeCredito(c.id);
-    const paga=isCC&&isFaturaPaga(c.id,currentMonth,currentYear);
-    const statusBadge=isCC
-      ?(paga
-        ?`<span class="badge badge-ok" style="margin-bottom:6px">✓ Fatura Paga</span>`
-        :`<span class="badge badge-yellow" style="margin-bottom:6px">⏳ Fatura Pendente</span>`)
-      :'';
-    const btn=isCC
-      ?(paga
-        ?`<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">Desmarcar</button>`
-        :`<button class="btn btn-ok btn-sm" style="width:100%;margin-top:8px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">✓ Marcar como Paga</button>`)
-      :'';
-    billHTML+=`<div class="bill-card" style="border-top-color:${c.color};cursor:pointer" onclick="navigateToDespesasCartao('${c.id}')">
-      <div class="bill-name">${c.name} <span style="font-size:10px;color:var(--muted);font-weight:400">→ ver</span></div>
-      ${statusBadge}
-      <div class="bill-value" style="color:${isCC&&paga?'var(--ok)':isCC?'var(--danger)':'var(--text)'}">${fmtBRL(valor)}</div>
-      ${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}
-      ${btn}
-    </div>`;
-  });
-  document.getElementById('billCards').innerHTML=billHTML;
+  // ── Cards de fatura por cartão (mesmo componente das duas visões — item D) ──
+  safeRender('cards de fatura por cartão', renderBillCards);
 
   // ── Donut chart (fix: only render if data exists) ──
+  safeRender('gráfico de categorias e barras', ()=>{
   const catNames=Object.keys(byCat).filter(k=>byCat[k]>0);
   const catVals=catNames.map(k=>byCat[k]);
   const catColors=['#5b7fff','#38e2b4','#ff5f6d','#ffc147','#a78bfa','#fb923c','#34d399','#60a5fa','#f472b6','#94a3b8'];
@@ -2498,29 +2567,32 @@ function renderDashboard(){
       maintainAspectRatio:false
     }
   });
+  });
 
   // ── Previsão de gastos variáveis por média histórica ──
-  renderPrevisaoMediaHistorica();
+  safeRender('previsão de gastos por média histórica', renderPrevisaoMediaHistorica);
 
   // ── Recent table ──
-  if(!desps.length){
-    document.getElementById('recentList').innerHTML='<div class="empty-state">Nenhum lançamento neste mês</div>';
-    return;
-  }
-  let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
-  desps.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,10).forEach(d=>{
-    const cat=state.categories.find(c=>c.id===d.cat);
-    const card=state.cards.find(c=>c.id===d.cartao);
-    html+=`<tr>
-      <td>${d.desc}</td>
-      <td><span class="badge badge-blue">${cat?.name||d.cat}</span></td>
-      <td><span class="tag" style="color:${card?.color||'inherit'}">${card?.name||d.cartao}</span></td>
-      <td class="mono">${d._parcel}/${d._total}</td>
-      <td class="mono" style="color:var(--danger)">${fmtBRL(d._valorParcela)}</td>
-    </tr>`;
+  safeRender('últimos lançamentos', ()=>{
+    if(!desps.length){
+      document.getElementById('recentList').innerHTML='<div class="empty-state">Nenhum lançamento neste mês</div>';
+      return;
+    }
+    let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
+    desps.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,10).forEach(d=>{
+      const cat=state.categories.find(c=>c.id===d.cat);
+      const card=state.cards.find(c=>c.id===d.cartao);
+      html+=`<tr>
+        <td>${d.desc}</td>
+        <td><span class="badge badge-blue">${cat?.name||d.cat}</span></td>
+        <td><span class="tag" style="color:${card?.color||'inherit'}">${card?.name||d.cartao}</span></td>
+        <td class="mono">${d._parcel}/${d._total}</td>
+        <td class="mono" style="color:var(--danger)">${fmtBRL(d._valorParcela)}</td>
+      </tr>`;
+    });
+    html+='</tbody></table>';
+    document.getElementById('recentList').innerHTML=html;
   });
-  html+='</tbody></table>';
-  document.getElementById('recentList').innerHTML=html;
 }
 
 // ════════════════════════════════════════════════
