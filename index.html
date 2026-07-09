@@ -1830,7 +1830,26 @@ function toggleFaturaFechada(cardId,mesParam,anoParam){
   toast(state.faturasFechadas[k]?'Fatura fechada — aguardando pagamento':'Fatura reaberta');
 }
 
+let _getTotalsForMonthDepth=0;
 function getTotalsForMonth(mes,ano){
+  // Guarda de segurança (item J): getTotalsForMonth → calcSaldoConta → getTotalsForMonth
+  // não deve ocorrer mais (corrigido), mas se algum caminho novo reintroduzir recursão,
+  // isso evita travar o app inteiro com "Maximum call stack size exceeded".
+  if(_getTotalsForMonthDepth>3){
+    console.error('[FinFlow] getTotalsForMonth: recursão detectada, abortando com totais zerados.');
+    return {previstoEntradas:0,emCaixaEntradas:0,totalDespPrevisao:0,emCaixaSaidas:0,saldoProjetado:0,saldoPiorCenario:0,
+      saldoMelhorCenario:0,emCaixaLiquido:0,emCaixaDisponivel:0,totalRecPrevisto:0,repassesPendentes:0,excedentAcum:0,
+      saldoDisponivel:0,usaContasComoFonte:false,byCard:{},byCat:{},recs:[],desps:[],contrib:0,cofrinhoSaida:0,
+      totalRec:0,totalDespEfetivo:0,saldo:0};
+  }
+  _getTotalsForMonthDepth++;
+  try{
+    return _getTotalsForMonthImpl(mes,ano);
+  } finally {
+    _getTotalsForMonthDepth--;
+  }
+}
+function _getTotalsForMonthImpl(mes,ano){
   const todosRecs   = getReceitasForMonth(mes,ano);
   const recsEfetivas= getReceitasEfetivasForMonth(mes,ano);
   const recsPrevistas= getReceitasPrevistasForMonth(mes,ano);
@@ -1966,10 +1985,32 @@ function dataRecebimentoPrincipal(mes,ano){
   });
   return melhor;
 }
+// Varre TODOS os recebimentos de receita principal já registrados (qualquer competência) e
+// devolve a data real mais próxima que seja estritamente posterior a `dataInicio`. Usado pra
+// achar o fim do ciclo atual sem depender de "mês da competência + 1", que gerava ciclos
+// esticados demais quando a receita foi recebida num mês calendário diferente da competência.
+function dataRecebimentoPrincipalApos(dataInicio){
+  let melhor=null;
+  (state.receitas||[]).forEach(r=>{
+    if(!r.isReceitaPrincipal) return;
+    if(r.tipo==='extra'&&Array.isArray(r.parcelas)) return;
+    Object.keys(r.recebidaMeses||{}).forEach(k=>{
+      if(!r.recebidaMeses[k]) return;
+      const dataStr=r.dataRecebimentoReal&&r.dataRecebimentoReal[k];
+      if(!dataStr) return;
+      const dt=parseDateStr(dataStr);
+      if(!dt||dt<=dataInicio) return;
+      if(!melhor||dt<melhor) melhor=dt;
+    });
+  });
+  return melhor;
+}
 // getCicloFinanceiro(perfil, mes, ano):
 // - modoFinanceiro === "calendario" → ciclo = do 1º ao último dia do mês (sem depender de receita principal).
 // - modoFinanceiro === "ciclo" (padrão) → abre pela data real de recebimento da receita principal
-//   daquela competência; se não houver, usa diaPadraoInicioCiclo. Fim = dia anterior ao início do próximo ciclo.
+//   daquela competência; se não houver, usa diaPadraoInicioCiclo. Fim = dia anterior ao início do
+//   PRÓXIMO recebimento real já registrado (se existir) ou, na falta dele, ao dia padrão do perfil
+//   aplicado ao mês seguinte ao do início real deste ciclo (item 2 do escopo).
 function getCicloFinanceiro(perfilId,mes,ano){
   try{
     perfilId=perfilId||perfilAtivo;
@@ -1985,9 +2026,17 @@ function getCicloFinanceiro(perfilId,mes,ano){
     const diaPadrao=diaPadraoDoPerfil(perfilId);
     const dataRealStr=dataRecebimentoPrincipal(mes,ano);
     const inicio = dataRealStr ? parseDateStr(dataRealStr) : dataCicloPadrao(diaPadrao,mes,ano);
-    let mProx=mes+1, aProx=ano; if(mProx>12){mProx=1;aProx++;}
-    const dataRealProxStr=dataRecebimentoPrincipal(mProx,aProx);
-    const inicioProx = dataRealProxStr ? parseDateStr(dataRealProxStr) : dataCicloPadrao(diaPadrao,mProx,aProx);
+
+    const proximoRecebimentoReal=dataRecebimentoPrincipalApos(inicio);
+    let inicioProx;
+    if(proximoRecebimentoReal){
+      inicioProx=proximoRecebimentoReal;
+    } else {
+      // Sem próximo recebimento ainda: estima pelo dia padrão no mês seguinte ao mês REAL de início do ciclo
+      let mProx=inicio.getMonth()+2, aProx=inicio.getFullYear(); // getMonth() é 0-based; +2 = mês seguinte em base 1
+      if(mProx>12){mProx-=12;aProx++;}
+      inicioProx=dataCicloPadrao(diaPadrao,mProx,aProx);
+    }
     const fim=new Date(inicioProx); fim.setDate(fim.getDate()-1);
     return {perfilId,mes,ano,inicio,fim,modo,diaPadrao,origemInicio:dataRealStr?'receita_principal':'dia_padrao'};
   }catch(e){
@@ -2009,6 +2058,7 @@ function getTotalsForCiclo(ciclo){
 
   let receitaPrincipal=0, outrasReceitas=0, repasses=0;
   let faturasPagasTotal=0, fixosPagos=0, fixosPrevistos=0, variaveisPagos=0, reservas=0;
+  let contribuicaoPagaTotal=0, contribuicaoPrevistaTotal=0;
 
   meses.forEach(({mes,ano})=>{
     // ── Receitas recebidas dentro do ciclo ──
@@ -2046,15 +2096,32 @@ function getTotalsForCiclo(ciclo){
     });
 
     // ── Faturas de cartão pagas dentro do ciclo (pela data real do pagamento) ──
+    // Calcula direto das despesas daquele cartão/mês — nunca via getTotalsForMonth,
+    // pra não reintroduzir o risco de recursão com calcSaldoConta (bug corrigido).
     (state.cards||[]).forEach(c=>{
       if(!isCartaoDeCredito(c.id)) return;
       if(!isFaturaPaga(c.id,mes,ano)) return;
       const fk=faturaKey(c.id,mes,ano);
       const dt=parseDateStr(state.faturasDatas&&state.faturasDatas[fk])||new Date(ano,mes-1,1);
       if(!dateInRange(dt,inicio,fim)) return;
-      const tm=getTotalsForMonth(mes,ano);
-      faturasPagasTotal+=(tm.byCard&&tm.byCard[c.id])||0;
+      let valorFatura=0;
+      getDespesasForMonth(mes,ano).forEach(d=>{ if(d.cartao===c.id) valorFatura+=(d._valorParcela||0); });
+      faturasPagasTotal+=valorFatura;
     });
+
+    // ── Contribuição automática (item 8): fica como PREVISTA/comprometida até o usuário
+    // marcar como paga escolhendo a conta de saída — nunca entra como despesa paga sozinha. ──
+    const contribMes=calcContribuicao(mes,ano);
+    if(contribMes>0){
+      const k=mesKey(mes,ano);
+      if(isContribuicaoPaga(mes,ano)){
+        const info=state.contribuicaoContas&&state.contribuicaoContas[k];
+        const dt=(info&&info.dataPagamento)?parseDateStr(info.dataPagamento):new Date(ano,mes-1,1);
+        if(dateInRange(dt,inicio,fim)) contribuicaoPagaTotal+=contribMes;
+      } else {
+        contribuicaoPrevistaTotal+=contribMes;
+      }
+    }
 
     // ── Reservas/cofrinhos feitas dentro do ciclo ──
     (state.movimentacoesCofrinhos||[]).forEach(m=>{
@@ -2071,17 +2138,20 @@ function getTotalsForCiclo(ciclo){
   receitaPrincipal=receitaPrincipal||0; outrasReceitas=outrasReceitas||0; repasses=repasses||0;
   faturasPagasTotal=faturasPagasTotal||0; fixosPagos=fixosPagos||0; fixosPrevistos=fixosPrevistos||0;
   variaveisPagos=variaveisPagos||0; reservas=reservas||0;
+  contribuicaoPagaTotal=contribuicaoPagaTotal||0; contribuicaoPrevistaTotal=contribuicaoPrevistaTotal||0;
 
-  const saldoLivreReal = receitaPrincipal+outrasReceitas+repasses - faturasPagasTotal - fixosPagos - variaveisPagos - reservas;
-  const saldoComprometido = fixosPrevistos;
+  const saldoLivreReal = receitaPrincipal+outrasReceitas+repasses - faturasPagasTotal - fixosPagos - variaveisPagos - reservas - contribuicaoPagaTotal;
+  const saldoComprometido = fixosPrevistos + contribuicaoPrevistaTotal;
+  const saldoProjetado = saldoLivreReal - saldoComprometido;
   const totalReceitas = receitaPrincipal+outrasReceitas+repasses;
-  const totalDespesas = faturasPagasTotal+fixosPagos+variaveisPagos;
+  const totalDespesas = faturasPagasTotal+fixosPagos+variaveisPagos+contribuicaoPagaTotal;
 
   return {
     ciclo, receitaPrincipal, outrasReceitas, repasses,
     faturasPagas:faturasPagasTotal, fixosPagos, fixosPrevistos, variaveisPagos, reservas, transferencias,
-    saldoLivreReal, saldoComprometido,
-    saldoPrevistoProximoCiclo: saldoLivreReal - saldoComprometido,
+    contribuicaoPaga:contribuicaoPagaTotal, contribuicaoPrevista:contribuicaoPrevistaTotal,
+    saldoLivreReal, saldoComprometido, saldoProjetado,
+    saldoPrevistoProximoCiclo: saldoProjetado,
     // Aliases genéricos (item B) — sempre presentes, mesmo que 0, pra qualquer
     // parte do Dashboard que espere esses nomes em vez dos específicos acima.
     receitas: totalReceitas, despesas: totalDespesas, saldo: saldoLivreReal, faturas: faturasPagasTotal
@@ -2091,7 +2161,8 @@ function getTotalsForCiclo(ciclo){
   return {
     ciclo, receitaPrincipal:0, outrasReceitas:0, repasses:0,
     faturasPagas:0, fixosPagos:0, fixosPrevistos:0, variaveisPagos:0, reservas:0, transferencias:0,
-    saldoLivreReal:0, saldoComprometido:0, saldoPrevistoProximoCiclo:0,
+    contribuicaoPaga:0, contribuicaoPrevista:0,
+    saldoLivreReal:0, saldoComprometido:0, saldoProjetado:0, saldoPrevistoProximoCiclo:0,
     receitas:0, despesas:0, saldo:0, faturas:0
   };
  }
@@ -2292,16 +2363,32 @@ function renderCicloDashboard(){
         <div class="kpi-value">${fmtBRL(g(tc.reservas))}</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:24px">
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:16px">
+      <div class="kpi" style="border-top:2px solid var(--muted)">
+        <div class="kpi-label" style="color:var(--muted)">📊 Contribuição Prevista</div>
+        <div class="kpi-value">${fmtBRL(g(tc.contribuicaoPrevista))}</div>
+        <div class="kpi-sub">10% previsto — fica pendente até você marcar como paga e escolher a conta</div>
+      </div>
+      <div class="kpi" style="border-top:2px solid var(--danger)">
+        <div class="kpi-label" style="color:var(--danger)">📊 Contribuição Paga</div>
+        <div class="kpi-value ${g(tc.contribuicaoPaga)>0?'red':''}">${fmtBRL(g(tc.contribuicaoPaga))}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
       <div class="kpi" style="border-top:2px solid var(--accent2)">
         <div class="kpi-label" style="color:var(--accent2)">✅ Saldo Livre Real</div>
         <div class="kpi-value ${g(tc.saldoLivreReal)>=0?'green':'red'}">${fmtBRL(g(tc.saldoLivreReal))}</div>
-        <div class="kpi-sub">Recebido − faturas/fixos/variáveis pagos − reservas</div>
+        <div class="kpi-sub">Recebido − faturas/fixos/variáveis/contribuição pagos − reservas</div>
       </div>
       <div class="kpi" style="border-top:2px solid var(--warn)">
         <div class="kpi-label" style="color:var(--warn)">⏳ Saldo Comprometido até o Próximo Ciclo</div>
         <div class="kpi-value ${g(tc.saldoComprometido)>0?'red':''}">${fmtBRL(g(tc.saldoComprometido))}</div>
-        <div class="kpi-sub">Fixos ainda previstos dentro do ciclo atual</div>
+        <div class="kpi-sub">Fixos previstos + contribuição prevista</div>
+      </div>
+      <div class="kpi" style="border-top:2px solid var(--accent)">
+        <div class="kpi-label" style="color:var(--accent)">🔮 Saldo Projetado</div>
+        <div class="kpi-value ${g(tc.saldoProjetado)>=0?'blue':'red'}">${fmtBRL(g(tc.saldoProjetado))}</div>
+        <div class="kpi-sub">Saldo livre real − saldo comprometido</div>
       </div>
     </div>`);
 }
@@ -2681,29 +2768,37 @@ function renderPrevisaoMediaHistorica(){
 // RELATÓRIO
 // ════════════════════════════════════════════════
 function renderRelatorio(){
+ try{
   document.getElementById('relPeriod').textContent=`${MONTHS[currentMonth-1]} / ${currentYear}`;
-  const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
+  const{totalRec,totalDespEfetivo,saldo,byCard,byCat,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear)||{};
+  const _byCard=byCard||{}, _byCat=byCat||{}, _recs=recs||[], _desps=desps||[];
+  const contribPaga=isContribuicaoPaga(currentMonth,currentYear);
   let html=`<div class="kpi-grid four-col" style="margin-bottom:20px">
-    <div class="kpi"><div class="kpi-label">Receita Total</div><div class="kpi-value green">${fmtBRL(totalRec)}</div></div>
-    <div class="kpi"><div class="kpi-label">Saídas Efetivas</div><div class="kpi-value red">${fmtBRL(totalDespEfetivo)}</div></div>
-    <div class="kpi"><div class="kpi-label">Saldo Real</div><div class="kpi-value ${saldo>=0?'blue':'red'}">${fmtBRL(saldo)}</div></div>
-    <div class="kpi"><div class="kpi-label">Contribuição</div><div class="kpi-value">${fmtBRL(contrib)}</div></div>
+    <div class="kpi"><div class="kpi-label">Receita Total</div><div class="kpi-value green">${fmtBRL(totalRec||0)}</div></div>
+    <div class="kpi"><div class="kpi-label">Saídas Efetivas</div><div class="kpi-value red">${fmtBRL(totalDespEfetivo||0)}</div></div>
+    <div class="kpi"><div class="kpi-label">Saldo Real</div><div class="kpi-value ${(saldo||0)>=0?'blue':'red'}">${fmtBRL(saldo||0)}</div></div>
+    <div class="kpi"><div class="kpi-label">Contribuição</div><div class="kpi-value">${fmtBRL(contrib||0)} ${contribPaga?'<span class="badge badge-ok" style="margin-left:4px">Paga</span>':'<span class="badge badge-yellow" style="margin-left:4px">Prevista</span>'}</div></div>
   </div>
   <h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Faturas por Cartão</h4>
   <div class="card-bills" style="margin-bottom:24px">`;
-  state.cards.forEach(c=>{html+=`<div class="bill-card" style="border-top-color:${c.color}"><div class="bill-name">${c.name}</div><div class="bill-value">${fmtBRL(byCard[c.id]||0)}</div>${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}</div>`;});
-  html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
-  if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
+  (state.cards||[]).forEach(c=>{
+    if(!isCartaoDeCredito(c.id)) return;
+    const status=getFaturaStatus(c.id,currentMonth,currentYear);
+    const badge=status==='paga'?'<span class="badge badge-ok">✓ Paga</span>':status==='fechada'?'<span class="badge badge-blue">🔒 Fechada</span>':'<span class="badge badge-yellow">⏳ Aberta</span>';
+    html+=`<div class="bill-card" style="border-top-color:${c.color}"><div class="bill-name">${c.name}</div>${badge}<div class="bill-value">${fmtBRL(_byCard[c.id]||0)}</div>${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}</div>`;
+  });
+  html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas Recebidas</h4>`;
+  if(!_recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita recebida neste mês.</p>`;
   else{
     const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
-    recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${r.nome||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
+    _recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}${r.isReceitaPrincipal?' <span class="badge badge-blue">Principal</span>':''}</span></td><td>${r.nome||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
   }
-  html+=`<h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Despesas</h4>`;
-  if(contrib>0)html+=`<div class="item-row" style="margin-bottom:8px"><div class="item-row-info"><div class="item-row-name">Contribuição (automática)</div><div class="item-row-meta">10% das receitas tributáveis</div></div><div class="item-row-val neg">${fmtBRL(contrib)}</div></div>`;
-  desps.forEach(d=>{
-    const cat=state.categories.find(c=>c.id===d.cat), card=state.cards.find(c=>c.id===d.cartao);
+  html+=`<h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Despesas por Cartão / Dinheiro-PIX</h4>`;
+  if(!_desps.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma despesa lançada neste mês.</p>`;
+  _desps.forEach(d=>{
+    const cat=(state.categories||[]).find(c=>c.id===d.cat), card=(state.cards||[]).find(c=>c.id===d.cartao);
     const isDinheiroPix=!isCartaoDeCredito(d.cartao);
     const st=isDinheiroPix?(d._pago?'<span class="badge badge-ok" style="margin-left:6px">Pago</span>':'<span class="badge badge-yellow" style="margin-left:6px">Previsto</span>'):'';
     html+=`<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}" style="margin-bottom:8px">
@@ -2714,7 +2809,26 @@ function renderRelatorio(){
       <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
     </div>`;
   });
+  if(contrib>0)html+=`<div class="item-row ${contribPaga?'pago':'previsto'}" style="margin-bottom:8px"><div class="item-row-info"><div class="item-row-name">Contribuição (automática) ${contribPaga?'<span class="badge badge-ok">Paga</span>':'<span class="badge badge-yellow">Prevista</span>'}</div><div class="item-row-meta">10% das receitas tributáveis</div></div><div class="item-row-val ${contribPaga?'neg':'muted'}">${fmtBRL(contrib)}</div></div>`;
+
+  // ── Totais por categoria (item 7) ──
+  const catKeys=Object.keys(_byCat).filter(k=>_byCat[k]>0);
+  html+=`<h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:20px 0 12px">Totais por Categoria</h4>`;
+  if(!catKeys.length) html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma despesa categorizada neste mês.</p>`;
+  else{
+    html+='<table class="data-table" style="margin-bottom:8px"><thead><tr><th>Categoria</th><th>Total</th></tr></thead><tbody>';
+    catKeys.sort((a,b)=>_byCat[b]-_byCat[a]).forEach(k=>{
+      const cat=(state.categories||[]).find(c=>c.id===k);
+      html+=`<tr><td>${cat?.name||k}</td><td class="mono" style="color:var(--danger)">${fmtBRL(_byCat[k])}</td></tr>`;
+    });
+    html+='</tbody></table>';
+  }
   document.getElementById('relatorioContent').innerHTML=html;
+ }catch(e){
+  console.error('[FinFlow] renderRelatorio falhou:', e);
+  const el=document.getElementById('relatorioContent');
+  if(el) el.innerHTML='<div class="empty-state">Não foi possível montar o relatório deste mês. Veja o console para detalhes.</div>';
+ }
 }
 
 // ════════════════════════════════════════════════
@@ -3047,9 +3161,13 @@ function populateDespForma(){
   if(catSel){catSel.innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');updateSubcats();}
   const cardSel=document.getElementById('despCartao');
   if(cardSel){
+    // Preserva a seleção atual do usuário antes de reconstruir as opções — sem isso,
+    // qualquer re-render (ex: pagar uma fatura em outra aba) silenciosamente trocava
+    // o cartão selecionado de volta pro primeiro da lista (item 6 do escopo).
+    const valorAnterior=cardSel.value;
     cardSel.innerHTML=state.cards.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-    // Pre-select card if coming from dashboard
-    if(despCartaoFiltro) cardSel.value=despCartaoFiltro;
+    if(despCartaoFiltro) cardSel.value=despCartaoFiltro; // atalho explícito (vindo de um card específico) tem prioridade
+    else if(valorAnterior && state.cards.some(c=>c.id===valorAnterior)) cardSel.value=valorAnterior;
   }
   const contaSel=document.getElementById('despConta');
   if(contaSel){
@@ -3309,45 +3427,67 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
 
   let html='';
 
-  // Contribuição como item simples no topo
+  // ── BLOCO 1: Faturas do período — separado das despesas individuais (item 3) ──
+  const gruposCartao=Object.values(grupos).filter(g=>g.items.length && isCartaoDeCredito(g.card.id));
+  if(gruposCartao.length){
+    html+=`<div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:4px 0 8px">🧾 Faturas do período</div>
+    <div class="item-list" style="margin-bottom:20px">`;
+    gruposCartao.forEach(g=>{
+      const status=getFaturaStatus(g.card.id,currentMonth,currentYear);
+      const statusBadge = status==='paga'
+        ? '<span class="badge badge-ok">✓ Paga</span>'
+        : status==='fechada' ? '<span class="badge badge-blue">🔒 Fechada</span>'
+        : '<span class="badge badge-yellow">⏳ Aberta</span>';
+      const payBtn = status==='paga'
+        ? `<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga('${g.card.id}')">Desmarcar</button>`
+        : `<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${g.card.id}')">✓ Pagar fatura</button>`;
+      html+=`<div class="item-row">
+        <div style="width:12px;height:12px;border-radius:50%;background:${g.card.color};flex-shrink:0"></div>
+        <div class="item-row-info">
+          <div class="item-row-name">${g.card.name} ${statusBadge}</div>
+          <div class="item-row-meta">${g.items.length} lançamento${g.items.length>1?'s':''}${g.card.fecha?` · Fecha ${g.card.fecha} · Paga ${g.card.paga||'—'}`:''}</div>
+        </div>
+        <div class="item-row-val ${status==='paga'?'pos':'neg'}">${fmtBRL(g.total)}</div>
+        <button class="btn btn-ghost btn-sm" onclick="abrirDespesaComCartao('${g.card.id}')">+ compra</button>
+        ${payBtn}
+      </div>`;
+    });
+    html+='</div>';
+  }
+
+  // ── BLOCO 2: Contribuição automática — nunca aparece como despesa comum (item 3/8) ──
   if(contrib>0){
     const base=getReceitasContribuiveisPrevisao(currentMonth,currentYear).reduce((s,r)=>s+valorReceita(r),0);
-    html+=`<div class="item-row" style="border-color:rgba(91,127,255,.3);margin-bottom:8px">
-      <div class="item-row-info">
-        <div class="item-row-name">Contribuição <span class="badge badge-blue">Automática</span></div>
-        <div class="item-row-meta">10% de ${fmtBRL(base)}</div>
+    const contribPaga=isContribuicaoPaga(currentMonth,currentYear);
+    html+=`<div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:4px 0 8px">📊 Contribuição automática</div>
+    <div class="item-list" style="margin-bottom:20px">
+      <div class="item-row ${contribPaga?'pago':'previsto'}">
+        <div class="item-row-info">
+          <div class="item-row-name">Contribuição ${contribPaga?'<span class="badge badge-ok">✓ Paga</span>':'<span class="badge badge-yellow">⏳ Prevista</span>'}</div>
+          <div class="item-row-meta">10% de ${fmtBRL(base)}</div>
+        </div>
+        <div class="item-row-val ${contribPaga?'neg':'muted'}">${fmtBRL(contrib)}</div>
+        <button class="btn ${contribPaga?'btn-ghost':'btn-ok'} btn-sm" onclick="toggleContribuicaoPaga()">${contribPaga?'Desmarcar':'✓ Marcar como paga'}</button>
       </div>
-      <div class="item-row-val neg">${fmtBRL(contrib)}</div>
     </div>`;
   }
 
-  // Render each card group as accordion
+  // ── BLOCO 3: Despesas individuais, agrupadas por cartão/origem só pra navegação (sem repetir status de fatura) ──
+  html+=`<div style="font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin:4px 0 8px">🛍️ Despesas individuais</div>`;
+  let temItens=false;
   Object.values(grupos).forEach(g=>{
     if(!g.items.length) return;
-    const isCC=isCartaoDeCredito(g.card.id);
-    const paga=isCC&&isFaturaPaga(g.card.id,currentMonth,currentYear);
-    const statusBadge=isCC
-      ?(paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>')
-      :'';
-    const faturaBtn=isCC
-      ?(paga
-        ?`<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">Desmarcar</button>`
-        :`<button class="btn btn-ok btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">✓ Pagar fatura</button>`)
-      :'';
+    temItens=true;
     const accId=g.card.id.replace(/[^a-z0-9]/gi,'_');
     html+=`<div class="accordion">
       <div class="accordion-head" onclick="toggleAccordion('${accId}')">
         <div style="width:14px;height:14px;border-radius:50%;background:${g.card.color};flex-shrink:0"></div>
         <div class="accordion-head-info">
-          <div class="accordion-head-name">
-            ${g.card.name}
-            ${statusBadge}
-          </div>
+          <div class="accordion-head-name">${g.card.name}</div>
           <div class="accordion-head-sub">${g.items.length} lançamento${g.items.length>1?'s':''} · clique para expandir</div>
         </div>
         <div class="accordion-head-right">
-          ${faturaBtn}
-          <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(g.total)}</span>
+          <span class="mono" style="font-size:15px;font-weight:600;color:var(--text)">${fmtBRL(g.total)}</span>
           <span class="accordion-chevron" id="acc-chev-${accId}">▶</span>
         </div>
       </div>
@@ -3356,6 +3496,7 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
       </div>
     </div>`;
   });
+  if(!temItens) html+='<div class="empty-state">Nenhuma despesa individual neste mês</div>';
 
   document.getElementById('despesasList').innerHTML=html||'<div class="empty-state">Nenhuma despesa neste mês</div>';
 }
@@ -3902,7 +4043,10 @@ function calcSaldoConta(contaId){
       if(contaPagamento===contaId) saldo-=valorParcela;
     });
   });
-  // Faturas de cartão de crédito pagas: debita o total da fatura da conta escolhida no pagamento
+  // Faturas de cartão de crédito pagas: debita o total da fatura da conta escolhida no pagamento.
+  // IMPORTANTE: calcula o valor da fatura direto das despesas (getDespesasForMonth), sem passar por
+  // getTotalsForMonth — getTotalsForMonth pode chamar calcSaldoConta de volta (via usaContasComoFonte
+  // no mês corrente), o que causava recursão infinita sempre que havia fatura paga no mês atual.
   Object.keys(state.faturasContas||{}).forEach(k=>{
     if(state.faturasContas[k]!==contaId) return;
     if(!state.faturasPagas||!state.faturasPagas[k]) return;
@@ -3912,8 +4056,9 @@ function calcSaldoConta(contaId){
     const [anoStr,mmStr]=rest.split('-');
     const ano=parseInt(anoStr), mes=parseInt(mmStr);
     if(!ano||!mes) return;
-    const tm=getTotalsForMonth(mes,ano);
-    saldo-=(tm.byCard&&tm.byCard[card.id])||0;
+    let valorFatura=0;
+    getDespesasForMonth(mes,ano).forEach(d=>{ if(d.cartao===card.id) valorFatura+=(d._valorParcela||0); });
+    saldo-=valorFatura;
   });
   // Contribuição (10%) paga: debita a conta escolhida no momento do pagamento.
   // Usa o valor DINÂMICO recalculado agora (calcContribuicao), não o valor
