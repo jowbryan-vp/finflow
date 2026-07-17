@@ -579,8 +579,11 @@ select option{background:var(--card)}
                   <select id="recConta"></select>
                 </div>
                 <div class="checkbox-row form-group full" id="recRecorrenteRow">
-                  <input type="checkbox" id="recFixo" style="width:auto">
+                  <input type="checkbox" id="recFixo" style="width:auto" onchange="onRecFixoChange()">
                   <label for="recFixo">Recorrente (mensal)</label>
+                </div>
+                <div class="form-group full" id="recSalarioRollInfo" style="display:none">
+                  <div class="info-box">💡 Salário Fixo recorrente: lance no mês em que você <strong>recebe</strong> (ex: dia 26-30) — o app já conta esse dinheiro como disponível no <strong>mês seguinte</strong>, que é quando ele é de fato usado pra pagar as contas.</div>
                 </div>
                 <div class="form-group full" id="repasseInfo" style="display:none">
                   <div class="info-box">💡 Presente/Repasse <strong>não entra no cálculo de contribuição</strong> — é contabilizado separadamente.</div>
@@ -1602,6 +1605,11 @@ function renderPage(page){
 // ════════════════════════════════════════════════
 // FINANCIAL CALCULATIONS
 // ════════════════════════════════════════════════
+// Salário Fixo recorrente rola +1 mês: cai no fim do mês (dia 26-30) e só é
+// efetivamente usado no mês seguinte (confirmado pelos extratos — o que
+// paga as contas de um mês é o salário do mês anterior, não o do próprio mês).
+// Outros tipos de receita (13º, Férias, Extra, Repasse) continuam no mês que
+// você escolher manualmente, sem nenhum deslocamento automático.
 function getReceitasForMonth(mes,ano){
   const result=[];
   state.receitas.forEach(r=>{
@@ -1614,7 +1622,12 @@ function getReceitasForMonth(mes,ano){
       });
       return;
     }
-    if(r.recorrente){ if(r.ano<ano||(r.ano===ano&&r.mes<=mes)) result.push(r); return; }
+    if(r.recorrente){
+      const roll=r.tipo==='salario'?1:0;
+      const {mes:mIni,ano:yIni}=addMonths(r.mes,r.ano,roll);
+      if(yIni<ano||(yIni===ano&&mIni<=mes)) result.push(r);
+      return;
+    }
     if(r.mes===mes&&r.ano===ano) result.push(r);
   });
   return result;
@@ -1689,12 +1702,28 @@ function calcContribuicaoBase(mes,ano){
 function faturaKey(cardId,mes,ano){ return `${cardId}_${mesKey(mes,ano)}`; }
 function isFaturaPaga(cardId,mes,ano){ return !!(state.faturasPagas&&state.faturasPagas[faturaKey(cardId,mes,ano)]); }
 
-function getTotalsForMonth(mes,ano){
-  const todosRecs   = getReceitasForMonth(mes,ano);
-  const recsEfetivas= getReceitasEfetivasForMonth(mes,ano);
+// Soma das parcelas de despesas por cartão nesse mês — versão "leve", sem
+// cenários nem saldo de contas. Usada por getTotalsForMonth e por calcSaldoConta;
+// mantê-la separada evita uma dependência circular (calcSaldoConta precisa do
+// valor da fatura de um cartão, mas não pode chamar getTotalsForMonth inteiro
+// de volta, senão vira loop quando o mês da fatura cai no mês atual).
+function calcByCardForMonth(mes,ano){
+  const desps=getDespesasForMonth(mes,ano);
+  const byCard={}; state.cards.forEach(c=>byCard[c.id]=0);
+  desps.forEach(d=>{ if(d.cartao&&byCard[d.cartao]!==undefined) byCard[d.cartao]+=(d._valorParcela||0); });
+  return byCard;
+}
+
+// Núcleo "isolado" de um mês — entradas/saídas efetivas e previstas, sem olhar
+// saldo de conta nem excedente de outros meses. Fica separado do getTotalsForMonth
+// completo pra poder ser somado mês a mês na projeção futura sem risco de
+// recursão (nenhuma função aqui chama getTotalsForMonth de volta).
+function calcTotaisIsoladoMes(mes,ano){
+  const todosRecs    = getReceitasForMonth(mes,ano);
+  const recsEfetivas = getReceitasEfetivasForMonth(mes,ano);
   const recsPrevistas= getReceitasPrevistasForMonth(mes,ano);
-  const desps       = getDespesasForMonth(mes,ano);
-  const contrib     = calcContribuicao(mes,ano);
+  const desps        = getDespesasForMonth(mes,ano);
+  const contrib      = calcContribuicao(mes,ano);
   // Só depósitos contam como "saída para o cofrinho" — resgates são o
   // dinheiro voltando pro caixa (já entram como receita tipo 'resgate' logo
   // abaixo), então não podem ser subtraídos de novo aqui como se fosse gasto.
@@ -1708,9 +1737,7 @@ function getTotalsForMonth(mes,ano){
   // ── PREVISTO SAÍDAS: todas as despesas + contrib + cofrinho ──
   const totalDespPrevisao = desps.reduce((s,d)=>s+(d._valorParcela||0),0) + contrib + cofrinhoSaida;
 
-  // ── Faturas por cartão (somadas por card) ──
-  const byCard = {}; state.cards.forEach(c=>byCard[c.id]=0);
-  desps.forEach(d=>{ if(d.cartao&&byCard[d.cartao]!==undefined) byCard[d.cartao]+=(d._valorParcela||0); });
+  const byCard = calcByCardForMonth(mes,ano);
 
   // ── EM CAIXA ENTRADAS: só receitas efetivamente recebidas ──
   const emCaixaEntradas = recsEfetivas.reduce((s,r)=>s+valorReceita(r),0);
@@ -1722,9 +1749,7 @@ function getTotalsForMonth(mes,ano){
   //    - Dinheiro/PIX não-fixas: saem imediatamente
   //    - Cofrinho: sai sempre (saída efetiva) ──
   let emCaixaSaidas = cofrinhoSaida;
-  // Contribuição: só se paga
   if(isContribuicaoPaga(mes,ano)) emCaixaSaidas+=contrib;
-  // Cartões de crédito: soma por cartão, só entra se fatura paga
   state.cards.forEach(c=>{
     if(!isCartaoDeCredito(c.id)) return;
     if(isFaturaPaga(c.id,mes,ano)) emCaixaSaidas+=(byCard[c.id]||0);
@@ -1738,48 +1763,90 @@ function getTotalsForMonth(mes,ano){
     if(d._pago) emCaixaSaidas+=(d._valorParcela||0);
   });
 
-  const emCaixaLiquido     = emCaixaEntradas - emCaixaSaidas;
+  const emCaixaLiquido   = emCaixaEntradas - emCaixaSaidas;
+  const totalRecPrevisto = recsPrevistas.reduce((s,r)=>s+valorReceita(r),0);
+  const repassesPendentes = getRepassesPendentesTotal(mes,ano);
 
-  const totalRecPrevisto   = recsPrevistas.reduce((s,r)=>s+valorReceita(r),0);
-  const repassesPendentes  = getRepassesPendentesTotal(mes,ano);
-
-  const excedentAcum       = calcExcedenteAcumulado(mes,ano);
-
-  // Em caixa disponível = saldo do mês + excedente acumulado de meses anteriores.
-  // MAS: se estamos no mês real de hoje e já existem Contas Bancárias cadastradas,
-  // a fonte de verdade passa a ser a soma do saldo de todas as contas (que já
-  // rastreia saldo inicial, receitas, despesas, faturas, contribuição e cofrinho
-  // vinculados) — evita ter dois números de "quanto eu tenho agora" divergentes.
-  let emCaixaDisponivel  = emCaixaLiquido + excedentAcum;
-  const usaContasComoFonte = isMesAtualReal(mes,ano) && state.contas && state.contas.length>0;
-  if(usaContasComoFonte){
-    emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
-  }
-
-  // Pior/Melhor cenário: o "Caixa Agora" (excedente acumulado + já recebido)
-  // só pode ser considerado quando estamos olhando o MÊS REAL DE HOJE — é o
-  // único momento em que esse dinheiro existe de fato na conta. Para qualquer
-  // outro mês (passado fechado ou projeção futura), o saldo daquele mês é
-  // calculado de forma isolada: se sobrar, você gasta ou manda pro cofrinho;
-  // se faltar, você cobre com o cofrinho — nada disso "vaza" pro mês seguinte.
-  let saldoPiorCenario, saldoMelhorCenario;
-  if(isMesAtualReal(mes,ano)){
-    // Pior cenário: só o que JÁ entrou (+ acumulado anterior) − tudo que tem pra pagar
-    saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
-    // Melhor cenário: o que já entrou + acumulado + pendentes a receber − tudo previsto
-    saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
-  } else {
-    // Mês isolado (sem caixa atual): salário previsto é o "certo"; repasses
-    // de terceiros são a parte incerta.
-    saldoPiorCenario   = previstoEntradas - totalDespPrevisao;
-    saldoMelhorCenario = previstoEntradas + repassesPendentes - totalDespPrevisao;
-  }
-
-  const saldoProjetado     = saldoMelhorCenario; // compat
+  // Cenário isolado (sem herdar saldo de fora): salário previsto é o "certo";
+  // repasses de terceiros são a parte incerta.
+  const saldoPiorIsolado   = previstoEntradas - totalDespPrevisao;
+  const saldoMelhorIsolado = previstoEntradas + repassesPendentes - totalDespPrevisao;
 
   const byCat={};
   desps.forEach(d=>{ if(!byCat[d.cat])byCat[d.cat]=0; byCat[d.cat]+=(d._valorParcela||0); });
   if(contrib>0) byCat['contribuicao']=(byCat['contribuicao']||0)+contrib;
+
+  return{
+    recsEfetivas, desps, contrib, cofrinhoSaida, byCard, byCat,
+    previstoEntradas, totalDespPrevisao, emCaixaEntradas, emCaixaSaidas, emCaixaLiquido,
+    totalRecPrevisto, repassesPendentes, saldoPiorIsolado, saldoMelhorIsolado
+  };
+}
+
+function getTotalsForMonth(mes,ano){
+  const iso = calcTotaisIsoladoMes(mes,ano);
+  const {recsEfetivas,desps,contrib,cofrinhoSaida,byCard,byCat,previstoEntradas,totalDespPrevisao,
+         emCaixaEntradas,emCaixaSaidas,emCaixaLiquido,totalRecPrevisto,repassesPendentes,
+         saldoPiorIsolado,saldoMelhorIsolado} = iso;
+
+  const temContas = !!(state.contas && state.contas.length>0);
+  const isPassado = ano<REAL_TODAY_YEAR || (ano===REAL_TODAY_YEAR && mes<REAL_TODAY_MONTH);
+  const isFuturo  = ano>REAL_TODAY_YEAR || (ano===REAL_TODAY_YEAR && mes>REAL_TODAY_MONTH);
+
+  let emCaixaDisponivel, saldoPiorCenario, saldoMelhorCenario, excedentAcum=0, usaContasComoFonte=false;
+
+  if(temContas){
+    // Com Contas Bancárias cadastradas, o saldo real das contas é a fonte de
+    // verdade — ele já flui naturalmente de um mês pro outro (é só o saldo da
+    // conta, sem reset por mês), sem precisar de nenhuma declaração manual.
+    if(isMesAtualReal(mes,ano)){
+      usaContasComoFonte=true;
+      emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+      const pendenteAPagar   = totalDespPrevisao - emCaixaSaidas;   // o que falta pagar esse mês
+      const pendenteAReceber = totalRecPrevisto + repassesPendentes; // o que falta receber esse mês
+      saldoPiorCenario   = emCaixaDisponivel - pendenteAPagar;
+      saldoMelhorCenario = emCaixaDisponivel + pendenteAReceber - pendenteAPagar;
+    } else if(isPassado){
+      // Mês fechado: reconstrói o saldo real das contas até o fim daquele mês —
+      // não há mais "cenário", é fato histórico.
+      usaContasComoFonte=true;
+      emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoContaAte(c.id,mes,ano),0);
+      saldoPiorCenario = saldoMelhorCenario = emCaixaDisponivel;
+    } else {
+      // Projeção futura: parte do saldo real de hoje e acumula, mês a mês, o
+      // resultado isolado (pior/melhor) de cada mês entre hoje e o mês navegado —
+      // assim uma sobra ou um rombo de um mês projetado carrega pro seguinte.
+      const saldoHoje = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+      let acumPior=0, acumMelhor=0, cm=REAL_TODAY_MONTH, cy=REAL_TODAY_YEAR;
+      for(let i=0;i<600;i++){ // safety cap (50 anos) — nunca deveria chegar perto disso
+        if(cm===mes&&cy===ano) break;
+        ({mes:cm,ano:cy}=addMonths(cm,cy,1));
+        const isoM = calcTotaisIsoladoMes(cm,cy);
+        acumPior  +=isoM.saldoPiorIsolado;
+        acumMelhor+=isoM.saldoMelhorIsolado;
+      }
+      saldoPiorCenario   = saldoHoje + acumPior;
+      saldoMelhorCenario = saldoHoje + acumMelhor;
+      // "Em Caixa Agora" de um mês futuro é projeção, não fato — usa o cenário
+      // conservador (Pior) pra não mostrar um número descolado dos cards de cenário.
+      emCaixaDisponivel = saldoPiorCenario;
+    }
+  } else {
+    // Sem Contas Bancárias cadastradas: mantém o comportamento anterior — cada
+    // mês isolado, com o excedente acumulado sendo o que o usuário declarar
+    // manualmente em "Guardar em Caixa".
+    excedentAcum = calcExcedenteAcumulado(mes,ano);
+    emCaixaDisponivel = emCaixaLiquido + excedentAcum;
+    if(isMesAtualReal(mes,ano)){
+      saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
+      saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
+    } else {
+      saldoPiorCenario   = saldoPiorIsolado;
+      saldoMelhorCenario = saldoMelhorIsolado;
+    }
+  }
+
+  const saldoProjetado = saldoMelhorCenario; // compat
 
   // compat aliases
   const totalRec=emCaixaEntradas, totalDespEfetivo=emCaixaSaidas, saldo=emCaixaLiquido;
@@ -1789,6 +1856,7 @@ function getTotalsForMonth(mes,ano){
     saldoProjetado, saldoPiorCenario, saldoMelhorCenario,
     emCaixaLiquido, emCaixaDisponivel, totalRecPrevisto, repassesPendentes,
     excedentAcum, saldoDisponivel:emCaixaDisponivel, usaContasComoFonte,
+    isProjecaoFutura: temContas&&isFuturo,
     byCard, byCat, recs:recsEfetivas, desps, contrib, cofrinhoSaida,
     totalRec, totalDespEfetivo, saldo
   };
@@ -1923,7 +1991,7 @@ function renderDashboard(){
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
-        excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte}=t;
+        excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
@@ -1979,7 +2047,9 @@ function renderDashboard(){
         <div class="kpi-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
         <div class="kpi-sub">${usaContasComoFonte
           ? 'Soma do saldo de todas as Contas Bancárias'
-          : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
+          : isProjecaoFutura
+            ? 'Projeção (Pior Cenário) a partir do saldo atual das contas'
+            : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
       </div>
     </div>`;
 
@@ -2276,6 +2346,14 @@ function onRecTipoChange(){
   document.getElementById('recRecorrenteRow').style.display=(tipo==='repasse'||tipo==='extra')?'none':'flex';
   document.getElementById('recParceladoRow').style.display=tipo==='extra'?'flex':'none';
   if(tipo!=='extra'){ document.getElementById('recParceladoBox').style.display='none'; document.getElementById('recParcelado').checked=false; }
+  onRecFixoChange();
+}
+
+function onRecFixoChange(){
+  const tipo=document.getElementById('recTipo').value;
+  const fixo=document.getElementById('recFixo').checked;
+  const box=document.getElementById('recSalarioRollInfo');
+  if(box) box.style.display=(tipo==='salario'&&fixo)?'block':'none';
 }
 
 function onRecValorChange(){ if(document.getElementById('recParcelado')?.checked) gerarParcelasReceita(); }
@@ -3181,8 +3259,7 @@ function calcSaldoConta(contaId){
     if(!m) return;
     const cardId=m[1], ano=parseInt(m[2]), mes=parseInt(m[3]);
     if(!ano||!mes) return;
-    const tm=getTotalsForMonth(mes,ano);
-    saldo-=(tm.byCard&&tm.byCard[cardId])||0;
+    saldo-=(calcByCardForMonth(mes,ano)[cardId])||0;
   });
   // Contribuição (10%) paga: debita a conta escolhida no momento do pagamento.
   // Usa o valor DINÂMICO recalculado agora (calcContribuicao), não o valor
@@ -3197,6 +3274,55 @@ function calcSaldoConta(contaId){
     const mes=parseInt(mesStr), ano=parseInt(anoStr);
     if(!mes||!ano) return;
     saldo-=calcContribuicao(mes,ano);
+  });
+  return saldo;
+}
+// Reconstrói o saldo da conta considerando só o que foi marcado recebido/pago
+// ATÉ o mês informado (inclusive) — mesma lógica de calcSaldoConta, mas com um
+// corte temporal. Usada pra reconstruir o saldo histórico de um mês passado e
+// como ponto de partida (saldo real de hoje) pra projeção de meses futuros.
+function calcSaldoContaAte(contaId,mes,ano){
+  const c=state.contas.find(x=>x.id===contaId);
+  if(!c) return 0;
+  const limite=mesKey(mes,ano);
+  let saldo=c.saldoInicial||0;
+  state.movimentacoesContas.forEach(m=>{
+    if(m.contaId!==contaId) return;
+    const mk=(m.data||'').slice(0,7);
+    if(mk && mk>limite) return;
+    saldo+=m.valor;
+  });
+  state.receitas.forEach(r=>{
+    if(r.conta!==contaId) return;
+    if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
+      r.parcelas.forEach(p=>{ if(p.recebida && mesKey(p.mes,p.ano)<=limite) saldo+=(p.valor||0); });
+    } else {
+      Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk] && mk<=limite) saldo+=(r.valor||0); });
+    }
+  });
+  state.despesas.forEach(d=>{
+    if(d.cartao!=='dinheiro') return;
+    if(d.conta!==contaId) return;
+    const valorParcela=(d.valor||0)/(d.parcelas||1);
+    Object.keys(d.pagoMeses||{}).forEach(mk=>{ if(d.pagoMeses[mk] && mk<=limite) saldo-=valorParcela; });
+  });
+  Object.keys(state.faturasContas||{}).forEach(k=>{
+    if(state.faturasContas[k]!==contaId) return;
+    if(!state.faturasPagas||!state.faturasPagas[k]) return;
+    const m=k.match(/^(.+)_(\d{4})-(\d{2})$/);
+    if(!m) return;
+    const faturaMk=m[2]+'-'+m[3];
+    if(faturaMk>limite) return;
+    const cardId=m[1], fAno=parseInt(m[2]), fMes=parseInt(m[3]);
+    saldo-=(calcByCardForMonth(fMes,fAno)[cardId])||0;
+  });
+  Object.keys(state.contribuicaoContas||{}).forEach(k=>{
+    const info=state.contribuicaoContas[k];
+    if(!info||info.contaId!==contaId) return;
+    if(!state.contribuicaoPaga||!state.contribuicaoPaga[k]) return;
+    if(k>limite) return;
+    const [anoStr,mesStr]=k.split('-');
+    saldo-=calcContribuicao(parseInt(mesStr),parseInt(anoStr));
   });
   return saldo;
 }
@@ -4357,40 +4483,48 @@ function rodarSimulacao(){
     meses.push({mes:m,ano:y});
   }
 
-  // Cada mês é calculado de forma isolada (sem carregar sobra/falta do mês
-  // anterior): o que sobra é gasto ou vai pro cofrinho, o que falta é coberto
-  // pelo cofrinho.
+  // Cada mês soma sua variação (entradas − saídas − compra simulada) ao saldo
+  // acumulado, que começa do saldo real das Contas Bancárias hoje (se houver) —
+  // uma sobra ou um rombo de um mês carrega naturalmente pro seguinte, em vez
+  // de cada mês recomeçar do zero.
   //
-  // Pior Cenário = Salário Fixo garantido − Despesas Fixas do mês − Parcelas de
-  //   Cartão do mês − Média Histórica de Gastos Variáveis − Parcela da compra simulada.
-  // Melhor Cenário = Pior Cenário + Projetos Extras do mês + Repasses pendentes do mês.
+  // Variação do mês (Pior) = Salário Fixo garantido − Despesas Fixas do mês −
+  //   Parcelas de Cartão do mês − Média Histórica de Gastos Variáveis − Parcela da compra simulada.
+  // Variação do mês (Melhor) = Variação (Pior) + Repasses pendentes do mês.
   //
   // A "Média Histórica de Gastos Variáveis" (mesma do card do Dashboard) substitui
   // a tentativa de prever despesas avulsas específicas ainda não lançadas —
   // é a melhor estimativa disponível pro que normalmente aparece de imprevisto.
   const previsaoMedia=calcPrevisaoMediaHistorica();
   const mediaVariaveis=previsaoMedia?previsaoMedia.mediaTotal:0;
+  const saldoBase = (state.contas&&state.contas.length>0) ? state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0) : 0;
+  let acumPior=saldoBase, acumMelhor=saldoBase;
   const rows=meses.map(({mes,ano})=>{
     const t=getTotalsForMonth(mes,ano);
     const eseSaida=calcEseSaidaMes(mes,ano);
     const recsM=getReceitasForMonth(mes,ano);
     const despsM=getDespesasForMonth(mes,ano);
+    // Pior cenário = só o salário (garantido). Melhor cenário = salário + reembolsos
+    // de compras compartilhadas (repasses) — Projeto Extra e outras receitas pontuais
+    // não entram na projeção por serem imprevisíveis/não recorrentes.
     const salarioFixo = recsM.filter(r=>r.tipo==='salario').reduce((s,r)=>s+valorReceita(r),0);
-    const projetosExtra = recsM.filter(r=>r.tipo==='extra').reduce((s,r)=>s+valorReceita(r),0);
     const despesasFixas = despsM.filter(d=>d.fixa).reduce((s,d)=>s+(d._valorParcela||0),0);
     const parcelasCartao = despsM.filter(d=>!d.fixa && d.cartao!=='dinheiro' && (d.parcelas||1)>1).reduce((s,d)=>s+(d._valorParcela||0),0);
     const entradasPior   = salarioFixo;
-    const entradasMelhor = salarioFixo + projetosExtra + t.repassesPendentes;
+    const entradasMelhor = salarioFixo + t.repassesPendentes;
     const saidas = despesasFixas + parcelasCartao + mediaVariaveis;
     const saldoPior   = entradasPior - saidas - eseSaida;
     const saldoMelhor = entradasMelhor - saidas - eseSaida;
+    acumPior+=saldoPior; acumMelhor+=saldoMelhor;
     return{mes,ano,entradasMelhor,entradasPior,saidas,eseSaida,saldoMelhor,saldoPior,
+      saldoAcumPior:acumPior, saldoAcumMelhor:acumMelhor,
       repassesPendentes:t.repassesPendentes};
   });
 
-  // Alertas
-  const mesesPiorNegativo = rows.filter(r=>r.saldoPior<0);
-  const mesesMelhorNegativo = rows.filter(r=>r.saldoMelhor<0);
+  // Alertas — usa o saldo ACUMULADO (não a variação isolada do mês), já que o
+  // que importa é se a conta ficaria negativa em algum ponto da projeção.
+  const mesesPiorNegativo = rows.filter(r=>r.saldoAcumPior<0);
+  const mesesMelhorNegativo = rows.filter(r=>r.saldoAcumMelhor<0);
   let alertHtml='';
   if(!previsaoMedia){
     alertHtml+=`<div style="background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.25);border-radius:var(--radius);padding:10px 16px;margin-bottom:10px;font-size:12px;color:var(--muted)">
@@ -4414,10 +4548,10 @@ function rodarSimulacao(){
   }
   document.getElementById('eseAlertas').innerHTML=alertHtml;
 
-  // Gráfico
+  // Gráfico — saldo acumulado (não a variação isolada do mês)
   const labels=rows.map(r=>MONTHS[r.mes-1].slice(0,3)+'/'+String(r.ano).slice(2));
-  const dataMelhor=rows.map(r=>r.saldoMelhor);
-  const dataPior=rows.map(r=>r.saldoPior);
+  const dataMelhor=rows.map(r=>r.saldoAcumMelhor);
+  const dataPior=rows.map(r=>r.saldoAcumPior);
   if(chartEse){ chartEse.destroy(); chartEse=null; }
   chartEse=new Chart(document.getElementById('chartEse').getContext('2d'),{
     type:'bar',
@@ -4438,7 +4572,7 @@ function rodarSimulacao(){
     }
   });
 
-  // Tabela
+  // Tabela — mostra a variação do mês e o saldo acumulado lado a lado
   let tbl=`<table class="data-table">
     <thead><tr>
       <th>Mês</th>
@@ -4446,20 +4580,20 @@ function rodarSimulacao(){
       <th>Entradas (Pior)</th>
       <th title="Fixas + Parcelas de cartão + Média de variáveis">Saídas (Fixas+Cartão+Média)</th>
       <th>Parcela simulada</th>
-      <th>Saldo Melhor Cenário</th>
-      <th>Saldo Pior Cenário</th>
+      <th title="Quanto sobra ou falta só neste mês">Variação (Melhor/Pior)</th>
+      <th title="Saldo projetado das contas, acumulando mês a mês a partir de hoje">Saldo Acumulado (Melhor/Pior)</th>
     </tr></thead><tbody>`;
   rows.forEach(r=>{
-    const negMelhor=r.saldoMelhor<0;
-    const negPior=r.saldoPior<0;
+    const negMelhor=r.saldoAcumMelhor<0;
+    const negPior=r.saldoAcumPior<0;
     tbl+=`<tr ${negMelhor?'style="background:rgba(255,95,109,.06)"':''}>
       <td class="mono" style="font-size:12px">${MONTHS[r.mes-1].slice(0,3)} ${r.ano}</td>
       <td class="mono" style="color:var(--accent2)">${fmtBRL(r.entradasMelhor)}</td>
       <td class="mono" style="color:var(--muted)">${fmtBRL(r.entradasPior)}</td>
       <td class="mono" style="color:var(--danger)">${fmtBRL(r.saidas)}</td>
       <td class="mono" style="color:var(--warn)">${r.eseSaida>0?fmtBRL(r.eseSaida):'—'}</td>
-      <td class="mono" style="color:${r.saldoMelhor>=0?'var(--accent)':'var(--danger)'}"><strong>${fmtBRL(r.saldoMelhor)}</strong>${negMelhor?' ⚠':''}</td>
-      <td class="mono" style="color:${r.saldoPior>=0?'var(--accent2)':'var(--danger)'}"><strong>${fmtBRL(r.saldoPior)}</strong>${negPior?' ⚠':''}</td>
+      <td class="mono" style="font-size:12px">${fmtBRL(r.saldoMelhor)} / ${fmtBRL(r.saldoPior)}</td>
+      <td class="mono" style="color:${r.saldoAcumMelhor>=0?'var(--accent)':'var(--danger)'}"><strong>${fmtBRL(r.saldoAcumMelhor)}</strong>${negMelhor?' ⚠':''} / <span style="color:${r.saldoAcumPior>=0?'var(--accent2)':'var(--danger)'}">${fmtBRL(r.saldoAcumPior)}${negPior?' ⚠':''}</span></td>
     </tr>`;
   });
   tbl+=`</tbody></table>`;
