@@ -3421,7 +3421,13 @@ function calcProximosVencimentos(){
   // paga (normalmente a do mês atual) e usar o dia "paga" pra data de vencimento.
   state.cards.forEach(c=>{
     if(c.id==='dinheiro' || !c.paga) return;
-    for(let back=3; back>=0; back--){
+    // Olha só o mês atual e 1 mês pra trás ("esqueci de marcar a fatura do mês
+    // passado"). Não escaneia mais longe que isso de propósito: parcelamentos
+    // antigos lançados retroativamente (pra reconstruir um histórico que já
+    // está embutido no saldo inicial da conta) ficam sem marcar como pagos —
+    // se a busca fosse mais longa, toda fatura antiga apareceria aqui como
+    // "vencida", o que é ruído, não um aviso real.
+    for(let back=1; back>=0; back--){
       const {mes,ano}=addMonths(hojeM,hojeY,-back);
       if(isFaturaPaga(c.id,mes,ano)) continue;
       const t=getTotalsForMonth(mes,ano);
