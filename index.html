@@ -943,7 +943,7 @@ select option{background:var(--card)}
             </div>
             <button class="btn btn-primary mt-16" onclick="addConta()">Adicionar Conta</button>
           </div>
-          <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div></div><div id="contasList"></div></div>
+          <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div><button class="btn btn-ghost btn-sm" onclick="openTransferenciaModal()">⇄ Transferir entre Contas</button></div><div id="contasList"></div></div>
         </div>
       </div>
 
@@ -1667,16 +1667,21 @@ function getDespesasForMonth(mes,ano){
     const parcelas=d.parcelas||1;
     const roll=isCartaoDeCredito(d.cartao)?1:0;
     const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
+    // ignorarAntes: parcelas de compras antigas (lançadas no app depois de já
+    // terem começado na vida real) anteriores a esse mês/ano ficam de fora do
+    // cálculo inteiro — não entram em previsão, cenários nem próximos
+    // vencimentos. O número "6/10" continua correto, só some do fluxo de caixa.
+    const bloqueada=(m,y)=>d.ignorarAntes && (y<d.ignorarAntes.ano || (y===d.ignorarAntes.ano && m<d.ignorarAntes.mes));
     for(let i=0;i<parcelas;i++){
       let m=(mIni-1)+i, y=yIni+Math.floor(m/12), mN=(m%12)+1;
       if(mN===mes&&y===ano){
-        result.push({...d,_parcel:i+1,_total:parcelas,_valorParcela:d.valor/parcelas,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
+        if(!bloqueada(mN,y)) result.push({...d,_parcel:i+1,_total:parcelas,_valorParcela:d.valor/parcelas,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
         break;
       }
     }
     if(d.fixa&&(d.parcelas||1)===1){
       const started=yIni<ano||(yIni===ano&&mIni<=mes);
-      if(started&&!result.find(r=>r.id===d.id))
+      if(started&&!bloqueada(mes,ano)&&!result.find(r=>r.id===d.id))
         result.push({...d,_parcel:1,_total:1,_valorParcela:d.valor,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
     }
   });
@@ -2909,11 +2914,19 @@ function openEditDespesa(id){
       <div class="form-group"><label>Subcategoria</label><select id="eDespSubcat">${subOpts}</select></div>
       <div class="form-group"><label>Cartão / Origem</label><select id="eDespCartao" onchange="eOnCartaoChange()">${cardOpts}</select></div>
       <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="eDespValor" value="${d.valor}" min="0" step="0.01"></div>
-      <div class="form-group"><label>Nº Parcelas</label><input type="number" id="eDespParcelas" value="${d.parcelas||1}" min="1" max="120"></div>
+      <div class="form-group"><label>Nº Parcelas</label><input type="number" id="eDespParcelas" value="${d.parcelas||1}" min="1" max="120" oninput="eOnParcelasChange()"></div>
       <div class="form-group"><label>Mês Início</label>
         <select id="eDespMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${d.mesInicio===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
+      <div class="form-group full" id="eDespIgnorarGroup" style="display:${(d.parcelas||1)>1?'block':'none'}">
+        <div class="checkbox-row"><input type="checkbox" id="eDespIgnorarCheck" style="width:auto" ${d.ignorarAntes?'checked':''} onchange="eOnIgnorarChange()"><label for="eDespIgnorarCheck">Compra antiga — desconsiderar parcelas anteriores a um mês (já pagas antes de eu usar o app)</label></div>
+        <div id="eDespIgnorarFields" style="display:${d.ignorarAntes?'flex':'none'};gap:10px;margin-top:8px">
+          <select id="eDespIgnorarMes" style="flex:1">${MONTHS.map((m,i)=>`<option value="${i+1}" ${(d.ignorarAntes?.mes||REAL_TODAY_MONTH)===i+1?'selected':''}>${m}</option>`).join('')}</select>
+          <input type="number" id="eDespIgnorarAno" style="width:100px" value="${d.ignorarAntes?.ano||REAL_TODAY_YEAR}" min="2020" max="2040">
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">Parcelas antes desse mês somem do caixa/previsões (deixam de ser cobradas do sistema), mas o rótulo "x/${d.parcelas||1}" continua correto.</div>
+      </div>
       <div class="form-group full" id="eDespContaGroup" style="display:${d.cartao==='dinheiro'?'block':'none'}">
         <label>Conta bancária (de onde sai o dinheiro)</label>
         <select id="eDespConta">${contaOpts}</select>
@@ -2981,6 +2994,16 @@ function eUpdateSubcats(){
   const sub=document.getElementById('eDespSubcat');
   if(sub)sub.innerHTML=(cat?.subs||[]).map(s=>`<option value="${s}">${s}</option>`).join('');
 }
+function eOnIgnorarChange(){
+  const checked=document.getElementById('eDespIgnorarCheck')?.checked;
+  const f=document.getElementById('eDespIgnorarFields');
+  if(f) f.style.display=checked?'flex':'none';
+}
+function eOnParcelasChange(){
+  const parcelas=parseInt(document.getElementById('eDespParcelas')?.value)||1;
+  const g=document.getElementById('eDespIgnorarGroup');
+  if(g) g.style.display=parcelas>1?'block':'none';
+}
 function eOnCartaoChange(){
   const cartaoId=document.getElementById('eDespCartao')?.value;
   const isDinheiro=cartaoId==='dinheiro';
@@ -3003,6 +3026,8 @@ function saveEditDespesa(id){
   d.conta=isDinheiro?(contaSelecionadaDesp!==undefined?(contaSelecionadaDesp||null):(d.conta||null)):null;
   d.valor=parseFloat(document.getElementById('eDespValor').value)||0;
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
+  const ignorarCheck=document.getElementById('eDespIgnorarCheck')?.checked;
+  d.ignorarAntes=(ignorarCheck&&d.parcelas>1)?{mes:parseInt(document.getElementById('eDespIgnorarMes').value),ano:parseInt(document.getElementById('eDespIgnorarAno').value)}:null;
   d.mesInicio=parseInt(document.getElementById('eDespMes').value);
   d.anoInicio=parseInt(document.getElementById('eDespAno').value);
   d.fixa=document.getElementById('eDespFixa').checked;
@@ -3223,6 +3248,46 @@ function salvarAjusteSaldoConta(id){
     state.movimentacoesContas.push({id:uid(),contaId:id,valor:diferenca,data:new Date().toISOString(),obs:obs||'Ajuste manual'});
   }
   scheduleSave();closeModal();renderContas();renderDashboard();toast('Saldo ajustado!');
+}
+// ════════════════════════════════════════════════
+// TRANSFERÊNCIA ENTRE CONTAS
+// Implementada como duas movimentacoesContas ligadas por transferId (uma
+// negativa na origem, uma positiva no destino), reaproveitando o mesmo
+// mecanismo de calcSaldoConta usado pelo Ajustar Saldo — sem duplicar lógica
+// de cálculo de saldo em outro lugar.
+// ════════════════════════════════════════════════
+function openTransferenciaModal(){
+  if(state.contas.length<2){toast('Cadastre pelo menos 2 contas para transferir entre elas');return;}
+  const opts=c=>state.contas.map(x=>`<option value="${x.id}" ${x.id===c?'selected':''}>${esc(x.name)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
+  document.getElementById('modalTitle').textContent='Transferir entre Contas';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Conta de origem</label><select id="transfOrigem" onchange="if(this.value===document.getElementById('transfDestino').value)toast('Escolha contas diferentes')">${opts(state.contas[0].id)}</select></div>
+      <div class="form-group full"><label>Conta de destino</label><select id="transfDestino">${opts(state.contas[1].id)}</select></div>
+      <div class="form-group"><label>Valor</label><input type="number" id="transfValor" placeholder="0,00" step="0.01" min="0.01"></div>
+      <div class="form-group"><label>Data</label><input type="date" id="transfData" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group full"><label>Descrição (opcional)</label><input type="text" id="transfObs" placeholder="Ex: repasse para pagar fatura do cartão"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="salvarTransferencia()">Transferir</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function salvarTransferencia(){
+  const origemId=document.getElementById('transfOrigem').value;
+  const destinoId=document.getElementById('transfDestino').value;
+  const valor=parseFloat(document.getElementById('transfValor').value);
+  const dataStr=document.getElementById('transfData').value;
+  const obs=document.getElementById('transfObs').value.trim();
+  if(origemId===destinoId){toast('Escolha duas contas diferentes');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  const origem=state.contas.find(c=>c.id===origemId), destino=state.contas.find(c=>c.id===destinoId);
+  const data=dataStr?new Date(dataStr+'T12:00:00').toISOString():new Date().toISOString();
+  const transferId=uid();
+  state.movimentacoesContas.push({id:uid(),contaId:origemId,valor:-valor,data,transferId,obs:'Transferência para '+destino.name+(obs?' — '+obs:'')});
+  state.movimentacoesContas.push({id:uid(),contaId:destinoId,valor:valor,data,transferId,obs:'Transferência de '+origem.name+(obs?' — '+obs:'')});
+  scheduleSave();closeModal();renderContas();renderDashboard();toast('Transferência registrada!');
 }
 // Saldo = saldo inicial + ajustes manuais + receitas recebidas − despesas pagas, vinculadas a essa conta
 function calcSaldoConta(contaId){
