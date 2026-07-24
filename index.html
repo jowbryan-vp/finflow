@@ -265,7 +265,7 @@ select option{background:var(--card)}
   table.data-table thead,table.data-table tbody{display:table;width:100%}
 
   .modal{max-width:100%;width:100%;margin:0;border-radius:var(--radius-lg) var(--radius-lg) 0 0;
-    max-height:85vh;max-height:85dvh}
+    position:fixed;left:0;right:0;bottom:0;max-height:85vh}
   .modal-overlay{padding:0;align-items:flex-end}
 
   .btn{padding:10px 14px;font-size:13px}
@@ -580,8 +580,11 @@ select option{background:var(--card)}
                   <select id="recConta"></select>
                 </div>
                 <div class="checkbox-row form-group full" id="recRecorrenteRow">
-                  <input type="checkbox" id="recFixo" style="width:auto">
+                  <input type="checkbox" id="recFixo" style="width:auto" onchange="onRecFixoChange()">
                   <label for="recFixo">Recorrente (mensal)</label>
+                </div>
+                <div class="form-group full" id="recSalarioRollInfo" style="display:none">
+                  <div class="info-box">💡 Salário Fixo recorrente: lance no mês em que você <strong>recebe</strong> (ex: dia 26-30) — o app já conta esse dinheiro como disponível no <strong>mês seguinte</strong>, que é quando ele é de fato usado pra pagar as contas.</div>
                 </div>
                 <div class="form-group full" id="repasseInfo" style="display:none">
                   <div class="info-box">💡 Presente/Repasse <strong>não entra no cálculo de contribuição</strong> — é contabilizado separadamente.</div>
@@ -639,7 +642,7 @@ select option{background:var(--card)}
                   <select id="despConta"></select>
                 </div>
                 <div class="form-group full" id="despContaCartaoInfo" style="display:none">
-                  <div class="info-box">💡 Pago no crédito: a conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard), já que o dinheiro não sai agora.</div>
+                  <div class="info-box">💡 Pago no crédito: lance no mês que você <strong>comprou</strong> — o app já mostra essa despesa na fatura do <strong>mês seguinte</strong> (ex: compra em Julho vira fatura de Agosto, igual à fatura do seu cartão de verdade). A conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard).</div>
                 </div>
                 <div class="checkbox-row form-group">
                   <input type="checkbox" id="despFixa" style="width:auto" onchange="onDespFixaChange()">
@@ -958,7 +961,7 @@ select option{background:var(--card)}
             </div>
             <button class="btn btn-primary mt-16" onclick="addConta()">Adicionar Conta</button>
           </div>
-          <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div></div><div id="contasList"></div></div>
+          <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div><button class="btn btn-ghost btn-sm" onclick="openTransferenciaModal()">⇄ Transferir entre Contas</button></div><div id="contasList"></div></div>
         </div>
       </div>
 
@@ -1091,7 +1094,8 @@ async function driveRequest(method, url, body, contentType) {
       'Authorization': 'Bearer ' + accessToken,
       ...(contentType ? {'Content-Type': contentType} : {})
     },
-    body: body || undefined
+    body: body || undefined,
+    keepalive: true // permite a requisição terminar mesmo se a aba for fechada logo em seguida
   });
   if (res.status === 401) { signOut(); throw new Error('Token expirado'); }
   return res;
@@ -1220,6 +1224,17 @@ function scheduleSave() {
   saveTimer = setTimeout(() => saveToDrive(), 2500);
 }
 
+// Se a aba for fechada/minimizada antes do debounce de 2.5s do scheduleSave()
+// disparar, a edição ficaria só no cache local e nunca iria pro Drive — na
+// próxima sincronização ela seria silenciosamente sobrescrita pela versão
+// antiga do Drive. Isso força o envio imediato assim que a aba fica oculta,
+// e o `keepalive` do driveRequest garante que a requisição sobrevive ao fechamento.
+function flushPendingSave() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveToDrive(); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSave(); });
+window.addEventListener('pagehide', flushPendingSave);
+
 async function forceSave() {
   clearTimeout(saveTimer);
   await saveToDrive();
@@ -1231,23 +1246,14 @@ async function forceSave() {
 // ════════════════════════════════════════════════
 const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 
-const DEFAULT_CATEGORIES = [
-  {id:'saude',       name:'Saúde',        subs:['Consulta','Remédio','Tratamento','Personal Trainer']},
-  {id:'educacao',    name:'Educação',     subs:['Pós-graduação','Curso Online','Curso Presencial']},
-  {id:'hobbies',     name:'Hobbies',      subs:['Livros','Ferramentas de Gastronomia','Ferramentas em Geral','Jantar com Amigos','Cafés','Ferramentas de Barista']},
-  {id:'comidas',     name:'Comidas',      subs:['Mercado','Delivery','Compras na Internet','Restaurante']},
-  {id:'trabalho',    name:'Trabalho',     subs:['Ferramentas para Projetos de Arquitetura']},
-  {id:'assinaturas', name:'Assinaturas',  subs:['Streamings','Músicas','Compras (Prime, etc.)','Clubes de Assinatura','Tecnologia']},
-  {id:'transporte',  name:'Transporte',   subs:['Aplicativos (Uber/99)','Gasolina','Estacionamento','Pedágio']},
-  {id:'outros',      name:'Outros',       subs:['Outros / Não lembro']},
-  {id:'contribuicao',name:'Contribuição', subs:['Contribuição']},
-  {id:'fixo',        name:'Fixo',         subs:['Plano de Saúde','FIES','Outros']},
-];
+// Sem categorias/cartões pré-cadastrados — cada usuário cria os seus no primeiro acesso.
+const DEFAULT_CATEGORIES = [];
 
+// 'dinheiro' não é um "cartão de exemplo": é o identificador interno usado em todo
+// o app para representar pagamento à vista (débito direto de uma Conta Bancária,
+// em vez de fatura de cartão de crédito) — por isso é o único item que continua
+// existindo sempre, e não pode ser removido.
 const DEFAULT_CARDS = [
-  {id:'nubank',   name:'Nubank',       color:'#820ad1', fecha:null, paga:null},
-  {id:'mpago',    name:'Mercado Pago', color:'#00b2e3', fecha:null, paga:null},
-  {id:'amazon',   name:'Amazon',       color:'#ff9900', fecha:null, paga:null},
   {id:'dinheiro', name:'Dinheiro/PIX', color:'#38e2b4', fecha:null, paga:null},
 ];
 
@@ -1271,6 +1277,21 @@ let despCartaoFiltro = null; // cartão pré-selecionado ao vir do dashboard
 function uid()   { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 function fmtBRL(v){ return 'R$ ' + (v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function mesKey(mes,ano){ return `${ano}-${String(mes).padStart(2,'0')}`; }
+// Soma n meses a partir de mes/ano, ajustando o ano corretamente (n pode ser negativo).
+function addMonths(mes,ano,n){
+  let m=mes+n, y=ano;
+  while(m>12){ m-=12; y++; }
+  while(m<1){ m+=12; y--; }
+  return {mes:m, ano:y};
+}
+// Escapa texto do usuário antes de inserir em innerHTML/atributos — sem isso, uma
+// descrição/nome com aspas quebra o atributo HTML (e corrompe o modal), e com
+// `<`/`>` pode injetar marcação/scripts arbitrários.
+function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// Escapa texto do usuário quando é embutido como argumento de string dentro de um
+// onclick="...('${valor}')" — sem isso, um apóstrofo no texto (ex: nome de
+// subcategoria) fecha a string JS antes da hora e quebra o handler.
+function escJs(s){ return String(s??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 
 function migrateState() {
   if (!state.categories || !state.categories.length) state.categories = DEFAULT_CATEGORIES.map(c=>({...c,subs:[...c.subs]}));
@@ -1281,11 +1302,7 @@ function migrateState() {
   if (!state.receitas)  state.receitas  = [];
   if (!state.despesas)  state.despesas  = [];
   if (!state.pessoas)   state.pessoas   = [];
-  if (!state.cofrinhos) state.cofrinhos = [
-    {id:'cofrinho_nubank',  name:'Nubank',        color:'#820ad1', saldoInicial:0},
-    {id:'cofrinho_mpago',   name:'Mercado Pago',  color:'#00b2e3', saldoInicial:0},
-    {id:'cofrinho_bb',      name:'Banco do Brasil',color:'#f7d100', saldoInicial:0},
-  ];
+  if (!state.cofrinhos) state.cofrinhos = []; // cada usuário cria o seu no primeiro acesso
   state.cofrinhos.forEach(c=>{ if(c.saldoInicial===undefined) c.saldoInicial=0; });
   // receitas: ensure parcelas array exists for extra parcelado
   state.receitas.forEach(r=>{
@@ -1317,19 +1334,9 @@ function migrateState() {
     if(r.conta===undefined) r.conta=null; // conta bancária de destino (opcional p/ lançamentos antigos)
   });
   state.cards.forEach(c=>{ if(c.fecha===undefined)c.fecha=null; if(c.paga===undefined)c.paga=null; });
-  // Ensure new default categories exist
-  ['transporte','outros','contribuicao'].forEach(cid=>{
-    if(!state.categories.find(c=>c.id===cid)){
-      const def=DEFAULT_CATEGORIES.find(c=>c.id===cid);
-      if(def) state.categories.push({...def,subs:[...def.subs]});
-    }
-  });
-  // Rename dizimo → contribuicao
+  // Compatibilidade com dados antigos que ainda usavam o id "dizimo" (nome anterior de Contribuição)
   const di=state.categories.findIndex(c=>c.id==='dizimo');
   if(di>=0){state.categories[di].id='contribuicao';state.categories[di].name='Contribuição';state.categories[di].subs=['Contribuição'];}
-  // Add missing subcategories to existing defaults
-  const addSub=(catId,sub)=>{const c=state.categories.find(x=>x.id===catId);if(c&&!c.subs.includes(sub))c.subs.push(sub);};
-  addSub('assinaturas','Tecnologia'); addSub('comidas','Restaurante');
 }
 
 // ════════════════════════════════════════════════
@@ -1391,7 +1398,7 @@ function renderPerfilModalBody(){
   const rows=Object.values(perfis).map(p=>`
     <div class="item-row" style="cursor:pointer" onclick="${p.id!==perfilAtivo?`switchPerfil('${p.id}')`:''}">
       <div style="width:12px;height:12px;border-radius:4px;background:${p.color};flex-shrink:0"></div>
-      <div class="item-row-info"><div class="item-row-name">${p.name}</div></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(p.name)}</div></div>
       ${p.id===perfilAtivo?'<span class="badge badge-blue">Ativo</span>':''}
       <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openRenamePerfil('${p.id}')">✎</button>
       <button class="btn btn-danger btn-icon btn-sm" onclick="event.stopPropagation();confirmDeletePerfil('${p.id}')">✕</button>
@@ -1417,7 +1424,7 @@ function openRenamePerfil(id){
   document.getElementById('modalTitle').textContent='Renomear Perfil';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Nome</label><input type="text" id="renamePerfilNome" value="${p.name}"></div>
+      <div class="form-group full"><label>Nome</label><input type="text" id="renamePerfilNome" value="${esc(p.name)}"></div>
       <div class="form-group"><label>Cor</label><input type="color" id="renamePerfilCor" value="${p.color}" style="height:38px;padding:4px"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -1441,7 +1448,7 @@ function confirmDeletePerfil(id){
   const p=perfis[id]; if(!p) return;
   document.getElementById('modalTitle').textContent='Excluir Perfil';
   document.getElementById('modalBody').innerHTML=`
-    <div class="info-box" style="margin-bottom:16px">⚠️ Tem certeza que quer excluir o perfil <strong>${p.name}</strong>? Todas as receitas, despesas, contas e demais dados desse perfil serão apagados <strong>permanentemente</strong>. Essa ação não pode ser desfeita.</div>
+    <div class="info-box" style="margin-bottom:16px">⚠️ Tem certeza que quer excluir o perfil <strong>${esc(p.name)}</strong>? Todas as receitas, despesas, contas e demais dados desse perfil serão apagados <strong>permanentemente</strong>. Essa ação não pode ser desfeita.</div>
     <div style="display:flex;gap:10px">
       <button class="btn btn-danger" onclick="executarDeletePerfil('${id}')">Sim, excluir permanentemente</button>
       <button class="btn btn-ghost" onclick="openPerfilModal()">Cancelar</button>
@@ -1621,6 +1628,11 @@ function renderPage(page){
 // ════════════════════════════════════════════════
 // FINANCIAL CALCULATIONS
 // ════════════════════════════════════════════════
+// Salário Fixo recorrente rola +1 mês: cai no fim do mês (dia 26-30) e só é
+// efetivamente usado no mês seguinte (confirmado pelos extratos — o que
+// paga as contas de um mês é o salário do mês anterior, não o do próprio mês).
+// Outros tipos de receita (13º, Férias, Extra, Repasse) continuam no mês que
+// você escolher manualmente, sem nenhum deslocamento automático.
 function getReceitasForMonth(mes,ano){
   const result=[];
   state.receitas.forEach(r=>{
@@ -1633,14 +1645,16 @@ function getReceitasForMonth(mes,ano){
       });
       return;
     }
-    if(r.recorrente){ if(r.ano<ano||(r.ano===ano&&r.mes<=mes)) result.push(r); return; }
+    if(r.recorrente){
+      const roll=r.tipo==='salario'?1:0;
+      const {mes:mIni,ano:yIni}=addMonths(r.mes,r.ano,roll);
+      if(yIni<ano||(yIni===ano&&mIni<=mes)) result.push(r);
+      return;
+    }
     if(r.mes===mes&&r.ano===ano) result.push(r);
   });
   return result;
 }
-
-// Salário é automaticamente recebido; outros tipos precisam de check
-function isAutoRecebido(r){ return false; } // nenhuma receita é auto-recebida
 
 // True se esta receita foi marcada como recebida neste mês
 function receitaRecebida(r,mes,ano){
@@ -1663,20 +1677,34 @@ function getReceitasPrevistasForMonth(mes,ano){
 // Valor de uma receita naquele mês
 function valorReceita(r){ return r._isParcela?(r._parcelaValor||0):(r.valor||0); }
 
+// Despesas em cartão de crédito viram fatura no mês SEGUINTE ao da compra —
+// é assim que Nubank, Mercado Pago, Bradescard etc. nomeiam a fatura (ex:
+// compras de 03/jun a 02/jul saem como "fatura de julho"). "Mês Início"
+// continua sendo o mês real da compra (o que você digita ao lançar); o
+// deslocamento de +1 mês só vale pra exibição/cálculo (Dashboard, Análise,
+// Relatório, Parcelamentos, Próximos Vencimentos). Dinheiro/PIX não rola —
+// o mês lançado já é o mês em que o dinheiro sai da conta.
 function getDespesasForMonth(mes,ano){
   const result=[];
   state.despesas.forEach(d=>{
     const parcelas=d.parcelas||1;
+    const roll=isCartaoDeCredito(d.cartao)?1:0;
+    const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
+    // ignorarAntes: parcelas de compras antigas (lançadas no app depois de já
+    // terem começado na vida real) anteriores a esse mês/ano ficam de fora do
+    // cálculo inteiro — não entram em previsão, cenários nem próximos
+    // vencimentos. O número "6/10" continua correto, só some do fluxo de caixa.
+    const bloqueada=(m,y)=>d.ignorarAntes && (y<d.ignorarAntes.ano || (y===d.ignorarAntes.ano && m<d.ignorarAntes.mes));
     for(let i=0;i<parcelas;i++){
-      let m=(d.mesInicio-1)+i, y=d.anoInicio+Math.floor(m/12), mN=(m%12)+1;
+      let m=(mIni-1)+i, y=yIni+Math.floor(m/12), mN=(m%12)+1;
       if(mN===mes&&y===ano){
-        result.push({...d,_parcel:i+1,_total:parcelas,_valorParcela:d.valor/parcelas,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
+        if(!bloqueada(mN,y)) result.push({...d,_parcel:i+1,_total:parcelas,_valorParcela:d.valor/parcelas,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
         break;
       }
     }
     if(d.fixa&&(d.parcelas||1)===1){
-      const started=d.anoInicio<ano||(d.anoInicio===ano&&d.mesInicio<=mes);
-      if(started&&!result.find(r=>r.id===d.id))
+      const started=yIni<ano||(yIni===ano&&mIni<=mes);
+      if(started&&!bloqueada(mes,ano)&&!result.find(r=>r.id===d.id))
         result.push({...d,_parcel:1,_total:1,_valorParcela:d.valor,_pago:!!(d.pagoMeses?.[mesKey(mes,ano)])});
     }
   });
@@ -1702,14 +1730,33 @@ function calcContribuicaoBase(mes,ano){
 function faturaKey(cardId,mes,ano){ return `${cardId}_${mesKey(mes,ano)}`; }
 function isFaturaPaga(cardId,mes,ano){ return !!(state.faturasPagas&&state.faturasPagas[faturaKey(cardId,mes,ano)]); }
 
-function getTotalsForMonth(mes,ano){
-  const todosRecs   = getReceitasForMonth(mes,ano);
-  const recsEfetivas= getReceitasEfetivasForMonth(mes,ano);
+// Soma das parcelas de despesas por cartão nesse mês — versão "leve", sem
+// cenários nem saldo de contas. Usada por getTotalsForMonth e por calcSaldoConta;
+// mantê-la separada evita uma dependência circular (calcSaldoConta precisa do
+// valor da fatura de um cartão, mas não pode chamar getTotalsForMonth inteiro
+// de volta, senão vira loop quando o mês da fatura cai no mês atual).
+function calcByCardForMonth(mes,ano){
+  const desps=getDespesasForMonth(mes,ano);
+  const byCard={}; state.cards.forEach(c=>byCard[c.id]=0);
+  desps.forEach(d=>{ if(d.cartao&&byCard[d.cartao]!==undefined) byCard[d.cartao]+=(d._valorParcela||0); });
+  return byCard;
+}
+
+// Núcleo "isolado" de um mês — entradas/saídas efetivas e previstas, sem olhar
+// saldo de conta nem excedente de outros meses. Fica separado do getTotalsForMonth
+// completo pra poder ser somado mês a mês na projeção futura sem risco de
+// recursão (nenhuma função aqui chama getTotalsForMonth de volta).
+function calcTotaisIsoladoMes(mes,ano){
+  const todosRecs    = getReceitasForMonth(mes,ano);
+  const recsEfetivas = getReceitasEfetivasForMonth(mes,ano);
   const recsPrevistas= getReceitasPrevistasForMonth(mes,ano);
-  const desps       = getDespesasForMonth(mes,ano);
-  const contrib     = calcContribuicao(mes,ano);
+  const desps        = getDespesasForMonth(mes,ano);
+  const contrib      = calcContribuicao(mes,ano);
+  // Só depósitos contam como "saída para o cofrinho" — resgates são o
+  // dinheiro voltando pro caixa (já entram como receita tipo 'resgate' logo
+  // abaixo), então não podem ser subtraídos de novo aqui como se fosse gasto.
   const cofrinhoSaida = (state.movimentacoesCofrinhos||[])
-    .filter(m=>m.mes===mes&&m.ano===ano&&!m.saldoInicialFlag)
+    .filter(m=>m.mes===mes&&m.ano===ano&&!m.saldoInicialFlag&&m.tipo!=='resgate')
     .reduce((s,m)=>s+(m.valor||0),0);
 
   // ── PREVISTO ENTRADAS: tudo lançado (recebido ou não) ──
@@ -1718,9 +1765,7 @@ function getTotalsForMonth(mes,ano){
   // ── PREVISTO SAÍDAS: todas as despesas + contrib + cofrinho ──
   const totalDespPrevisao = desps.reduce((s,d)=>s+(d._valorParcela||0),0) + contrib + cofrinhoSaida;
 
-  // ── Faturas por cartão (somadas por card) ──
-  const byCard = {}; state.cards.forEach(c=>byCard[c.id]=0);
-  desps.forEach(d=>{ if(d.cartao&&byCard[d.cartao]!==undefined) byCard[d.cartao]+=(d._valorParcela||0); });
+  const byCard = calcByCardForMonth(mes,ano);
 
   // ── EM CAIXA ENTRADAS: só receitas efetivamente recebidas ──
   const emCaixaEntradas = recsEfetivas.reduce((s,r)=>s+valorReceita(r),0);
@@ -1732,9 +1777,7 @@ function getTotalsForMonth(mes,ano){
   //    - Dinheiro/PIX não-fixas: saem imediatamente
   //    - Cofrinho: sai sempre (saída efetiva) ──
   let emCaixaSaidas = cofrinhoSaida;
-  // Contribuição: só se paga
   if(isContribuicaoPaga(mes,ano)) emCaixaSaidas+=contrib;
-  // Cartões de crédito: soma por cartão, só entra se fatura paga
   state.cards.forEach(c=>{
     if(!isCartaoDeCredito(c.id)) return;
     if(isFaturaPaga(c.id,mes,ano)) emCaixaSaidas+=(byCard[c.id]||0);
@@ -1748,48 +1791,90 @@ function getTotalsForMonth(mes,ano){
     if(d._pago) emCaixaSaidas+=(d._valorParcela||0);
   });
 
-  const emCaixaLiquido     = emCaixaEntradas - emCaixaSaidas;
+  const emCaixaLiquido   = emCaixaEntradas - emCaixaSaidas;
+  const totalRecPrevisto = recsPrevistas.reduce((s,r)=>s+valorReceita(r),0);
+  const repassesPendentes = getRepassesPendentesTotal(mes,ano);
 
-  const totalRecPrevisto   = recsPrevistas.reduce((s,r)=>s+valorReceita(r),0);
-  const repassesPendentes  = getRepassesPendentesTotal(mes,ano);
-
-  const excedentAcum       = calcExcedenteAcumulado(mes,ano);
-
-  // Em caixa disponível = saldo do mês + excedente acumulado de meses anteriores.
-  // MAS: se estamos no mês real de hoje e já existem Contas Bancárias cadastradas,
-  // a fonte de verdade passa a ser a soma do saldo de todas as contas (que já
-  // rastreia saldo inicial, receitas, despesas, faturas, contribuição e cofrinho
-  // vinculados) — evita ter dois números de "quanto eu tenho agora" divergentes.
-  let emCaixaDisponivel  = emCaixaLiquido + excedentAcum;
-  const usaContasComoFonte = isMesAtualReal(mes,ano) && state.contas && state.contas.length>0;
-  if(usaContasComoFonte){
-    emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
-  }
-
-  // Pior/Melhor cenário: o "Caixa Agora" (excedente acumulado + já recebido)
-  // só pode ser considerado quando estamos olhando o MÊS REAL DE HOJE — é o
-  // único momento em que esse dinheiro existe de fato na conta. Para qualquer
-  // outro mês (passado fechado ou projeção futura), o saldo daquele mês é
-  // calculado de forma isolada: se sobrar, você gasta ou manda pro cofrinho;
-  // se faltar, você cobre com o cofrinho — nada disso "vaza" pro mês seguinte.
-  let saldoPiorCenario, saldoMelhorCenario;
-  if(isMesAtualReal(mes,ano)){
-    // Pior cenário: só o que JÁ entrou (+ acumulado anterior) − tudo que tem pra pagar
-    saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
-    // Melhor cenário: o que já entrou + acumulado + pendentes a receber − tudo previsto
-    saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
-  } else {
-    // Mês isolado (sem caixa atual): salário previsto é o "certo"; repasses
-    // de terceiros são a parte incerta.
-    saldoPiorCenario   = previstoEntradas - totalDespPrevisao;
-    saldoMelhorCenario = previstoEntradas + repassesPendentes - totalDespPrevisao;
-  }
-
-  const saldoProjetado     = saldoMelhorCenario; // compat
+  // Cenário isolado (sem herdar saldo de fora): salário previsto é o "certo";
+  // repasses de terceiros são a parte incerta.
+  const saldoPiorIsolado   = previstoEntradas - totalDespPrevisao;
+  const saldoMelhorIsolado = previstoEntradas + repassesPendentes - totalDespPrevisao;
 
   const byCat={};
   desps.forEach(d=>{ if(!byCat[d.cat])byCat[d.cat]=0; byCat[d.cat]+=(d._valorParcela||0); });
   if(contrib>0) byCat['contribuicao']=(byCat['contribuicao']||0)+contrib;
+
+  return{
+    recsEfetivas, desps, contrib, cofrinhoSaida, byCard, byCat,
+    previstoEntradas, totalDespPrevisao, emCaixaEntradas, emCaixaSaidas, emCaixaLiquido,
+    totalRecPrevisto, repassesPendentes, saldoPiorIsolado, saldoMelhorIsolado
+  };
+}
+
+function getTotalsForMonth(mes,ano){
+  const iso = calcTotaisIsoladoMes(mes,ano);
+  const {recsEfetivas,desps,contrib,cofrinhoSaida,byCard,byCat,previstoEntradas,totalDespPrevisao,
+         emCaixaEntradas,emCaixaSaidas,emCaixaLiquido,totalRecPrevisto,repassesPendentes,
+         saldoPiorIsolado,saldoMelhorIsolado} = iso;
+
+  const temContas = !!(state.contas && state.contas.length>0);
+  const isPassado = ano<REAL_TODAY_YEAR || (ano===REAL_TODAY_YEAR && mes<REAL_TODAY_MONTH);
+  const isFuturo  = ano>REAL_TODAY_YEAR || (ano===REAL_TODAY_YEAR && mes>REAL_TODAY_MONTH);
+
+  let emCaixaDisponivel, saldoPiorCenario, saldoMelhorCenario, excedentAcum=0, usaContasComoFonte=false;
+
+  if(temContas){
+    // Com Contas Bancárias cadastradas, o saldo real das contas é a fonte de
+    // verdade — ele já flui naturalmente de um mês pro outro (é só o saldo da
+    // conta, sem reset por mês), sem precisar de nenhuma declaração manual.
+    if(isMesAtualReal(mes,ano)){
+      usaContasComoFonte=true;
+      emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+      const pendenteAPagar   = totalDespPrevisao - emCaixaSaidas;   // o que falta pagar esse mês
+      const pendenteAReceber = totalRecPrevisto + repassesPendentes; // o que falta receber esse mês
+      saldoPiorCenario   = emCaixaDisponivel - pendenteAPagar;
+      saldoMelhorCenario = emCaixaDisponivel + pendenteAReceber - pendenteAPagar;
+    } else if(isPassado){
+      // Mês fechado: reconstrói o saldo real das contas até o fim daquele mês —
+      // não há mais "cenário", é fato histórico.
+      usaContasComoFonte=true;
+      emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoContaAte(c.id,mes,ano),0);
+      saldoPiorCenario = saldoMelhorCenario = emCaixaDisponivel;
+    } else {
+      // Projeção futura: parte do saldo real de hoje e acumula, mês a mês, o
+      // resultado isolado (pior/melhor) de cada mês entre hoje e o mês navegado —
+      // assim uma sobra ou um rombo de um mês projetado carrega pro seguinte.
+      const saldoHoje = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+      let acumPior=0, acumMelhor=0, cm=REAL_TODAY_MONTH, cy=REAL_TODAY_YEAR;
+      for(let i=0;i<600;i++){ // safety cap (50 anos) — nunca deveria chegar perto disso
+        if(cm===mes&&cy===ano) break;
+        ({mes:cm,ano:cy}=addMonths(cm,cy,1));
+        const isoM = calcTotaisIsoladoMes(cm,cy);
+        acumPior  +=isoM.saldoPiorIsolado;
+        acumMelhor+=isoM.saldoMelhorIsolado;
+      }
+      saldoPiorCenario   = saldoHoje + acumPior;
+      saldoMelhorCenario = saldoHoje + acumMelhor;
+      // "Em Caixa Agora" de um mês futuro é projeção, não fato — usa o cenário
+      // conservador (Pior) pra não mostrar um número descolado dos cards de cenário.
+      emCaixaDisponivel = saldoPiorCenario;
+    }
+  } else {
+    // Sem Contas Bancárias cadastradas: mantém o comportamento anterior — cada
+    // mês isolado, com o excedente acumulado sendo o que o usuário declarar
+    // manualmente em "Guardar em Caixa".
+    excedentAcum = calcExcedenteAcumulado(mes,ano);
+    emCaixaDisponivel = emCaixaLiquido + excedentAcum;
+    if(isMesAtualReal(mes,ano)){
+      saldoPiorCenario   = emCaixaEntradas + excedentAcum - totalDespPrevisao;
+      saldoMelhorCenario = emCaixaEntradas + excedentAcum + totalRecPrevisto + repassesPendentes - totalDespPrevisao;
+    } else {
+      saldoPiorCenario   = saldoPiorIsolado;
+      saldoMelhorCenario = saldoMelhorIsolado;
+    }
+  }
+
+  const saldoProjetado = saldoMelhorCenario; // compat
 
   // compat aliases
   const totalRec=emCaixaEntradas, totalDespEfetivo=emCaixaSaidas, saldo=emCaixaLiquido;
@@ -1799,6 +1884,7 @@ function getTotalsForMonth(mes,ano){
     saldoProjetado, saldoPiorCenario, saldoMelhorCenario,
     emCaixaLiquido, emCaixaDisponivel, totalRecPrevisto, repassesPendentes,
     excedentAcum, saldoDisponivel:emCaixaDisponivel, usaContasComoFonte,
+    isProjecaoFutura: temContas&&isFuturo,
     byCard, byCat, recs:recsEfetivas, desps, contrib, cofrinhoSaida,
     totalRec, totalDespEfetivo, saldo
   };
@@ -1933,7 +2019,7 @@ function renderDashboard(){
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
-        excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte}=t;
+        excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
@@ -1989,7 +2075,9 @@ function renderDashboard(){
         <div class="kpi-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
         <div class="kpi-sub">${usaContasComoFonte
           ? 'Soma do saldo de todas as Contas Bancárias'
-          : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
+          : isProjecaoFutura
+            ? 'Projeção (Pior Cenário) a partir do saldo atual das contas'
+            : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
       </div>
     </div>`;
 
@@ -2063,7 +2151,7 @@ function renderDashboard(){
         :`<button class="btn btn-ok btn-sm" style="width:100%;margin-top:8px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">✓ Marcar como Paga</button>`)
       :'';
     billHTML+=`<div class="bill-card" style="border-top-color:${c.color};cursor:pointer" onclick="navigateToDespesasCartao('${c.id}')">
-      <div class="bill-name">${c.name} <span style="font-size:10px;color:var(--muted);font-weight:400">→ ver</span></div>
+      <div class="bill-name">${esc(c.name)} <span style="font-size:10px;color:var(--muted);font-weight:400">→ ver</span></div>
       ${statusBadge}
       <div class="bill-value" style="color:${isCC&&paga?'var(--ok)':isCC?'var(--danger)':'var(--text)'}">${fmtBRL(valor)}</div>
       ${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}
@@ -2143,9 +2231,9 @@ function renderDashboard(){
     const cat=state.categories.find(c=>c.id===d.cat);
     const card=state.cards.find(c=>c.id===d.cartao);
     html+=`<tr>
-      <td>${d.desc}</td>
-      <td><span class="badge badge-blue">${cat?.name||d.cat}</span></td>
-      <td><span class="tag" style="color:${card?.color||'inherit'}">${card?.name||d.cartao}</span></td>
+      <td>${esc(d.desc)}</td>
+      <td><span class="badge badge-blue">${esc(cat?.name||d.cat)}</span></td>
+      <td><span class="tag" style="color:${card?.color||'inherit'}">${esc(card?.name||d.cartao)}</span></td>
       <td class="mono">${d._parcel}/${d._total}</td>
       <td class="mono" style="color:var(--danger)">${fmtBRL(d._valorParcela)}</td>
     </tr>`;
@@ -2217,7 +2305,7 @@ function renderPrevisaoMediaHistorica(){
   const rows=prev.porCategoria.map(({catId,media})=>{
     const cat=state.categories.find(c=>c.id===catId);
     return `<div class="item-row" style="margin-bottom:8px">
-      <div class="item-row-info"><div class="item-row-name">${cat?.name||catId}</div></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(cat?.name||catId)}</div></div>
       <div class="item-row-val neg">${fmtBRL(media)}</div>
     </div>`;
   }).join('');
@@ -2250,13 +2338,13 @@ function renderRelatorio(){
   </div>
   <h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Faturas por Cartão</h4>
   <div class="card-bills" style="margin-bottom:24px">`;
-  state.cards.forEach(c=>{html+=`<div class="bill-card" style="border-top-color:${c.color}"><div class="bill-name">${c.name}</div><div class="bill-value">${fmtBRL(byCard[c.id]||0)}</div>${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}</div>`;});
+  state.cards.forEach(c=>{html+=`<div class="bill-card" style="border-top-color:${c.color}"><div class="bill-name">${esc(c.name)}</div><div class="bill-value">${fmtBRL(byCard[c.id]||0)}</div>${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Paga ${c.paga||'—'}</div>`:''}</div>`;});
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
     const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
-    recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${r.nome||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
+    recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
   }
   html+=`<h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Despesas</h4>`;
@@ -2267,8 +2355,8 @@ function renderRelatorio(){
     const st=isDinheiroPix?(d._pago?'<span class="badge badge-ok" style="margin-left:6px">Pago</span>':'<span class="badge badge-yellow" style="margin-left:6px">Previsto</span>'):'';
     html+=`<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}" style="margin-bottom:8px">
       <div class="item-row-info">
-        <div class="item-row-name">${d.desc}${d.fixa?' <span class="tag">Fixo</span>':''}${st}</div>
-        <div class="item-row-meta">${cat?.name||''} · <span style="color:${card?.color||'inherit'}">${card?.name||d.cartao}</span> · Parcela ${d._parcel}/${d._total}</div>
+        <div class="item-row-name">${esc(d.desc)}${d.fixa?' <span class="tag">Fixo</span>':''}${st}</div>
+        <div class="item-row-meta">${esc(cat?.name||'')} · <span style="color:${card?.color||'inherit'}">${esc(card?.name||d.cartao)}</span> · Parcela ${d._parcel}/${d._total}</div>
       </div>
       <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
     </div>`;
@@ -2286,6 +2374,14 @@ function onRecTipoChange(){
   document.getElementById('recRecorrenteRow').style.display=(tipo==='repasse'||tipo==='extra')?'none':'flex';
   document.getElementById('recParceladoRow').style.display=tipo==='extra'?'flex':'none';
   if(tipo!=='extra'){ document.getElementById('recParceladoBox').style.display='none'; document.getElementById('recParcelado').checked=false; }
+  onRecFixoChange();
+}
+
+function onRecFixoChange(){
+  const tipo=document.getElementById('recTipo').value;
+  const fixo=document.getElementById('recFixo').checked;
+  const box=document.getElementById('recSalarioRollInfo');
+  if(box) box.style.display=(tipo==='salario'&&fixo)?'block':'none';
 }
 
 function onRecValorChange(){ if(document.getElementById('recParcelado')?.checked) gerarParcelasReceita(); }
@@ -2395,7 +2491,7 @@ function renderReceitas(){
         html+=`<div class="item-row ${p.totalRecebido>0&&pendente<=0?'pago':pendente>0?'previsto':''}">
           <div style="width:12px;height:12px;border-radius:50%;background:${p.color};flex-shrink:0"></div>
           <div class="item-row-info">
-            <div class="item-row-name">${p.name}</div>
+            <div class="item-row-name">${esc(p.name)}</div>
             <div class="item-row-meta">
               ${p.totalRecebido>0?`Recebido: <span style="color:var(--accent2)">${fmtBRL(p.totalRecebido)}</span>`:''}
               ${pendente>0?` · Pendente: <span style="color:var(--warn)">${fmtBRL(pendente)}</span>`:''}
@@ -2423,7 +2519,7 @@ function renderReceitas(){
         :`<button class="btn btn-warn btn-sm" onclick="toggleParcelaReceita('${r.id}',${r._parcelaIdx})">⏳ Prevista</button>`;
       html+=`<div class="item-row ${r._parcelaRecebida?'pago':'previsto'}">
         <div class="item-row-info">
-          <div class="item-row-name">${r.nome} <span class="badge badge-blue">${r._parcelaNum}/${r._parcelaTotal}</span></div>
+          <div class="item-row-name">${esc(r.nome)} <span class="badge badge-blue">${r._parcelaNum}/${r._parcelaTotal}</span></div>
           <div class="item-row-meta">Projeto Extra · Parcela ${r._parcelaNum} de ${r._parcelaTotal}</div>
         </div>
         <div class="item-row-val ${r._parcelaRecebida?'pos':'muted'}">${fmtBRL(r._parcelaValor)}</div>
@@ -2440,7 +2536,7 @@ function renderReceitas(){
       }
       html+=`<div class="item-row ${recebida?'pago':'previsto'}">
         <div class="item-row-info">
-          <div class="item-row-name">${r.nome||tipos[r.tipo]||r.tipo}
+          <div class="item-row-name">${esc(r.nome)||tipos[r.tipo]||r.tipo}
             ${r.recorrente?'<span class="tag" style="margin-left:4px">Recorrente</span>':''}
             ${r.isResgate?'<span class="badge badge-blue" style="margin-left:4px">Resgate do Cofrinho</span>':''}
             ${(r.isRepasse||r.tributavel===false)?'<span class="badge badge-yellow" style="margin-left:4px">Sem contribuição</span>':''}
@@ -2488,7 +2584,7 @@ function openEditReceita(id){
       <div class="form-group"><label>Tipo</label>
         <select id="eRecTipo">${Object.entries(tipos).map(([v,l])=>`<option value="${v}" ${r.tipo===v?'selected':''}>${l}</option>`).join('')}</select>
       </div>
-      <div class="form-group"><label>Nome</label><input type="text" id="eRecNome" value="${r.nome||''}"></div>
+      <div class="form-group"><label>Nome</label><input type="text" id="eRecNome" value="${esc(r.nome||'')}"></div>
       <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor" value="${r.valor}" min="0" step="0.01"></div>
       <div class="form-group"><label>Mês</label>
         <select id="eRecMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${r.mes===i+1?'selected':''}>${m}</option>`).join('')}</select>
@@ -2712,8 +2808,8 @@ function despItemHTML(d){
     ?`<span class="badge badge-yellow">👥</span>`:'';
   return `<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}">
     <div class="item-row-info">
-      <div class="item-row-name">${d.desc}${d.fixa?' <span class="tag">Fixo</span>':''} ${splitBadge}</div>
-      <div class="item-row-meta">${cat?.name||d.cat} › ${d.subcat||''} · ${d._parcel}/${d._total}</div>
+      <div class="item-row-name">${esc(d.desc)}${d.fixa?' <span class="tag">Fixo</span>':''} ${splitBadge}</div>
+      <div class="item-row-meta">${esc(cat?.name||d.cat)} › ${esc(d.subcat||'')} · ${d._parcel}/${d._total}</div>
       ${d._total>1?dots:''}
     </div>
     <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
@@ -2836,22 +2932,30 @@ function openEditDespesa(id){
   document.getElementById('modalTitle').textContent='Editar Despesa';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Descrição</label><input type="text" id="eDespDesc" value="${d.desc}"></div>
+      <div class="form-group full"><label>Descrição</label><input type="text" id="eDespDesc" value="${esc(d.desc)}"></div>
       <div class="form-group"><label>Categoria</label><select id="eDespCat" onchange="eUpdateSubcats()">${catOpts}</select></div>
       <div class="form-group"><label>Subcategoria</label><select id="eDespSubcat">${subOpts}</select></div>
       <div class="form-group"><label>Cartão / Origem</label><select id="eDespCartao" onchange="eOnCartaoChange()">${cardOpts}</select></div>
       <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="eDespValor" value="${d.valor}" min="0" step="0.01"></div>
-      <div class="form-group"><label>Nº Parcelas</label><input type="number" id="eDespParcelas" value="${d.parcelas||1}" min="1" max="120"></div>
+      <div class="form-group"><label>Nº Parcelas</label><input type="number" id="eDespParcelas" value="${d.parcelas||1}" min="1" max="120" oninput="eOnParcelasChange()"></div>
       <div class="form-group"><label>Mês Início</label>
         <select id="eDespMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${d.mesInicio===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
+      <div class="form-group full" id="eDespIgnorarGroup" style="display:${(d.parcelas||1)>1?'block':'none'}">
+        <div class="checkbox-row"><input type="checkbox" id="eDespIgnorarCheck" style="width:auto" ${d.ignorarAntes?'checked':''} onchange="eOnIgnorarChange()"><label for="eDespIgnorarCheck">Compra antiga — desconsiderar parcelas anteriores a um mês (já pagas antes de eu usar o app)</label></div>
+        <div id="eDespIgnorarFields" style="display:${d.ignorarAntes?'flex':'none'};gap:10px;margin-top:8px">
+          <select id="eDespIgnorarMes" style="flex:1">${MONTHS.map((m,i)=>`<option value="${i+1}" ${(d.ignorarAntes?.mes||REAL_TODAY_MONTH)===i+1?'selected':''}>${m}</option>`).join('')}</select>
+          <input type="number" id="eDespIgnorarAno" style="width:100px" value="${d.ignorarAntes?.ano||REAL_TODAY_YEAR}" min="2020" max="2040">
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">Parcelas antes desse mês somem do caixa/previsões (deixam de ser cobradas do sistema), mas o rótulo "x/${d.parcelas||1}" continua correto.</div>
+      </div>
       <div class="form-group full" id="eDespContaGroup" style="display:${d.cartao==='dinheiro'?'block':'none'}">
         <label>Conta bancária (de onde sai o dinheiro)</label>
         <select id="eDespConta">${contaOpts}</select>
       </div>
       <div class="form-group full" id="eDespContaCartaoInfo" style="display:${d.cartao==='dinheiro'?'none':'block'}">
-        <div class="info-box">💡 Pago no crédito: a conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard).</div>
+        <div class="info-box">💡 Pago no crédito: o mês/ano acima é o mês da <strong>compra</strong> — a fatura aparece no mês seguinte. A conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard).</div>
       </div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eDespFixa" style="width:auto" ${d.fixa?'checked':''} onchange="eOnCartaoChange()"><label for="eDespFixa">Despesa fixa (recorrente)</label></div>
       <div class="form-group full" id="eDespVencimentoGroup" style="display:${(d.cartao==='dinheiro'&&d.fixa)?'block':'none'}">
@@ -2913,6 +3017,16 @@ function eUpdateSubcats(){
   const sub=document.getElementById('eDespSubcat');
   if(sub)sub.innerHTML=(cat?.subs||[]).map(s=>`<option value="${s}">${s}</option>`).join('');
 }
+function eOnIgnorarChange(){
+  const checked=document.getElementById('eDespIgnorarCheck')?.checked;
+  const f=document.getElementById('eDespIgnorarFields');
+  if(f) f.style.display=checked?'flex':'none';
+}
+function eOnParcelasChange(){
+  const parcelas=parseInt(document.getElementById('eDespParcelas')?.value)||1;
+  const g=document.getElementById('eDespIgnorarGroup');
+  if(g) g.style.display=parcelas>1?'block':'none';
+}
 function eOnCartaoChange(){
   const cartaoId=document.getElementById('eDespCartao')?.value;
   const isDinheiro=cartaoId==='dinheiro';
@@ -2935,6 +3049,8 @@ function saveEditDespesa(id){
   d.conta=isDinheiro?(contaSelecionadaDesp!==undefined?(contaSelecionadaDesp||null):(d.conta||null)):null;
   d.valor=parseFloat(document.getElementById('eDespValor').value)||0;
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
+  const ignorarCheck=document.getElementById('eDespIgnorarCheck')?.checked;
+  d.ignorarAntes=(ignorarCheck&&d.parcelas>1)?{mes:parseInt(document.getElementById('eDespIgnorarMes').value),ano:parseInt(document.getElementById('eDespIgnorarAno').value)}:null;
   d.mesInicio=parseInt(document.getElementById('eDespMes').value);
   d.anoInicio=parseInt(document.getElementById('eDespAno').value);
   d.fixa=document.getElementById('eDespFixa').checked;
@@ -2953,12 +3069,15 @@ function renderParcelamentos(){
   if(!parceled.length){document.getElementById('parcelamentosList').innerHTML='<div class="empty-state">Nenhum parcelamento cadastrado</div>';return;}
   let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Total</th><th>Parcela</th><th>Início</th><th>Progresso</th><th>Valor/x</th><th></th></tr></thead><tbody>';
   parceled.forEach(d=>{
+    // Progresso usa o mesmo deslocamento de fatura (cartão = +1 mês) pra bater com o Dashboard.
+    const roll=isCartaoDeCredito(d.cartao)?1:0;
+    const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
     let cp=0;
-    for(let i=0;i<d.parcelas;i++){let m=(d.mesInicio-1)+i,y=d.anoInicio+Math.floor(m/12),mo=(m%12)+1;if(y<currentYear||(y===currentYear&&mo<=currentMonth))cp=i+1;}
+    for(let i=0;i<d.parcelas;i++){let m=(mIni-1)+i,y=yIni+Math.floor(m/12),mo=(m%12)+1;if(y<currentYear||(y===currentYear&&mo<=currentMonth))cp=i+1;}
     const pct=Math.min(100,(cp/d.parcelas)*100).toFixed(0);
     const card=state.cards.find(c=>c.id===d.cartao);
     html+=`<tr>
-      <td>${d.desc}<br><span style="font-size:11px;color:${card?.color||'var(--muted)'}">${card?.name||d.cartao}</span></td>
+      <td>${esc(d.desc)}<br><span style="font-size:11px;color:${card?.color||'var(--muted)'}">${esc(card?.name||d.cartao)}</span></td>
       <td class="mono">${fmtBRL(d.valor)}</td>
       <td class="mono">${cp||'—'}/${d.parcelas}</td>
       <td class="mono" style="font-size:12px">${MONTHS[d.mesInicio-1].slice(0,3)} ${d.anoInicio}</td>
@@ -2991,7 +3110,6 @@ function addSubcategoria(){
   cat.subs.push(sub);scheduleSave();renderCategorias();document.getElementById('newSubcatName').value='';toast('Subcategoria adicionada!');
 }
 function delCategoria(id){
-  if(DEFAULT_CATEGORIES.find(c=>c.id===id)){toast('Não é possível remover categorias padrão');return;}
   state.categories=state.categories.filter(c=>c.id!==id);scheduleSave();renderCategorias();toast('Removida');
 }
 function delSubcat(catId,sub){
@@ -3001,20 +3119,18 @@ function delSubcat(catId,sub){
 function renderCategorias(){
   const sel=document.getElementById('subcatParent');
   if(sel)sel.innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-  const DEFAULT_IDS=DEFAULT_CATEGORIES.map(c=>c.id);
   let html='<div class="item-list">';
+  if(!state.categories.length) html+='<div class="empty-state">Nenhuma categoria cadastrada ainda. Adicione a primeira ao lado.</div>';
   state.categories.forEach(cat=>{
-    const isDef=DEFAULT_IDS.includes(cat.id);
     html+=`<div style="margin-bottom:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0">
-        <span style="font-weight:600;font-size:13px">${cat.name}</span>
+        <span style="font-weight:600;font-size:13px">${esc(cat.name)}</span>
         <div style="display:flex;gap:6px;align-items:center">
-          ${isDef?'<span class="tag">Padrão</span>':''}
-          ${!isDef?`<button class="btn btn-danger btn-icon btn-sm" onclick="delCategoria('${cat.id}')">✕</button>`:''}
+          <button class="btn btn-danger btn-icon btn-sm" onclick="delCategoria('${cat.id}')">✕</button>
         </div>
       </div>
       <div style="background:var(--input-bg);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px">
-        ${cat.subs.map(s=>`<span class="badge badge-blue">${s} <span onclick="delSubcat('${cat.id}','${s}')" style="cursor:pointer;margin-left:4px;opacity:.7">✕</span></span>`).join('')}
+        ${cat.subs.map(s=>`<span class="badge badge-blue">${esc(s)} <span onclick="delSubcat('${cat.id}','${escJs(s)}')" style="cursor:pointer;margin-left:4px;opacity:.7">✕</span></span>`).join('')}
         ${!cat.subs.length?'<span style="color:var(--muted);font-size:12px">Sem subcategorias</span>':''}
       </div>
     </div>`;
@@ -3045,7 +3161,7 @@ function openEditCartao(id){
   document.getElementById('modalTitle').textContent='Editar Cartão';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Nome</label><input type="text" id="eCardName" value="${c.name}"></div>
+      <div class="form-group full"><label>Nome</label><input type="text" id="eCardName" value="${esc(c.name)}"></div>
       <div class="form-group"><label>Cor</label><input type="color" id="eCardColor" value="${c.color}" style="height:38px;padding:4px"></div>
       <div class="form-group"></div>
       <div class="form-group"><label>Fechamento (dia)</label><input type="number" id="eCardFecha" value="${c.fecha||''}" min="1" max="31" placeholder="Ex: 12"></div>
@@ -3080,7 +3196,7 @@ function renderCartoes(){
     html+=`<div class="item-row">
       <div style="width:16px;height:16px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
       <div class="item-row-info">
-        <div class="item-row-name">${c.name}</div>
+        <div class="item-row-name">${esc(c.name)}</div>
         <div class="item-row-meta">${c.fecha?`Fecha dia ${c.fecha} · Paga dia ${c.paga||'—'}`:'Sem datas configuradas'}</div>
       </div>
       ${isDef?'<span class="tag">Padrão</span>':''}
@@ -3220,7 +3336,7 @@ function confirmarLancamentosFatura(cartaoId){
     state.despesas.push({
       id:uid(), desc:it.desc, cat:it.cat||'outros', subcat:it.subcat||'',
       cartao:cartaoId, conta:null, valor:it.valor, parcelas:1,
-      mesInicio, anoInicio, fixa:false, pagoMeses:{}, split:[], repasses:{},
+      mesInicio, anoInicio, fixa:false, diaVencimento:null, ignorarAntes:null, pagoMeses:{}, split:[], repasses:{},
       createdAt:uid()
     });
   });
@@ -3260,7 +3376,7 @@ function openEditConta(id){
   document.getElementById('modalTitle').textContent='Editar Conta';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Nome</label><input type="text" id="eContaName" value="${c.name}"></div>
+      <div class="form-group full"><label>Nome</label><input type="text" id="eContaName" value="${esc(c.name)}"></div>
       <div class="form-group"><label>Cor</label><input type="color" id="eContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
@@ -3304,6 +3420,46 @@ function salvarAjusteSaldoConta(id){
   }
   scheduleSave();closeModal();renderContas();renderDashboard();toast('Saldo ajustado!');
 }
+// ════════════════════════════════════════════════
+// TRANSFERÊNCIA ENTRE CONTAS
+// Implementada como duas movimentacoesContas ligadas por transferId (uma
+// negativa na origem, uma positiva no destino), reaproveitando o mesmo
+// mecanismo de calcSaldoConta usado pelo Ajustar Saldo — sem duplicar lógica
+// de cálculo de saldo em outro lugar.
+// ════════════════════════════════════════════════
+function openTransferenciaModal(){
+  if(state.contas.length<2){toast('Cadastre pelo menos 2 contas para transferir entre elas');return;}
+  const opts=c=>state.contas.map(x=>`<option value="${x.id}" ${x.id===c?'selected':''}>${esc(x.name)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
+  document.getElementById('modalTitle').textContent='Transferir entre Contas';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Conta de origem</label><select id="transfOrigem" onchange="if(this.value===document.getElementById('transfDestino').value)toast('Escolha contas diferentes')">${opts(state.contas[0].id)}</select></div>
+      <div class="form-group full"><label>Conta de destino</label><select id="transfDestino">${opts(state.contas[1].id)}</select></div>
+      <div class="form-group"><label>Valor</label><input type="number" id="transfValor" placeholder="0,00" step="0.01" min="0.01"></div>
+      <div class="form-group"><label>Data</label><input type="date" id="transfData" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group full"><label>Descrição (opcional)</label><input type="text" id="transfObs" placeholder="Ex: repasse para pagar fatura do cartão"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="salvarTransferencia()">Transferir</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function salvarTransferencia(){
+  const origemId=document.getElementById('transfOrigem').value;
+  const destinoId=document.getElementById('transfDestino').value;
+  const valor=parseFloat(document.getElementById('transfValor').value);
+  const dataStr=document.getElementById('transfData').value;
+  const obs=document.getElementById('transfObs').value.trim();
+  if(origemId===destinoId){toast('Escolha duas contas diferentes');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  const origem=state.contas.find(c=>c.id===origemId), destino=state.contas.find(c=>c.id===destinoId);
+  const data=dataStr?new Date(dataStr+'T12:00:00').toISOString():new Date().toISOString();
+  const transferId=uid();
+  state.movimentacoesContas.push({id:uid(),contaId:origemId,valor:-valor,data,transferId,obs:'Transferência para '+destino.name+(obs?' — '+obs:'')});
+  state.movimentacoesContas.push({id:uid(),contaId:destinoId,valor:valor,data,transferId,obs:'Transferência de '+origem.name+(obs?' — '+obs:'')});
+  scheduleSave();closeModal();renderContas();renderDashboard();toast('Transferência registrada!');
+}
 // Saldo = saldo inicial + ajustes manuais + receitas recebidas − despesas pagas, vinculadas a essa conta
 function calcSaldoConta(contaId){
   const c=state.contas.find(x=>x.id===contaId);
@@ -3328,18 +3484,18 @@ function calcSaldoConta(contaId){
     const valorParcela=(d.valor||0)/(d.parcelas||1);
     Object.keys(d.pagoMeses||{}).forEach(mk=>{ if(d.pagoMeses[mk]) saldo-=valorParcela; });
   });
-  // Faturas de cartão de crédito pagas: debita o total da fatura da conta escolhida no pagamento
+  // Faturas de cartão de crédito pagas: debita o total da fatura da conta escolhida no pagamento.
+  // faturaKey = `${cardId}_${ano}-${mm}` — extrai ano/mês pelo sufixo fixo em vez
+  // de tentar achar o cartão via prefixo (evita confundir cartões cujo id é
+  // prefixo um do outro, ex: "banco" e "banco_x").
   Object.keys(state.faturasContas||{}).forEach(k=>{
     if(state.faturasContas[k]!==contaId) return;
     if(!state.faturasPagas||!state.faturasPagas[k]) return;
-    const card=state.cards.find(c2=>k.startsWith(c2.id+'_'));
-    if(!card) return;
-    const rest=k.slice(card.id.length+1); // "ano-mm"
-    const [anoStr,mmStr]=rest.split('-');
-    const ano=parseInt(anoStr), mes=parseInt(mmStr);
+    const m=k.match(/^(.+)_(\d{4})-(\d{2})$/);
+    if(!m) return;
+    const cardId=m[1], ano=parseInt(m[2]), mes=parseInt(m[3]);
     if(!ano||!mes) return;
-    const tm=getTotalsForMonth(mes,ano);
-    saldo-=(tm.byCard&&tm.byCard[card.id])||0;
+    saldo-=(calcByCardForMonth(mes,ano)[cardId])||0;
   });
   // Contribuição (10%) paga: debita a conta escolhida no momento do pagamento.
   // Usa o valor DINÂMICO recalculado agora (calcContribuicao), não o valor
@@ -3357,6 +3513,55 @@ function calcSaldoConta(contaId){
   });
   return saldo;
 }
+// Reconstrói o saldo da conta considerando só o que foi marcado recebido/pago
+// ATÉ o mês informado (inclusive) — mesma lógica de calcSaldoConta, mas com um
+// corte temporal. Usada pra reconstruir o saldo histórico de um mês passado e
+// como ponto de partida (saldo real de hoje) pra projeção de meses futuros.
+function calcSaldoContaAte(contaId,mes,ano){
+  const c=state.contas.find(x=>x.id===contaId);
+  if(!c) return 0;
+  const limite=mesKey(mes,ano);
+  let saldo=c.saldoInicial||0;
+  state.movimentacoesContas.forEach(m=>{
+    if(m.contaId!==contaId) return;
+    const mk=(m.data||'').slice(0,7);
+    if(mk && mk>limite) return;
+    saldo+=m.valor;
+  });
+  state.receitas.forEach(r=>{
+    if(r.conta!==contaId) return;
+    if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
+      r.parcelas.forEach(p=>{ if(p.recebida && mesKey(p.mes,p.ano)<=limite) saldo+=(p.valor||0); });
+    } else {
+      Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk] && mk<=limite) saldo+=(r.valor||0); });
+    }
+  });
+  state.despesas.forEach(d=>{
+    if(d.cartao!=='dinheiro') return;
+    if(d.conta!==contaId) return;
+    const valorParcela=(d.valor||0)/(d.parcelas||1);
+    Object.keys(d.pagoMeses||{}).forEach(mk=>{ if(d.pagoMeses[mk] && mk<=limite) saldo-=valorParcela; });
+  });
+  Object.keys(state.faturasContas||{}).forEach(k=>{
+    if(state.faturasContas[k]!==contaId) return;
+    if(!state.faturasPagas||!state.faturasPagas[k]) return;
+    const m=k.match(/^(.+)_(\d{4})-(\d{2})$/);
+    if(!m) return;
+    const faturaMk=m[2]+'-'+m[3];
+    if(faturaMk>limite) return;
+    const cardId=m[1], fAno=parseInt(m[2]), fMes=parseInt(m[3]);
+    saldo-=(calcByCardForMonth(fMes,fAno)[cardId])||0;
+  });
+  Object.keys(state.contribuicaoContas||{}).forEach(k=>{
+    const info=state.contribuicaoContas[k];
+    if(!info||info.contaId!==contaId) return;
+    if(!state.contribuicaoPaga||!state.contribuicaoPaga[k]) return;
+    if(k>limite) return;
+    const [anoStr,mesStr]=k.split('-');
+    saldo-=calcContribuicao(parseInt(mesStr),parseInt(anoStr));
+  });
+  return saldo;
+}
 function renderContas(){
   let html='<div class="item-list">';
   if(!state.contas.length)html+='<div class="empty-state">Nenhuma conta cadastrada ainda. Adicione a primeira ao lado.</div>';
@@ -3365,7 +3570,7 @@ function renderContas(){
     html+=`<div class="item-row">
       <div style="width:16px;height:16px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
       <div class="item-row-info">
-        <div class="item-row-name">${c.name}</div>
+        <div class="item-row-name">${esc(c.name)}</div>
         <div class="item-row-meta">Saldo inicial: ${fmtBRL(c.saldoInicial)}</div>
       </div>
       <div class="item-row-val ${saldo>=0?'pos':'neg'}" style="font-size:15px">${fmtBRL(saldo)}</div>
@@ -3399,7 +3604,7 @@ function renderSaldoContasCard(){
     return `<div style="background:linear-gradient(135deg,${hexToRgba(c.color,.16)},${hexToRgba(c.color,.04)});border:1px solid ${hexToRgba(c.color,.3)};border-radius:var(--radius);padding:14px;min-width:0">
       <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
         <div style="width:9px;height:9px;border-radius:3px;background:${c.color};flex-shrink:0"></div>
-        <div style="font-size:12px;font-weight:600;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name}</div>
+        <div style="font-size:12px;font-weight:600;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</div>
       </div>
       <div class="mono" style="font-size:17px;font-weight:700;color:${saldo>=0?'var(--text)':'var(--danger)'}">${fmtBRL(saldo)}</div>
     </div>`;
@@ -3445,24 +3650,30 @@ function calcProximosVencimentos(){
       mes++; if(mes>12){mes=1;ano++;}
     }
   });
-  // Faturas de cartão de crédito: a partir do dia seguinte ao fechamento,
-  // mostra a fatura já fechada contando os dias até o dia de pagamento.
+  // Faturas de cartão de crédito: como getDespesasForMonth já rola as compras
+  // pro mês seguinte (mesma convenção de Nubank/Mercado Pago/etc — compra em
+  // junho vira "fatura de julho"), a fatura devida num mês M já está correta
+  // em getTotalsForMonth(M).byCard — só falta achar a mais antiga ainda não
+  // paga (normalmente a do mês atual) e usar o dia "paga" pra data de vencimento.
   state.cards.forEach(c=>{
-    if(c.id==='dinheiro' || !c.fecha || !c.paga) return;
-    // Ciclo mais recentemente fechado: se hoje ainda não passou do dia de
-    // fechamento deste mês, o último ciclo fechado foi o do mês anterior.
-    let fechoMes=hojeM, fechoAno=hojeY;
-    if(hojeD<=c.fecha){ fechoMes--; if(fechoMes<1){fechoMes=12;fechoAno--;} }
-    if(isFaturaPaga(c.id,fechoMes,fechoAno)) return; // já paga, não aparece mais
-    const t=getTotalsForMonth(fechoMes,fechoAno);
-    const valor=(t.byCard&&t.byCard[c.id])||0;
-    if(valor<=0) return; // fatura zerada, nada a cobrar
-    // Data de pagamento: mesmo mês do fechamento se paga>=fecha, senão vira o mês
-    let pagaMes=fechoMes, pagaAno=fechoAno;
-    if(c.paga<c.fecha){ pagaMes++; if(pagaMes>12){pagaMes=1;pagaAno++;} }
-    const dataVenc=new Date(pagaAno, pagaMes-1, c.paga);
-    const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
-    resultado.push({tipo:'fatura', card:c, fechoMes, fechoAno, pagaMes, pagaAno, valor, diffDias});
+    if(c.id==='dinheiro' || !c.paga) return;
+    // Olha só o mês atual e 1 mês pra trás ("esqueci de marcar a fatura do mês
+    // passado"). Não escaneia mais longe que isso de propósito: parcelamentos
+    // antigos lançados retroativamente (pra reconstruir um histórico que já
+    // está embutido no saldo inicial da conta) ficam sem marcar como pagos —
+    // se a busca fosse mais longa, toda fatura antiga apareceria aqui como
+    // "vencida", o que é ruído, não um aviso real.
+    for(let back=1; back>=0; back--){
+      const {mes,ano}=addMonths(hojeM,hojeY,-back);
+      if(isFaturaPaga(c.id,mes,ano)) continue;
+      const t=getTotalsForMonth(mes,ano);
+      const valor=(t.byCard&&t.byCard[c.id])||0;
+      if(valor<=0) continue; // sem compras nessa fatura, nada a cobrar
+      const dataVenc=new Date(ano, mes-1, c.paga);
+      const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
+      resultado.push({tipo:'fatura', card:c, fechoMes:mes, fechoAno:ano, pagaMes:mes, pagaAno:ano, valor, diffDias});
+      break; // só a fatura pendente mais antiga por cartão
+    }
   });
   resultado.sort((a,b)=>a.diffDias-b.diffDias);
   return resultado;
@@ -3488,8 +3699,8 @@ function renderProximosVencimentos(){
       const c=item.card;
       return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
         <div class="item-row-info">
-          <div class="item-row-name">💳 Fatura ${c.name}</div>
-          <div class="item-row-meta">Fechou dia ${c.fecha} · paga dia ${c.paga} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
+          <div class="item-row-name">💳 Fatura ${esc(c.name)} — ${MONTHS[item.fechoMes-1]}</div>
+          <div class="item-row-meta">${c.fecha?`Fecha dia ${c.fecha} · `:''}paga dia ${c.paga} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
         </div>
         <div class="item-row-val neg">${fmtBRL(item.valor)}</div>
         <button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${c.id}',${item.fechoMes},${item.fechoAno})">✓ Pago</button>
@@ -3499,8 +3710,8 @@ function renderProximosVencimentos(){
     const cat=state.categories.find(c=>c.id===d.cat);
     return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
       <div class="item-row-info">
-        <div class="item-row-name">${d.desc}</div>
-        <div class="item-row-meta">${cat?.name||''} · dia ${d.diaVencimento} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
+        <div class="item-row-name">${esc(d.desc)}</div>
+        <div class="item-row-meta">${esc(cat?.name||'')} · dia ${d.diaVencimento} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
       </div>
       <div class="item-row-val neg">${fmtBRL(d.valor)}</div>
       <button class="btn btn-ok btn-sm" onclick="togglePago('${d.id}',${item.mes},${item.ano})">✓ Pago</button>
@@ -3538,7 +3749,7 @@ function openEditPessoa(id){
   document.getElementById('modalTitle').textContent='Editar Pessoa';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Nome</label><input type="text" id="ePersonName" value="${p.name}"></div>
+      <div class="form-group full"><label>Nome</label><input type="text" id="ePersonName" value="${esc(p.name)}"></div>
       <div class="form-group"><label>Cor</label><input type="color" id="ePersonColor" value="${p.color}" style="height:38px;padding:4px"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -3559,7 +3770,7 @@ function renderPessoas(){
   state.pessoas.forEach(p=>{
     html+=`<div class="item-row">
       <div style="width:16px;height:16px;border-radius:50%;background:${p.color};flex-shrink:0"></div>
-      <div class="item-row-info"><div class="item-row-name">${p.name}</div></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(p.name)}</div></div>
       <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditPessoa('${p.id}')">✎</button>
       <button class="btn btn-danger btn-icon btn-sm" onclick="delPessoa('${p.id}')">✕</button>
     </div>`;
@@ -3718,7 +3929,7 @@ function renderRelatorioPessoas(){
       <div class="accordion-head" onclick="toggleAccordion('${accId}')">
         <div style="width:14px;height:14px;border-radius:50%;background:${p.color};flex-shrink:0"></div>
         <div class="accordion-head-info">
-          <div class="accordion-head-name">${p.name}</div>
+          <div class="accordion-head-name">${esc(p.name)}</div>
           <div class="accordion-head-sub">
             Recebido: <span style="color:var(--accent2)">${fmtBRL(p.totalRecebido)}</span>
             · Pendente: <span style="color:${pendente>0?'var(--warn)':'var(--ok)'}">${fmtBRL(pendente)}</span>
@@ -3736,8 +3947,8 @@ function renderRelatorioPessoas(){
           const cat=state.categories.find(c=>c.id===r.cat);
           return `<div class="item-row ${r.recebido?'pago':'previsto'}">
             <div class="item-row-info">
-              <div class="item-row-name">${r.desc} <span class="tag">${r.percent}%</span></div>
-              <div class="item-row-meta">${cat?.name||''} · Parcela ${r.parcel}/${r.total}${r.comoReceita?' · como receita':''}</div>
+              <div class="item-row-name">${esc(r.desc)} <span class="tag">${r.percent}%</span></div>
+              <div class="item-row-meta">${esc(cat?.name||'')} · Parcela ${r.parcel}/${r.total}${r.comoReceita?' · como receita':''}</div>
             </div>
             <div class="item-row-val ${r.recebido?'pos':'muted'}">${fmtBRL(r.valorPessoa)}</div>
             ${r.recebido
@@ -4035,10 +4246,10 @@ function renderAnalise(){
       const card=state.cards.find(c=>c.id===d.cartao);
       html+=`<tr>
         <td class="mono" style="font-size:12px">${MONTHS[d._mes-1].slice(0,3)} ${d._ano}</td>
-        <td>${d.desc}${(d.split&&d.split.length)?'<span class="badge badge-yellow" style="margin-left:4px">👥</span>':''}</td>
-        <td><span class="badge badge-blue">${cat?.name||d.cat}</span></td>
-        <td style="color:var(--muted);font-size:12px">${d.subcat||'—'}</td>
-        <td><span class="tag" style="color:${card?.color||'inherit'}">${card?.name||d.cartao}</span></td>
+        <td>${esc(d.desc)}${(d.split&&d.split.length)?'<span class="badge badge-yellow" style="margin-left:4px">👥</span>':''}</td>
+        <td><span class="badge badge-blue">${esc(cat?.name||d.cat)}</span></td>
+        <td style="color:var(--muted);font-size:12px">${esc(d.subcat||'—')}</td>
+        <td><span class="tag" style="color:${card?.color||'inherit'}">${esc(card?.name||d.cartao)}</span></td>
         <td class="mono" style="font-size:12px">${d._parcel}/${d._total}</td>
         <td class="mono" style="color:var(--danger)">${fmtBRL(d._valorParcela)}</td>
       </tr>`;
@@ -4059,7 +4270,7 @@ function renderAnalise(){
       const pct=((val/total)*100).toFixed(1);
       html+=`<div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:13px;font-weight:500">${cat?.name||catId}</span>
+          <span style="font-size:13px;font-weight:500">${esc(cat?.name||catId)}</span>
           <span class="mono" style="font-size:12px;color:var(--danger)">${fmtBRL(val)} <span style="color:var(--muted)">(${pct}%)</span></span>
         </div>
         <div class="progress-bar"><div class="progress-fill" style="width:${(val/maxCat*100).toFixed(0)}%"></div></div>
@@ -4087,7 +4298,7 @@ function renderAnalise(){
       const pct=((val/total)*100).toFixed(1);
       html+=`<div style="margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:13px;font-weight:500">${subName} <span style="font-size:11px;color:var(--muted)">${cat?.name||''}</span></span>
+          <span style="font-size:13px;font-weight:500">${esc(subName)} <span style="font-size:11px;color:var(--muted)">${esc(cat?.name||'')}</span></span>
           <span class="mono" style="font-size:12px;color:var(--danger)">${fmtBRL(val)} <span style="color:var(--muted)">(${pct}%)</span></span>
         </div>
         <div class="progress-bar"><div class="progress-fill" style="width:${(val/maxSub*100).toFixed(0)}%;background:linear-gradient(90deg,var(--accent2),var(--accent))"></div></div>
@@ -4150,8 +4361,6 @@ function addCofrinho(){
 }
 
 function delCofrinho(id){
-  const DEFAULT_IDS=['cofrinho_nubank','cofrinho_mpago','cofrinho_bb'];
-  if(DEFAULT_IDS.includes(id)){toast('Não é possível remover cofrinhos padrão');return;}
   state.cofrinhos=state.cofrinhos.filter(c=>c.id!==id);
   scheduleSave();renderCofrinho();toast('Cofrinho removido');
 }
@@ -4235,24 +4444,22 @@ function confirmarDepositoCofrinho(){
 
 function renderCofrinho(){
   // Saldo por banco
-  const DEFAULT_IDS=['cofrinho_nubank','cofrinho_mpago','cofrinho_bb'];
   let saldoHTML='<div class="item-list">';
   const total=getSaldoTotalCofrinho();
   state.cofrinhos.forEach(c=>{
     const saldo=getSaldoCofrinho(c.id);
-    const isDef=DEFAULT_IDS.includes(c.id);
     const saldoIni=c.saldoInicial||0;
     saldoHTML+=`<div class="item-row">
       <div style="width:14px;height:14px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
       <div class="item-row-info">
-        <div class="item-row-name">${c.name}</div>
+        <div class="item-row-name">${esc(c.name)}</div>
         <div class="item-row-meta">${saldoIni>0?`Saldo inicial: ${fmtBRL(saldoIni)} · `:''}</div>
         <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${total>0?(saldo/total*100).toFixed(0):0}%;background:${c.color}"></div></div>
       </div>
       <div class="item-row-val pos">${fmtBRL(saldo)}</div>
       <button class="btn btn-warn btn-sm" onclick="openResgatarCofrinho('${c.id}')" ${saldo<=0?'disabled':''}>↩ Resgatar</button>
       <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSaldoInicialCofrinho('${c.id}')" title="Editar saldo inicial">✎</button>
-      ${!isDef?`<button class="btn btn-danger btn-icon btn-sm" onclick="delCofrinho('${c.id}')">✕</button>`:''}
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delCofrinho('${c.id}')">✕</button>
     </div>`;
   });
   if(!state.cofrinhos.length) saldoHTML+='<div class="empty-state">Nenhum cofrinho</div>';
@@ -4273,8 +4480,8 @@ function renderCofrinho(){
     html+=`<tr>
       <td class="mono" style="font-size:12px">${MONTHS[m.mes-1].slice(0,3)} ${m.ano}</td>
       <td>${mIsResgate?'<span class="badge badge-yellow">↩ Resgate</span>':'<span class="badge badge-green">+ Depósito</span>'}</td>
-      <td><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:${c?.color||'#999'};display:inline-block"></span>${c?.name||'—'}</span></td>
-      <td style="color:var(--muted);font-size:12px">${m.obs||'—'}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:${c?.color||'#999'};display:inline-block"></span>${esc(c?.name||'—')}</span></td>
+      <td style="color:var(--muted);font-size:12px">${esc(m.obs||'—')}</td>
       <td class="mono" style="color:${mIsResgate?'var(--warn)':'var(--accent2)'}">${mIsResgate?'-':''}${fmtBRL(m.valor)}</td>
       <td><button class="btn btn-danger btn-icon btn-sm" onclick="delMovimentacaoCofrinho('${m.id}')">✕</button></td>
     </tr>`;
@@ -4289,8 +4496,12 @@ function renderCofrinho(){
 function openExcedenteCaixa(){
   const k=mesKey(currentMonth,currentYear);
   const atual=state.excedentes?.[k]||0;
-  const{saldo,cofrinhoSaida,contrib}=getTotalsForMonth(currentMonth,currentYear);
-  const disponivelParaGuardar=Math.max(0,saldo-contrib-cofrinhoSaida);
+  const{saldo,contrib}=getTotalsForMonth(currentMonth,currentYear);
+  // "saldo" (emCaixaLiquido) já desconta o que foi depositado no cofrinho neste mês
+  // e, se a contribuição já foi paga, já desconta ela também — só precisamos
+  // reservar a contribuição aqui se ela ainda estiver pendente (senão vira dupla contagem).
+  const contribJaDescontada=isContribuicaoPaga(currentMonth,currentYear);
+  const disponivelParaGuardar=Math.max(0,saldo-(contribJaDescontada?0:contrib));
   document.getElementById('modalTitle').textContent='Guardar em Caixa';
   document.getElementById('modalBody').innerHTML=`
     <div class="info-box" style="margin-bottom:14px">
@@ -4442,7 +4653,7 @@ function renderEseItemList(){
       <div class="form-grid">
         <div class="form-group full">
           <label>Descrição</label>
-          <input type="text" value="${item.desc}" placeholder="Ex: Notebook Dell, Monitor 4K..." onchange="eseItens.find(x=>x.id==='${item.id}').desc=this.value">
+          <input type="text" value="${esc(item.desc)}" placeholder="Ex: Notebook Dell, Monitor 4K..." onchange="eseItens.find(x=>x.id==='${item.id}').desc=this.value">
         </div>
         <div class="form-group">
           <label>Valor Total (R$)</label>
@@ -4514,40 +4725,48 @@ function rodarSimulacao(){
     meses.push({mes:m,ano:y});
   }
 
-  // Cada mês é calculado de forma isolada (sem carregar sobra/falta do mês
-  // anterior): o que sobra é gasto ou vai pro cofrinho, o que falta é coberto
-  // pelo cofrinho.
+  // Cada mês soma sua variação (entradas − saídas − compra simulada) ao saldo
+  // acumulado, que começa do saldo real das Contas Bancárias hoje (se houver) —
+  // uma sobra ou um rombo de um mês carrega naturalmente pro seguinte, em vez
+  // de cada mês recomeçar do zero.
   //
-  // Pior Cenário = Salário Fixo garantido − Despesas Fixas do mês − Parcelas de
-  //   Cartão do mês − Média Histórica de Gastos Variáveis − Parcela da compra simulada.
-  // Melhor Cenário = Pior Cenário + Projetos Extras do mês + Repasses pendentes do mês.
+  // Variação do mês (Pior) = Salário Fixo garantido − Despesas Fixas do mês −
+  //   Parcelas de Cartão do mês − Média Histórica de Gastos Variáveis − Parcela da compra simulada.
+  // Variação do mês (Melhor) = Variação (Pior) + Repasses pendentes do mês.
   //
   // A "Média Histórica de Gastos Variáveis" (mesma do card do Dashboard) substitui
   // a tentativa de prever despesas avulsas específicas ainda não lançadas —
   // é a melhor estimativa disponível pro que normalmente aparece de imprevisto.
   const previsaoMedia=calcPrevisaoMediaHistorica();
   const mediaVariaveis=previsaoMedia?previsaoMedia.mediaTotal:0;
+  const saldoBase = (state.contas&&state.contas.length>0) ? state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0) : 0;
+  let acumPior=saldoBase, acumMelhor=saldoBase;
   const rows=meses.map(({mes,ano})=>{
     const t=getTotalsForMonth(mes,ano);
     const eseSaida=calcEseSaidaMes(mes,ano);
     const recsM=getReceitasForMonth(mes,ano);
     const despsM=getDespesasForMonth(mes,ano);
+    // Pior cenário = só o salário (garantido). Melhor cenário = salário + reembolsos
+    // de compras compartilhadas (repasses) — Projeto Extra e outras receitas pontuais
+    // não entram na projeção por serem imprevisíveis/não recorrentes.
     const salarioFixo = recsM.filter(r=>r.tipo==='salario').reduce((s,r)=>s+valorReceita(r),0);
-    const projetosExtra = recsM.filter(r=>r.tipo==='extra').reduce((s,r)=>s+valorReceita(r),0);
     const despesasFixas = despsM.filter(d=>d.fixa).reduce((s,d)=>s+(d._valorParcela||0),0);
     const parcelasCartao = despsM.filter(d=>!d.fixa && d.cartao!=='dinheiro' && (d.parcelas||1)>1).reduce((s,d)=>s+(d._valorParcela||0),0);
     const entradasPior   = salarioFixo;
-    const entradasMelhor = salarioFixo + projetosExtra + t.repassesPendentes;
+    const entradasMelhor = salarioFixo + t.repassesPendentes;
     const saidas = despesasFixas + parcelasCartao + mediaVariaveis;
     const saldoPior   = entradasPior - saidas - eseSaida;
     const saldoMelhor = entradasMelhor - saidas - eseSaida;
+    acumPior+=saldoPior; acumMelhor+=saldoMelhor;
     return{mes,ano,entradasMelhor,entradasPior,saidas,eseSaida,saldoMelhor,saldoPior,
+      saldoAcumPior:acumPior, saldoAcumMelhor:acumMelhor,
       repassesPendentes:t.repassesPendentes};
   });
 
-  // Alertas
-  const mesesPiorNegativo = rows.filter(r=>r.saldoPior<0);
-  const mesesMelhorNegativo = rows.filter(r=>r.saldoMelhor<0);
+  // Alertas — usa o saldo ACUMULADO (não a variação isolada do mês), já que o
+  // que importa é se a conta ficaria negativa em algum ponto da projeção.
+  const mesesPiorNegativo = rows.filter(r=>r.saldoAcumPior<0);
+  const mesesMelhorNegativo = rows.filter(r=>r.saldoAcumMelhor<0);
   let alertHtml='';
   if(!previsaoMedia){
     alertHtml+=`<div style="background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.25);border-radius:var(--radius);padding:10px 16px;margin-bottom:10px;font-size:12px;color:var(--muted)">
@@ -4571,10 +4790,10 @@ function rodarSimulacao(){
   }
   document.getElementById('eseAlertas').innerHTML=alertHtml;
 
-  // Gráfico
+  // Gráfico — saldo acumulado (não a variação isolada do mês)
   const labels=rows.map(r=>MONTHS[r.mes-1].slice(0,3)+'/'+String(r.ano).slice(2));
-  const dataMelhor=rows.map(r=>r.saldoMelhor);
-  const dataPior=rows.map(r=>r.saldoPior);
+  const dataMelhor=rows.map(r=>r.saldoAcumMelhor);
+  const dataPior=rows.map(r=>r.saldoAcumPior);
   if(chartEse){ chartEse.destroy(); chartEse=null; }
   chartEse=new Chart(document.getElementById('chartEse').getContext('2d'),{
     type:'bar',
@@ -4595,7 +4814,7 @@ function rodarSimulacao(){
     }
   });
 
-  // Tabela
+  // Tabela — mostra a variação do mês e o saldo acumulado lado a lado
   let tbl=`<table class="data-table">
     <thead><tr>
       <th>Mês</th>
@@ -4603,20 +4822,20 @@ function rodarSimulacao(){
       <th>Entradas (Pior)</th>
       <th title="Fixas + Parcelas de cartão + Média de variáveis">Saídas (Fixas+Cartão+Média)</th>
       <th>Parcela simulada</th>
-      <th>Saldo Melhor Cenário</th>
-      <th>Saldo Pior Cenário</th>
+      <th title="Quanto sobra ou falta só neste mês">Variação (Melhor/Pior)</th>
+      <th title="Saldo projetado das contas, acumulando mês a mês a partir de hoje">Saldo Acumulado (Melhor/Pior)</th>
     </tr></thead><tbody>`;
   rows.forEach(r=>{
-    const negMelhor=r.saldoMelhor<0;
-    const negPior=r.saldoPior<0;
+    const negMelhor=r.saldoAcumMelhor<0;
+    const negPior=r.saldoAcumPior<0;
     tbl+=`<tr ${negMelhor?'style="background:rgba(255,95,109,.06)"':''}>
       <td class="mono" style="font-size:12px">${MONTHS[r.mes-1].slice(0,3)} ${r.ano}</td>
       <td class="mono" style="color:var(--accent2)">${fmtBRL(r.entradasMelhor)}</td>
       <td class="mono" style="color:var(--muted)">${fmtBRL(r.entradasPior)}</td>
       <td class="mono" style="color:var(--danger)">${fmtBRL(r.saidas)}</td>
       <td class="mono" style="color:var(--warn)">${r.eseSaida>0?fmtBRL(r.eseSaida):'—'}</td>
-      <td class="mono" style="color:${r.saldoMelhor>=0?'var(--accent)':'var(--danger)'}"><strong>${fmtBRL(r.saldoMelhor)}</strong>${negMelhor?' ⚠':''}</td>
-      <td class="mono" style="color:${r.saldoPior>=0?'var(--accent2)':'var(--danger)'}"><strong>${fmtBRL(r.saldoPior)}</strong>${negPior?' ⚠':''}</td>
+      <td class="mono" style="font-size:12px">${fmtBRL(r.saldoMelhor)} / ${fmtBRL(r.saldoPior)}</td>
+      <td class="mono" style="color:${r.saldoAcumMelhor>=0?'var(--accent)':'var(--danger)'}"><strong>${fmtBRL(r.saldoAcumMelhor)}</strong>${negMelhor?' ⚠':''} / <span style="color:${r.saldoAcumPior>=0?'var(--accent2)':'var(--danger)'}">${fmtBRL(r.saldoAcumPior)}${negPior?' ⚠':''}</span></td>
     </tr>`;
   });
   tbl+=`</tbody></table>`;
@@ -4796,8 +5015,8 @@ function exportarRepassePessoaPDF(personId){
     totalDevido+=r.valorPessoa;
     if(r.recebido) totalRecebido+=r.valorPessoa;
     rows+=`<tr>
-      <td>${r.desc}</td>
-      <td>${cat?.name||r.cat}</td>
+      <td>${esc(r.desc)}</td>
+      <td>${esc(cat?.name||r.cat)}</td>
       <td>${r.percent}%</td>
       <td>${fmtBRL(r.valorParcela)}</td>
       <td>${fmtBRL(r.valorPessoa)}</td>
@@ -4806,23 +5025,23 @@ function exportarRepassePessoaPDF(personId){
   });
   const pendente=totalDevido-totalRecebido;
   rows+=`<tr class="print-total-row"><td colspan="4">Total</td><td>${fmtBRL(totalDevido)}</td><td>Pendente: ${fmtBRL(pendente)}</td></tr>`;
-  const html=`<h2>Repasses de ${person.name} — ${MONTHS[currentMonth-1]} ${currentYear}</h2>
+  const html=`<h2>Repasses de ${esc(person.name)} — ${MONTHS[currentMonth-1]} ${currentYear}</h2>
     <table>
       <thead><tr><th>Despesa</th><th>Categoria</th><th>%</th><th>Valor Total</th><th>Valor Devido</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
-  exportarRelatorioPDF('Relatório de Repasses — '+person.name, html);
+  exportarRelatorioPDF('Relatório de Repasses — '+esc(person.name), html);
 }
 
 // Relatório de caixa (balanço consolidado do mês)
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
   const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
-  let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${r.nome||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
+  let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
   if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
     const cat=state.categories.find(c=>c.id===d.cat), card=state.cards.find(c=>c.id===d.cartao);
-    return `<tr><td>${d.desc}</td><td>${cat?.name||''}</td><td>${card?.name||d.cartao}</td><td>${fmtBRL(d._valorParcela)}</td></tr>`;
+    return `<tr><td>${esc(d.desc)}</td><td>${esc(cat?.name||'')}</td><td>${esc(card?.name||d.cartao)}</td><td>${fmtBRL(d._valorParcela)}</td></tr>`;
   }).join('');
   if(contrib>0) despRows+=`<tr><td>Contribuição (automática)</td><td>10%</td><td>—</td><td>${fmtBRL(contrib)}</td></tr>`;
   if(!desps.length && contrib<=0) despRows='<tr><td colspan="4">Nenhuma despesa no período</td></tr>';
@@ -4855,7 +5074,7 @@ function exportarAnalisePDF(){
   });
   const ranking=Object.values(porCat).sort((a,b)=>b.total-a.total);
   const totalGeral=ranking.reduce((s,r)=>s+r.total,0);
-  let rows=ranking.map(r=>`<tr><td>${r.cat}</td><td>${r.subcat}</td><td>${fmtBRL(r.total)}</td><td>${totalGeral>0?((r.total/totalGeral)*100).toFixed(1):'0,0'}%</td></tr>`).join('');
+  let rows=ranking.map(r=>`<tr><td>${esc(r.cat)}</td><td>${esc(r.subcat)}</td><td>${fmtBRL(r.total)}</td><td>${totalGeral>0?((r.total/totalGeral)*100).toFixed(1):'0,0'}%</td></tr>`).join('');
   rows+=`<tr class="print-total-row"><td colspan="2">Total</td><td>${fmtBRL(totalGeral)}</td><td>100%</td></tr>`;
   const mesIni=document.getElementById('filtMesIni')?.value, anoIni=document.getElementById('filtAnoIni')?.value;
   const mesFim=document.getElementById('filtMesFim')?.value, anoFim=document.getElementById('filtAnoFim')?.value;
