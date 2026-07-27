@@ -1746,6 +1746,27 @@ function calcByCardForMonth(mes,ano){
 // saldo de conta nem excedente de outros meses. Fica separado do getTotalsForMonth
 // completo pra poder ser somado mês a mês na projeção futura sem risco de
 // recursão (nenhuma função aqui chama getTotalsForMonth de volta).
+// Calcula a variação (entradas − saídas) de UM mês isolado, no estilo "previsão
+// recorrente": só o que é garantido/recorrente — salário (SÓ a parte ainda não
+// recebida, pra não contar de novo o que já caiu na conta, tipo salário
+// adiantado), despesas fixas, parcelas de cartão e a média histórica de gastos
+// variáveis. Não depende do caixa atual. Usada tanto no Dashboard (meses
+// distantes) quanto no simulador "E se...", garantindo que os dois sempre
+// deem o mesmo número pro mesmo mês.
+function calcVariacaoMesRecorrente(mes,ano,mediaVariaveis){
+  const recsM=getReceitasForMonth(mes,ano);
+  const despsM=getDespesasForMonth(mes,ano);
+  const salarioNaoRecebido = recsM.filter(r=>r.tipo==='salario' && !receitaRecebida(r,mes,ano)).reduce((s,r)=>s+valorReceita(r),0);
+  const projetosExtra = recsM.filter(r=>r.tipo==='extra').reduce((s,r)=>s+valorReceita(r),0);
+  const despesasFixas = despsM.filter(d=>d.fixa).reduce((s,d)=>s+(d._valorParcela||0),0);
+  const parcelasCartao = despsM.filter(d=>!d.fixa && d.cartao!=='dinheiro' && (d.parcelas||1)>1).reduce((s,d)=>s+(d._valorParcela||0),0);
+  const repassesPendentes = getRepassesPendentesTotal(mes,ano);
+  const saidas = despesasFixas + parcelasCartao + (mediaVariaveis||0);
+  const saldoPior = salarioNaoRecebido - saidas;
+  const saldoMelhor = salarioNaoRecebido + projetosExtra + repassesPendentes - saidas;
+  return {salarioNaoRecebido,projetosExtra,despesasFixas,parcelasCartao,repassesPendentes,saidas,saldoPior,saldoMelhor};
+}
+
 function calcTotaisIsoladoMes(mes,ano){
   const todosRecs    = getReceitasForMonth(mes,ano);
   const recsEfetivas = getReceitasEfetivasForMonth(mes,ano);
@@ -1831,8 +1852,13 @@ function getTotalsForMonth(mes,ano){
       usaContasComoFonte=true;
       emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
       const pendenteAPagar   = totalDespPrevisao - emCaixaSaidas;   // o que falta pagar esse mês
-      const pendenteAReceber = totalRecPrevisto + repassesPendentes; // o que falta receber esse mês
-      saldoPiorCenario   = emCaixaDisponivel - pendenteAPagar;
+      // Salário é o único recebimento garantido — conta mesmo no Pior Cenário
+      // se ainda não tiver sido recebido. Repasses de terceiros e outras
+      // receitas pontuais só entram no Melhor Cenário.
+      const salarioNaoRecebido = getReceitasPrevistasForMonth(mes,ano)
+        .filter(r=>r.tipo==='salario').reduce((s,r)=>s+valorReceita(r),0);
+      const pendenteAReceber = totalRecPrevisto + repassesPendentes; // tudo mais que falta receber esse mês
+      saldoPiorCenario   = emCaixaDisponivel + salarioNaoRecebido - pendenteAPagar;
       saldoMelhorCenario = emCaixaDisponivel + pendenteAReceber - pendenteAPagar;
     } else if(isPassado){
       // Mês fechado: reconstrói o saldo real das contas até o fim daquele mês —
@@ -1841,23 +1867,37 @@ function getTotalsForMonth(mes,ano){
       emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoContaAte(c.id,mes,ano),0);
       saldoPiorCenario = saldoMelhorCenario = emCaixaDisponivel;
     } else {
-      // Projeção futura: parte do saldo real de hoje e acumula, mês a mês, o
-      // resultado isolado (pior/melhor) de cada mês entre hoje e o mês navegado —
-      // assim uma sobra ou um rombo de um mês projetado carrega pro seguinte.
-      const saldoHoje = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
-      let acumPior=0, acumMelhor=0, cm=REAL_TODAY_MONTH, cy=REAL_TODAY_YEAR;
-      for(let i=0;i<600;i++){ // safety cap (50 anos) — nunca deveria chegar perto disso
-        if(cm===mes&&cy===ano) break;
-        ({mes:cm,ano:cy}=addMonths(cm,cy,1));
-        const isoM = calcTotaisIsoladoMes(cm,cy);
-        acumPior  +=isoM.saldoPiorIsolado;
-        acumMelhor+=isoM.saldoMelhorIsolado;
+      // Mês futuro. Duas situações possíveis:
+      //  1) É o mês IMEDIATAMENTE seguinte a hoje E o salário dele já foi
+      //     marcado como recebido (ex: adiantado) — nesse caso ele já está
+      //     refletido no caixa atual, então tratamos como extensão do caixa
+      //     de agora, sem somar o salário de novo (evita contar duas vezes).
+      //  2) Qualquer outro mês futuro (ou o mês seguinte, mas com salário
+      //     ainda não recebido) — usa a "previsão recorrente" (mesma fórmula
+      //     do simulador "E se..."): salário ainda não recebido − despesas
+      //     fixas − parcelas de cartão − média de gastos variáveis. Não
+      //     depende do caixa atual, só do que é garantido/recorrente.
+      const {mes:proxMes,ano:proxAno}=addMonths(REAL_TODAY_MONTH,REAL_TODAY_YEAR,1);
+      const ehProximoMes = (mes===proxMes && ano===proxAno);
+      const salarioDesseMesJaRecebido = ehProximoMes && getReceitasForMonth(mes,ano)
+        .some(r=>r.tipo==='salario' && receitaRecebida(r,mes,ano));
+
+      if(salarioDesseMesJaRecebido){
+        usaContasComoFonte=true;
+        emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
+        const pendenteAPagar = totalDespPrevisao - emCaixaSaidas;
+        saldoPiorCenario   = emCaixaDisponivel - pendenteAPagar;
+        saldoMelhorCenario = emCaixaDisponivel + totalRecPrevisto + repassesPendentes - pendenteAPagar;
+      } else {
+        const previsaoMedia=calcPrevisaoMediaHistorica();
+        const mediaVariaveis=previsaoMedia?previsaoMedia.mediaTotal:0;
+        const variacao=calcVariacaoMesRecorrente(mes,ano,mediaVariaveis);
+        saldoPiorCenario   = variacao.saldoPior;
+        saldoMelhorCenario = variacao.saldoMelhor;
+        // "Em Caixa Agora" de um mês futuro é projeção, não fato — usa o
+        // cenário conservador (Pior) pra não mostrar um número descolado.
+        emCaixaDisponivel = saldoPiorCenario;
       }
-      saldoPiorCenario   = saldoHoje + acumPior;
-      saldoMelhorCenario = saldoHoje + acumMelhor;
-      // "Em Caixa Agora" de um mês futuro é projeção, não fato — usa o cenário
-      // conservador (Pior) pra não mostrar um número descolado dos cards de cenário.
-      emCaixaDisponivel = saldoPiorCenario;
     }
   } else {
     // Sem Contas Bancárias cadastradas: mantém o comportamento anterior — cada
@@ -2039,24 +2079,26 @@ function renderDashboard(){
         <div class="kpi-value red">${fmtBRL(totalDespPrevisao)}</div>
         <div class="kpi-sub">Todas as despesas lançadas</div>
       </div>
-      <div class="kpi" style="border-top:2px solid var(--danger)" title="${isMesAtualReal(currentMonth,currentYear)?'Paga tudo, não recebe nada pendente':'Sem repasses de terceiros, mês isolado (sem caixa atual)'}">
+      <div class="kpi" style="border-top:2px solid var(--danger)" title="${isMesAtualReal(currentMonth,currentYear)?'Paga tudo, não recebe nada pendente':(isProjecaoFutura?'Caixa atual, projetado mês a mês até aqui, sem repasses de terceiros':'Sem repasses de terceiros, mês isolado (sem caixa atual)')}">
         <div class="kpi-label" style="color:var(--muted)">📉 Pior Cenário</div>
         <div class="kpi-value ${saldoPiorCenario>=0?'blue':'red'}">${fmtBRL(saldoPiorCenario)}</div>
-        <div class="kpi-sub">${isMesAtualReal(currentMonth,currentYear)?'Entrada real − previsto saídas':'Salário previsto (sem repasses) − saídas'}</div>
+        <div class="kpi-sub">${isMesAtualReal(currentMonth,currentYear)?'Entrada real − previsto saídas':(isProjecaoFutura?'Caixa atual − despesas previstas até aqui':'Salário previsto (sem repasses) − saídas')}</div>
       </div>
-      <div class="kpi" style="border-top:2px solid var(--accent2)" title="${isMesAtualReal(currentMonth,currentYear)?'Recebe tudo pendente, paga tudo':'Salário + repasses do mês, mês isolado (sem caixa atual)'}">
+      <div class="kpi" style="border-top:2px solid var(--accent2)" title="${isMesAtualReal(currentMonth,currentYear)?'Recebe tudo pendente, paga tudo':(isProjecaoFutura?'Caixa atual, projetado mês a mês até aqui, somando repasses no caminho':'Salário + repasses do mês, mês isolado (sem caixa atual)')}">
         <div class="kpi-label" style="color:var(--accent2)">📈 Melhor Cenário</div>
         <div class="kpi-value ${saldoMelhorCenario>=0?'green':'red'}">${fmtBRL(saldoMelhorCenario)}</div>
         <div class="kpi-sub">${isMesAtualReal(currentMonth,currentYear)
           ? ((totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente')
-          : (repassesPendentes>0?`+${fmtBRL(repassesPendentes)} de repasses no mês`:'Sem repasses previstos')}</div>
+          : (isProjecaoFutura?'Caixa atual + repasses − despesas até aqui':(repassesPendentes>0?`+${fmtBRL(repassesPendentes)} de repasses no mês`:'Sem repasses previstos'))}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:8px">
       <div style="grid-column:1/-1;font-size:11px;color:var(--muted);margin-top:-8px">
         ${isMesAtualReal(currentMonth,currentYear)
           ? '💡 Cenários do mês corrente incluem o caixa atual e o saldo acumulado de meses anteriores.'
-          : '💡 Mês fora do período atual: cenários calculados de forma isolada, sem considerar o caixa de hoje (sobra/falta não atravessa meses).'}
+          : (isProjecaoFutura
+            ? '💡 Projeção: parte do seu caixa atual (soma das Contas Bancárias) e acumula, mês a mês, o resultado previsto de cada mês até o mês navegado.'
+            : '💡 Mês fora do período atual: cenários calculados de forma isolada, sem considerar o caixa de hoje (sobra/falta não atravessa meses).')}
       </div>
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
@@ -4730,37 +4772,27 @@ function rodarSimulacao(){
   // uma sobra ou um rombo de um mês carrega naturalmente pro seguinte, em vez
   // de cada mês recomeçar do zero.
   //
-  // Variação do mês (Pior) = Salário Fixo garantido − Despesas Fixas do mês −
-  //   Parcelas de Cartão do mês − Média Histórica de Gastos Variáveis − Parcela da compra simulada.
-  // Variação do mês (Melhor) = Variação (Pior) + Repasses pendentes do mês.
-  //
-  // A "Média Histórica de Gastos Variáveis" (mesma do card do Dashboard) substitui
-  // a tentativa de prever despesas avulsas específicas ainda não lançadas —
-  // é a melhor estimativa disponível pro que normalmente aparece de imprevisto.
+  // Usa calcVariacaoMesRecorrente — a MESMA função usada pelo Dashboard pra
+  // meses distantes — garantindo que os dois nunca divirjam pro mesmo mês.
+  // Importante: só soma o salário que AINDA NÃO foi recebido (se já caiu na
+  // conta, ex. adiantado, ele já está refletido no saldoBase abaixo — somar de
+  // novo contaria o mesmo dinheiro duas vezes).
   const previsaoMedia=calcPrevisaoMediaHistorica();
   const mediaVariaveis=previsaoMedia?previsaoMedia.mediaTotal:0;
   const saldoBase = (state.contas&&state.contas.length>0) ? state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0) : 0;
   let acumPior=saldoBase, acumMelhor=saldoBase;
   const rows=meses.map(({mes,ano})=>{
-    const t=getTotalsForMonth(mes,ano);
     const eseSaida=calcEseSaidaMes(mes,ano);
-    const recsM=getReceitasForMonth(mes,ano);
-    const despsM=getDespesasForMonth(mes,ano);
-    // Pior cenário = só o salário (garantido). Melhor cenário = salário + reembolsos
-    // de compras compartilhadas (repasses) — Projeto Extra e outras receitas pontuais
-    // não entram na projeção por serem imprevisíveis/não recorrentes.
-    const salarioFixo = recsM.filter(r=>r.tipo==='salario').reduce((s,r)=>s+valorReceita(r),0);
-    const despesasFixas = despsM.filter(d=>d.fixa).reduce((s,d)=>s+(d._valorParcela||0),0);
-    const parcelasCartao = despsM.filter(d=>!d.fixa && d.cartao!=='dinheiro' && (d.parcelas||1)>1).reduce((s,d)=>s+(d._valorParcela||0),0);
-    const entradasPior   = salarioFixo;
-    const entradasMelhor = salarioFixo + t.repassesPendentes;
-    const saidas = despesasFixas + parcelasCartao + mediaVariaveis;
+    const variacao=calcVariacaoMesRecorrente(mes,ano,mediaVariaveis);
+    const entradasPior   = variacao.salarioNaoRecebido;
+    const entradasMelhor = variacao.salarioNaoRecebido + variacao.projetosExtra + variacao.repassesPendentes;
+    const saidas = variacao.saidas;
     const saldoPior   = entradasPior - saidas - eseSaida;
     const saldoMelhor = entradasMelhor - saidas - eseSaida;
     acumPior+=saldoPior; acumMelhor+=saldoMelhor;
     return{mes,ano,entradasMelhor,entradasPior,saidas,eseSaida,saldoMelhor,saldoPior,
       saldoAcumPior:acumPior, saldoAcumMelhor:acumMelhor,
-      repassesPendentes:t.repassesPendentes};
+      repassesPendentes:variacao.repassesPendentes};
   });
 
   // Alertas — usa o saldo ACUMULADO (não a variação isolada do mês), já que o
