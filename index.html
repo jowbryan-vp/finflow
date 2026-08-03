@@ -615,7 +615,9 @@ select option{background:var(--card)}
             </div>
           </div>
           <div class="card">
-            <div class="card-header"><div class="card-title">Receitas — <span id="recPeriodLabel">—</span></div></div>
+            <div class="card-header"><div class="card-title">Receitas — <span id="recPeriodLabel">—</span></div>
+              <button class="btn btn-ghost btn-sm" onclick="abrirPesquisaLancamentos()">🔍 Pesquisar Lançamento</button>
+            </div>
             <div id="receitasList"></div>
           </div>
         </div>
@@ -677,7 +679,9 @@ select option{background:var(--card)}
             </div>
           </div>
           <div class="card">
-            <div class="card-header"><div class="card-title">Despesas — <span id="despPeriodLabel">—</span></div></div>
+            <div class="card-header"><div class="card-title">Despesas — <span id="despPeriodLabel">—</span></div>
+              <button class="btn btn-ghost btn-sm" onclick="abrirPesquisaLancamentos()">🔍 Pesquisar Lançamento</button>
+            </div>
             <div id="despFiltroCartaoBanner" style="display:none;align-items:center;justify-content:space-between;background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:12px;gap:10px"></div>
             <div id="despesasList"></div>
           </div>
@@ -913,7 +917,13 @@ select option{background:var(--card)}
             <button class="btn btn-primary mt-16" onclick="addSubcategoria()">Adicionar Subcategoria</button>
           </div>
         </div>
-        <div class="card mt-20"><div class="card-header"><div class="card-title">Categorias e Subcategorias</div></div><div id="categoriasList"></div></div>
+        <div class="card mt-20">
+          <div class="card-header">
+            <div class="card-title">Categorias e Subcategorias</div>
+            <button class="btn btn-ghost btn-sm" onclick="abrirLimpezaDuplicadosModal()">🧹 Limpar Duplicados</button>
+          </div>
+          <div id="categoriasList"></div>
+        </div>
       </div>
 
       <!-- CARTÕES -->
@@ -1316,6 +1326,7 @@ function migrateState() {
   if (!state.contribuicaoAjustes) state.contribuicaoAjustes = {}; // {mesKey: valorAjustado}
   if (!state.faturasPagas) state.faturasPagas = {};
   if (!state.faturasContas) state.faturasContas = {}; // {faturaKey: contaId} — de qual conta saiu o pagamento da fatura
+  if (!state.faturasAjustes) state.faturasAjustes = {}; // {faturaKey: valor} — correção manual do valor da fatura (arredondamento vs banco)
   if (!state.contribuicaoPaga) state.contribuicaoPaga = {}; // {mesKey: true}
   if (!state.contribuicaoContas) state.contribuicaoContas = {}; // {mesKey: {contaId, valor, dataPagamento}} — de qual conta saiu o pagamento da contribuição
   state.despesas.forEach(d=>{
@@ -1739,6 +1750,18 @@ function calcByCardForMonth(mes,ano){
   const desps=getDespesasForMonth(mes,ano);
   const byCard={}; state.cards.forEach(c=>byCard[c.id]=0);
   desps.forEach(d=>{ if(d.cartao&&byCard[d.cartao]!==undefined) byCard[d.cartao]+=(d._valorParcela||0); });
+  // Aplica ajuste manual de fatura (⚖ Ajustar Fatura), se houver, pra corrigir
+  // pequenas diferenças de arredondamento entre o que o app somou e o valor
+  // real que o banco está cobrando. Como esse valor alimenta byCard, o ajuste
+  // se propaga sozinho pra Dashboard, Despesas, Próximos Vencimentos e o
+  // pagamento da fatura — não precisa mexer em cada lugar separadamente.
+  state.cards.forEach(c=>{
+    if(!isCartaoDeCredito(c.id)) return;
+    const k=faturaKey(c.id,mes,ano);
+    if(state.faturasAjustes && state.faturasAjustes[k]!==undefined){
+      byCard[c.id]=state.faturasAjustes[k];
+    }
+  });
   return byCard;
 }
 
@@ -2054,6 +2077,53 @@ function confirmarPagamentoFatura(cardId,mesParam,anoParam){
   toast('Fatura marcada como paga — saiu do caixa!');
 }
 
+// ════════════════════════════════════════════════
+// AJUSTAR FATURA (correção manual de arredondamento)
+// ════════════════════════════════════════════════
+// O app soma cada lançamento individualmente, então diferenças de centavos
+// entre isso e o valor real cobrado pelo banco podem se acumular. Esse ajuste
+// não mexe nas despesas lançadas — só corrige o TOTAL da fatura daquele
+// ciclo, propagando pra Dashboard, pagamento de fatura e Próximos Vencimentos.
+function openAjustarFaturaModal(cardId,mesParam,anoParam){
+  const mes=mesParam||currentMonth, ano=anoParam||currentYear;
+  const card=state.cards.find(c=>c.id===cardId);
+  // Calcula o valor BRUTO (soma das despesas, sem nenhum ajuste manual já
+  // aplicado) — se usássemos byCard aqui, um ajuste já salvo apareceria como
+  // se fosse o valor "original" calculado pelo app, escondendo a diferença.
+  const valorCalculado=getDespesasForMonth(mes,ano)
+    .filter(d=>d.cartao===cardId)
+    .reduce((s,d)=>s+(d._valorParcela||0),0);
+  const k=faturaKey(cardId,mes,ano);
+  const jaAjustado=state.faturasAjustes&&state.faturasAjustes[k]!==undefined;
+  document.getElementById('modalTitle').textContent='Ajustar Fatura — '+(card?.name||cardId);
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Valor somado pelo app pra ${MONTHS[mes-1]} ${ano}: <strong>${fmtBRL(valorCalculado)}</strong>${jaAjustado?'<br>Já existe um ajuste manual aplicado nesse mês.':''}</div>
+    <div class="form-grid">
+      <div class="form-group full"><label>Valor real cobrado pelo banco (R$)</label><input type="number" id="ajusteFaturaValor" value="${(jaAjustado?state.faturasAjustes[k]:valorCalculado).toFixed(2)}" step="0.01" min="0"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarAjusteFatura('${cardId}',${mes},${ano})">Salvar Ajuste</button>
+      ${jaAjustado?`<button class="btn btn-ghost" onclick="removerAjusteFatura('${cardId}',${mes},${ano})">Remover ajuste</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarAjusteFatura(cardId,mes,ano){
+  const valor=parseFloat(document.getElementById('ajusteFaturaValor')?.value);
+  if(isNaN(valor)||valor<0){toast('Informe um valor válido');return;}
+  if(!state.faturasAjustes) state.faturasAjustes={};
+  state.faturasAjustes[faturaKey(cardId,mes,ano)]=valor;
+  scheduleSave(); closeModal(); renderDashboard();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  toast('Fatura ajustada!');
+}
+function removerAjusteFatura(cardId,mes,ano){
+  if(state.faturasAjustes) delete state.faturasAjustes[faturaKey(cardId,mes,ano)];
+  scheduleSave(); closeModal(); renderDashboard();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  toast('Ajuste removido — voltou ao valor calculado pelo app');
+}
+
 function renderDashboard(){
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
@@ -2190,7 +2260,10 @@ function renderDashboard(){
     const btn=isCC
       ?(paga
         ?`<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">Desmarcar</button>`
-        :`<button class="btn btn-ok btn-sm" style="width:100%;margin-top:8px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">✓ Marcar como Paga</button>`)
+        :`<div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn btn-ok btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">✓ Marcar como Paga</button>
+            <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openAjustarFaturaModal('${c.id}')" title="Ajustar Fatura">⚖</button>
+          </div>`)
       :'';
     billHTML+=`<div class="bill-card" style="border-top-color:${c.color};cursor:pointer" onclick="navigateToDespesasCartao('${c.id}')">
       <div class="bill-name">${esc(c.name)} <span style="font-size:10px;color:var(--muted);font-weight:400">→ ver</span></div>
@@ -2725,6 +2798,73 @@ function calcParcel(){
   }
   if(currentSplitRows.length>0) renderSplitRows();
 }
+// ════════════════════════════════════════════════
+// PESQUISAR LANÇAMENTO
+// ════════════════════════════════════════════════
+// Busca em TODAS as despesas e receitas já lançadas (qualquer mês/ano), não só
+// no mês em exibição — pra você conferir rápido se já lançou uma compra ou não.
+function abrirPesquisaLancamentos(){
+  document.getElementById('modalTitle').textContent='Pesquisar Lançamento';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-group full" style="margin-bottom:14px">
+      <input type="text" id="pesquisaLancamentoInput" placeholder="Digite parte da descrição… (ex: Amazon, Mercado)" oninput="renderResultadoPesquisaLancamentos()">
+    </div>
+    <div id="resultadoPesquisaLancamentos" style="max-height:55vh;overflow:auto">
+      <div class="empty-state">Digite ao menos 2 letras pra buscar.</div>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+  setTimeout(()=>document.getElementById('pesquisaLancamentoInput')?.focus(),120);
+}
+function renderResultadoPesquisaLancamentos(){
+  const q=(document.getElementById('pesquisaLancamentoInput')?.value||'').trim().toLowerCase();
+  const el=document.getElementById('resultadoPesquisaLancamentos');
+  if(!el) return;
+  if(q.length<2){ el.innerHTML='<div class="empty-state">Digite ao menos 2 letras pra buscar.</div>'; return; }
+
+  const despsAch=state.despesas.filter(d=>(d.desc||'').toLowerCase().includes(q))
+    .sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const recsAch=state.receitas.filter(r=>(r.nome||'').toLowerCase().includes(q))
+    .sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+
+  if(!despsAch.length&&!recsAch.length){
+    el.innerHTML='<div class="empty-state">Nenhum lançamento encontrado com esse nome — provavelmente ainda não foi lançado.</div>';
+    return;
+  }
+
+  let html='';
+  if(despsAch.length){
+    html+=`<div style="font-weight:600;font-size:12px;color:var(--muted);margin:0 0 8px">DESPESAS (${despsAch.length})</div>`;
+    html+=despsAch.map(d=>{
+      const cat=state.categories.find(c=>c.id===d.cat);
+      const card=state.cards.find(c=>c.id===d.cartao);
+      const jaPago=Object.values(d.pagoMeses||{}).some(v=>v);
+      return `<div class="item-row" style="margin-bottom:8px">
+        <div class="item-row-info">
+          <div class="item-row-name">${esc(d.desc)} ${d.parcelas>1?`<span class="tag">${d.parcelas}x</span>`:''}</div>
+          <div class="item-row-meta">${esc(cat?.name||'')} · ${esc(card?.name||d.cartao)} · ${MONTHS[d.mesInicio-1]} ${d.anoInicio} · ${jaPago?'<span style="color:var(--accent2)">Pago</span>':'<span style="color:var(--warn)">Previsto</span>'}</div>
+        </div>
+        <div class="item-row-val neg">${fmtBRL(d.valor)}</div>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();navigate('despesas');setTimeout(()=>openEditDespesa('${d.id}'),150)" title="Editar">✎</button>
+      </div>`;
+    }).join('');
+  }
+  if(recsAch.length){
+    html+=`<div style="font-weight:600;font-size:12px;color:var(--muted);margin:14px 0 8px">RECEITAS (${recsAch.length})</div>`;
+    html+=recsAch.map(r=>{
+      const jaRecebida=Object.values(r.recebidaMeses||{}).some(v=>v);
+      return `<div class="item-row" style="margin-bottom:8px">
+        <div class="item-row-info">
+          <div class="item-row-name">${esc(r.nome||r.tipo)}</div>
+          <div class="item-row-meta">${MONTHS[r.mes-1]} ${r.ano} · ${jaRecebida?'<span style="color:var(--accent2)">Recebida</span>':'<span style="color:var(--warn)">Prevista</span>'}</div>
+        </div>
+        <div class="item-row-val pos">${fmtBRL(r.valor)}</div>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();navigate('receitas');setTimeout(()=>openEditReceita('${r.id}'),150)" title="Editar">✎</button>
+      </div>`;
+    }).join('');
+  }
+  el.innerHTML=html;
+}
+
 function addDespesa(){
   const desc=document.getElementById('despDesc').value.trim();
   const cat=document.getElementById('despCat').value;
@@ -2902,7 +3042,8 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
     const faturaBtn=isCC
       ?(paga
         ?`<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">Desmarcar</button>`
-        :`<button class="btn btn-ok btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">✓ Pagar fatura</button>`)
+        :`<button class="btn btn-ok btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">✓ Pagar fatura</button>
+          <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openAjustarFaturaModal('${g.card.id}')" title="Ajustar Fatura">⚖</button>`)
       :'';
     const accId=g.card.id.replace(/[^a-z0-9]/gi,'_');
     html+=`<div class="accordion">
@@ -3158,6 +3299,128 @@ function delSubcat(catId,sub){
   const cat=state.categories.find(c=>c.id===catId);if(cat)cat.subs=cat.subs.filter(s=>s!==sub);
   scheduleSave();renderCategorias();toast('Subcategoria removida');
 }
+// ════════════════════════════════════════════════
+// LIMPEZA DE CATEGORIAS/SUBCATEGORIAS DUPLICADAS
+// ════════════════════════════════════════════════
+// Detecta duplicatas por nome, ignorando maiúsculas/minúsculas (ex: "MERCADO"
+// e "mercado" contam como a mesma categoria). Não apaga nada: reatribui as
+// despesas que usavam a versão duplicada pra versão canônica antes de remover.
+function detectarDuplicadosPreview(){
+  const gruposCat={};
+  state.categories.forEach(c=>{
+    const key=(c.name||'').trim().toUpperCase();
+    if(!gruposCat[key]) gruposCat[key]=[];
+    gruposCat[key].push(c.name);
+  });
+  const catsDuplicadas=Object.values(gruposCat).filter(arr=>arr.length>1);
+
+  const subsDuplicadas=[];
+  state.categories.forEach(cat=>{
+    const gruposSub={};
+    (cat.subs||[]).forEach(s=>{
+      const key=(s||'').trim().toUpperCase();
+      if(!gruposSub[key]) gruposSub[key]=[];
+      gruposSub[key].push(s);
+    });
+    Object.values(gruposSub).forEach(arr=>{
+      if(arr.length>1) subsDuplicadas.push({categoria:cat.name,variantes:arr});
+    });
+  });
+  return {catsDuplicadas,subsDuplicadas};
+}
+function abrirLimpezaDuplicadosModal(){
+  const {catsDuplicadas,subsDuplicadas}=detectarDuplicadosPreview();
+  if(!catsDuplicadas.length&&!subsDuplicadas.length){
+    toast('Nenhuma categoria ou subcategoria duplicada encontrada!');
+    return;
+  }
+  let html='<div style="font-size:13px;color:var(--muted);margin-bottom:14px">Encontrei os duplicados abaixo. Vou manter a versão em CAIXA ALTA (ou a mais usada, se nenhuma estiver em caixa alta) e mesclar o resto — despesas já lançadas são reatribuídas automaticamente pra versão que ficar, nada se perde.</div>';
+  if(catsDuplicadas.length){
+    html+='<div style="font-weight:600;margin-bottom:6px;font-size:13px">Categorias</div><ul style="margin:0 0 14px 18px;font-size:13px;color:var(--text)">';
+    catsDuplicadas.forEach(arr=>{ html+=`<li>${arr.map(esc).join(' &nbsp;/&nbsp; ')}</li>`; });
+    html+='</ul>';
+  }
+  if(subsDuplicadas.length){
+    html+='<div style="font-weight:600;margin-bottom:6px;font-size:13px">Subcategorias</div><ul style="margin:0 0 14px 18px;font-size:13px;color:var(--text)">';
+    subsDuplicadas.forEach(g=>{ html+=`<li><strong>${esc(g.categoria)}</strong>: ${g.variantes.map(esc).join(' &nbsp;/&nbsp; ')}</li>`; });
+    html+='</ul>';
+  }
+  html+=`<div style="display:flex;gap:10px;margin-top:10px">
+    <button class="btn btn-primary" onclick="executarLimpezaDuplicados()">🧹 Confirmar Limpeza</button>
+    <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+  </div>`;
+  document.getElementById('modalTitle').textContent='Limpar Categorias/Subcategorias Duplicadas';
+  document.getElementById('modalBody').innerHTML=html;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function limparDuplicadosCategorias(){
+  let categoriasRemovidas=0, subcatsRenomeadas=0, despesasAtualizadas=0;
+
+  // 1) Categorias duplicadas (por nome, sem diferenciar maiúsculas/minúsculas)
+  const gruposCat={};
+  state.categories.forEach(c=>{
+    const key=(c.name||'').trim().toUpperCase();
+    if(!gruposCat[key]) gruposCat[key]=[];
+    gruposCat[key].push(c);
+  });
+  const idsParaRemover=new Set();
+  Object.values(gruposCat).forEach(grupo=>{
+    if(grupo.length<2) return;
+    // Canônica: a que já está em CAIXA ALTA; senão, a mais usada; senão, a primeira.
+    let canonica=grupo.find(c=>c.name===c.name.toUpperCase());
+    if(!canonica){
+      canonica=grupo.reduce((best,c)=>{
+        const usoC=state.despesas.filter(d=>d.cat===c.id).length;
+        const usoBest=state.despesas.filter(d=>d.cat===best.id).length;
+        return usoC>usoBest?c:best;
+      },grupo[0]);
+    }
+    grupo.forEach(dup=>{
+      if(dup.id===canonica.id) return;
+      state.despesas.forEach(d=>{ if(d.cat===dup.id){ d.cat=canonica.id; despesasAtualizadas++; } });
+      (dup.subs||[]).forEach(s=>{
+        if(!canonica.subs.some(cs=>cs.toUpperCase()===s.toUpperCase())) canonica.subs.push(s);
+      });
+      idsParaRemover.add(dup.id);
+      categoriasRemovidas++;
+    });
+  });
+  state.categories=state.categories.filter(c=>!idsParaRemover.has(c.id));
+
+  // 2) Subcategorias duplicadas dentro de cada categoria (já mesclada acima)
+  state.categories.forEach(cat=>{
+    const gruposSub={};
+    (cat.subs||[]).forEach(s=>{
+      const key=(s||'').trim().toUpperCase();
+      if(!gruposSub[key]) gruposSub[key]=[];
+      gruposSub[key].push(s);
+    });
+    const novasSubs=[];
+    Object.values(gruposSub).forEach(grupo=>{
+      const canonicaSub=grupo.find(s=>s===s.toUpperCase())||grupo[0];
+      novasSubs.push(canonicaSub);
+      if(grupo.length>1){
+        grupo.forEach(dup=>{
+          if(dup===canonicaSub) return;
+          state.despesas.forEach(d=>{
+            if(d.cat===cat.id&&d.subcat===dup){ d.subcat=canonicaSub; subcatsRenomeadas++; }
+          });
+        });
+      }
+    });
+    cat.subs=novasSubs;
+  });
+
+  scheduleSave();
+  return {categoriasRemovidas,subcatsRenomeadas,despesasAtualizadas};
+}
+function executarLimpezaDuplicados(){
+  const r=limparDuplicadosCategorias();
+  closeModal();
+  renderCategorias();
+  toast(`Limpeza concluída: ${r.categoriasRemovidas} categoria(s) e ${r.subcatsRenomeadas} subcategoria(s) mescladas.`);
+}
+
 function renderCategorias(){
   const sel=document.getElementById('subcatParent');
   if(sel)sel.innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
