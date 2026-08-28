@@ -637,8 +637,9 @@ select option{background:var(--card)}
                 <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="despValor" placeholder="0,00" min="0" step="0.01" oninput="calcParcel()"></div>
                 <div class="form-group"><label>Nº de Parcelas</label><input type="number" id="despParcelas" value="1" min="1" max="120" oninput="calcParcel()"></div>
                 <div class="form-group full" id="parcelInfoDiv" style="display:none"><div class="info-box" id="parcelInfoText">—</div></div>
-                <div class="form-group"><label>Mês Início</label><select id="despMes"><option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option></select></div>
-                <div class="form-group"><label>Ano Início</label><input type="number" id="despAno" value="2025" min="2020" max="2040"></div>
+                <div class="form-group"><label>Mês Início</label><select id="despMes" onchange="onDespMesAnoChange()"><option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option></select></div>
+                <div class="form-group"><label>Ano Início</label><input type="number" id="despAno" value="2025" min="2020" max="2040" onchange="onDespMesAnoChange()"></div>
+                <div class="form-group full" id="despFaturaPreview" style="display:none"></div>
                 <div class="form-group full" id="despContaGroup">
                   <label>Conta bancária (de onde sai o dinheiro)</label>
                   <select id="despConta"></select>
@@ -866,6 +867,36 @@ select option{background:var(--card)}
             <div id="analisePorSubcategoria"></div>
           </div>
         </div>
+
+        <!-- Comparativo mensal por categoria -->
+        <div class="card mt-20">
+          <div class="card-header">
+            <div class="card-title">Comparativo por Categoria — Evolução Mensal</div>
+            <div class="card-sub">Veja onde seus gastos estão subindo ou caindo, categoria por categoria</div>
+          </div>
+          <div class="form-grid" style="margin-bottom:16px">
+            <div class="form-group">
+              <label>Período</label>
+              <select id="compMeses" onchange="renderComparativo()">
+                <option value="3">Últimos 3 meses</option>
+                <option value="6" selected>Últimos 6 meses</option>
+                <option value="12">Últimos 12 meses</option>
+                <option value="24">Últimos 24 meses</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:12px;color:var(--muted)">Categorias no comparativo</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost btn-sm" onclick="compSelecionarTodas(true)">Marcar todas</button>
+              <button class="btn btn-ghost btn-sm" onclick="compSelecionarTodas(false)">Limpar</button>
+            </div>
+          </div>
+          <div id="compCategoriasChecks" style="display:flex;flex-wrap:wrap;gap:6px 16px;margin-bottom:18px"></div>
+          <div class="kpi-grid" id="compKpis" style="grid-template-columns:repeat(2,1fr);margin-bottom:18px"></div>
+          <div class="chart-wrap" style="height:280px;margin-bottom:20px"><canvas id="chartComparativo"></canvas></div>
+          <div id="compTabela"></div>
+        </div>
       </div>
 
       <!-- PESSOAS -->
@@ -972,6 +1003,10 @@ select option{background:var(--card)}
             <button class="btn btn-primary mt-16" onclick="addConta()">Adicionar Conta</button>
           </div>
           <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div><button class="btn btn-ghost btn-sm" onclick="openTransferenciaModal()">⇄ Transferir entre Contas</button></div><div id="contasList"></div></div>
+        </div>
+        <div class="card mt-20">
+          <div class="card-header"><div class="card-title">Histórico de Transferências</div></div>
+          <div id="transferenciasList"></div>
         </div>
       </div>
 
@@ -1293,6 +1328,43 @@ function addMonths(mes,ano,n){
   while(m>12){ m-=12; y++; }
   while(m<1){ m+=12; y--; }
   return {mes:m, ano:y};
+}
+// Sugere o "Mês Início" ideal ao abrir o formulário de Nova Despesa. Pra
+// despesas no cartão, esse campo é o mês da COMPRA — mas quando você está
+// navegando um mês futuro no Dashboard (adiantando pra planejar/conferir a
+// próxima fatura, não logando uma compra de hoje), o mês real da compra
+// tende a ser um mês antes do mês em exibição. Sem isso, o formulário sempre
+// sugeria o mês em exibição, obrigando a corrigir manualmente toda vez.
+// Não se aplica a Dinheiro/PIX (não tem rolagem de fatura, o mês exibido já
+// é o mês certo) nem quando você está no mês atual real ou no passado.
+function getDespesaDefaultMes(cartaoId){
+  const isFuturo = currentYear>REAL_TODAY_YEAR || (currentYear===REAL_TODAY_YEAR && currentMonth>REAL_TODAY_MONTH);
+  if(cartaoId && isCartaoDeCredito(cartaoId) && isFuturo){
+    return addMonths(currentMonth,currentYear,-1);
+  }
+  return {mes:currentMonth,ano:currentYear};
+}
+// true assim que o usuário mexe manualmente no Mês/Ano Início — a partir daí
+// a troca de cartão para de "adivinhar" o mês por ele (evita apagar um ajuste
+// que ele já fez de propósito). Resetado sempre que o formulário é reaberto.
+let despMesEditadoManualmente=false;
+function onDespMesAnoChange(){
+  despMesEditadoManualmente=true;
+  updateFaturaPreview();
+}
+// Atualiza o aviso "Vai pra fatura de: ..." abaixo do Mês/Ano Início, com base
+// no que está selecionado agora no formulário — assim dá pra conferir antes
+// de salvar, mesmo que você tenha ajustado o mês manualmente.
+function updateFaturaPreview(){
+  const el=document.getElementById('despFaturaPreview');
+  if(!el) return;
+  const cartaoId=document.getElementById('despCartao')?.value;
+  const mes=parseInt(document.getElementById('despMes')?.value);
+  const ano=parseInt(document.getElementById('despAno')?.value);
+  if(!cartaoId||!isCartaoDeCredito(cartaoId)||!mes||!ano){ el.style.display='none'; return; }
+  const {mes:faturaMes,ano:faturaAno}=addMonths(mes,ano,1);
+  el.style.display='block';
+  el.innerHTML=`<div class="info-box">🧾 Vai entrar na fatura de <strong>${MONTHS[faturaMes-1]} ${faturaAno}</strong></div>`;
 }
 // Escapa texto do usuário antes de inserir em innerHTML/atributos — sem isso, uma
 // descrição/nome com aspas quebra o atributo HTML (e corrompe o modal), e com
@@ -2787,6 +2859,16 @@ function onCartaoChange(){
   // aluguel, etc pagos à vista todo mês) — usado no card "Próximos Vencimentos".
   const vencGroup=document.getElementById('despVencimentoGroup');
   if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
+  // Só re-sugere o Mês/Ano Início se o usuário ainda não mexeu nele nesta
+  // sessão do formulário — assim escolher o cartão ajusta o mês pra você
+  // automaticamente (fluxo comum: primeiro escolhe o cartão, depois o mês),
+  // mas nunca apaga um ajuste manual que você já tenha feito.
+  if(!despMesEditadoManualmente){
+    const def=getDespesaDefaultMes(cartaoId);
+    document.getElementById('despMes').value=def.mes;
+    document.getElementById('despAno').value=def.ano;
+  }
+  updateFaturaPreview();
 }
 function calcParcel(){
   const val=parseFloat(document.getElementById('despValor')?.value)||0;
@@ -2909,9 +2991,9 @@ function togglePago(id,mes,ano){
   toast(d.pagoMeses[k]?'Marcado como pago ✓':'Desmarcado — voltou para previsão');
 }
 function renderDespesas(){
-  populateDespForma();
+  despMesEditadoManualmente=false; // formulário reaberto: pode voltar a sugerir o mês
+  populateDespForma(); // já chama onCartaoChange(), que aplica o Mês/Ano Início sugerido
   document.getElementById('despPeriodLabel').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
-  document.getElementById('despMes').value=currentMonth;document.getElementById('despAno').value=currentYear;
   let desps=getDespesasForMonth(currentMonth,currentYear);
   desps=desps.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   const contrib=calcContribuicao(currentMonth,currentYear);
@@ -3732,25 +3814,35 @@ function salvarAjusteSaldoConta(id){
 // mecanismo de calcSaldoConta usado pelo Ajustar Saldo — sem duplicar lógica
 // de cálculo de saldo em outro lugar.
 // ════════════════════════════════════════════════
-function openTransferenciaModal(){
+function openTransferenciaModal(editId){
   if(state.contas.length<2){toast('Cadastre pelo menos 2 contas para transferir entre elas');return;}
+  // Modo edição: recupera os dois lançamentos ligados por transferId pra pré-preencher o form
+  let existente=null;
+  if(editId){
+    const movs=(state.movimentacoesContas||[]).filter(m=>m.transferId===editId);
+    const saida=movs.find(m=>m.valor<0), entrada=movs.find(m=>m.valor>=0);
+    if(saida&&entrada){
+      const obsLimpa=(saida.obs||'').replace(/^Transferência para [^—]+(—\s*)?/,'');
+      existente={origemId:saida.contaId,destinoId:entrada.contaId,valor:Math.abs(saida.valor),data:saida.data,obs:obsLimpa};
+    }
+  }
   const opts=c=>state.contas.map(x=>`<option value="${x.id}" ${x.id===c?'selected':''}>${esc(x.name)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
-  document.getElementById('modalTitle').textContent='Transferir entre Contas';
+  document.getElementById('modalTitle').textContent=existente?'Editar Transferência':'Transferir entre Contas';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Conta de origem</label><select id="transfOrigem" onchange="if(this.value===document.getElementById('transfDestino').value)toast('Escolha contas diferentes')">${opts(state.contas[0].id)}</select></div>
-      <div class="form-group full"><label>Conta de destino</label><select id="transfDestino">${opts(state.contas[1].id)}</select></div>
-      <div class="form-group"><label>Valor</label><input type="number" id="transfValor" placeholder="0,00" step="0.01" min="0.01"></div>
-      <div class="form-group"><label>Data</label><input type="date" id="transfData" value="${new Date().toISOString().slice(0,10)}"></div>
-      <div class="form-group full"><label>Descrição (opcional)</label><input type="text" id="transfObs" placeholder="Ex: repasse para pagar fatura do cartão"></div>
+      <div class="form-group full"><label>Conta de origem</label><select id="transfOrigem" onchange="if(this.value===document.getElementById('transfDestino').value)toast('Escolha contas diferentes')">${opts(existente?existente.origemId:state.contas[0].id)}</select></div>
+      <div class="form-group full"><label>Conta de destino</label><select id="transfDestino">${opts(existente?existente.destinoId:state.contas[1].id)}</select></div>
+      <div class="form-group"><label>Valor</label><input type="number" id="transfValor" placeholder="0,00" step="0.01" min="0.01" value="${existente?existente.valor.toFixed(2):''}"></div>
+      <div class="form-group"><label>Data</label><input type="date" id="transfData" value="${existente?new Date(existente.data).toISOString().slice(0,10):new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group full"><label>Descrição (opcional)</label><input type="text" id="transfObs" placeholder="Ex: repasse para pagar fatura do cartão" value="${existente?esc(existente.obs):''}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="salvarTransferencia()">Transferir</button>
+      <button class="btn btn-success" onclick="salvarTransferencia(${editId?`'${editId}'`:'null'})">${existente?'Salvar alterações':'Transferir'}</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
 }
-function salvarTransferencia(){
+function salvarTransferencia(editId){
   const origemId=document.getElementById('transfOrigem').value;
   const destinoId=document.getElementById('transfDestino').value;
   const valor=parseFloat(document.getElementById('transfValor').value);
@@ -3760,10 +3852,19 @@ function salvarTransferencia(){
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   const origem=state.contas.find(c=>c.id===origemId), destino=state.contas.find(c=>c.id===destinoId);
   const data=dataStr?new Date(dataStr+'T12:00:00').toISOString():new Date().toISOString();
-  const transferId=uid();
+  if(editId){
+    // Edição: remove os dois lançamentos antigos e recria com o mesmo transferId
+    state.movimentacoesContas=(state.movimentacoesContas||[]).filter(m=>m.transferId!==editId);
+  }
+  const transferId=editId||uid();
   state.movimentacoesContas.push({id:uid(),contaId:origemId,valor:-valor,data,transferId,obs:'Transferência para '+destino.name+(obs?' — '+obs:'')});
   state.movimentacoesContas.push({id:uid(),contaId:destinoId,valor:valor,data,transferId,obs:'Transferência de '+origem.name+(obs?' — '+obs:'')});
-  scheduleSave();closeModal();renderContas();renderDashboard();toast('Transferência registrada!');
+  scheduleSave();closeModal();renderContas();renderDashboard();toast(editId?'Transferência atualizada!':'Transferência registrada!');
+}
+function editTransferencia(transferId){ openTransferenciaModal(transferId); }
+function delTransferencia(transferId){
+  state.movimentacoesContas=(state.movimentacoesContas||[]).filter(m=>m.transferId!==transferId);
+  scheduleSave();renderContas();renderDashboard();toast('Transferência excluída');
 }
 // Saldo = saldo inicial + ajustes manuais + receitas recebidas − despesas pagas, vinculadas a essa conta
 function calcSaldoConta(contaId){
@@ -3885,6 +3986,40 @@ function renderContas(){
     </div>`;
   });
   html+='</div>';document.getElementById('contasList').innerHTML=html;
+  renderTransferencias();
+}
+
+// Lista as transferências (movimentacoesContas ligadas por transferId), uma
+// linha por transferência (não por lançamento), mais recentes primeiro.
+function renderTransferencias(){
+  const el=document.getElementById('transferenciasList');
+  if(!el) return;
+  const porTransfer={};
+  (state.movimentacoesContas||[]).forEach(m=>{
+    if(!m.transferId) return;
+    if(!porTransfer[m.transferId]) porTransfer[m.transferId]={data:m.data};
+    if(m.valor<0) porTransfer[m.transferId].origemId=m.contaId, porTransfer[m.transferId].valor=Math.abs(m.valor), porTransfer[m.transferId].obs=m.obs;
+    else porTransfer[m.transferId].destinoId=m.contaId;
+  });
+  const lista=Object.entries(porTransfer).sort((a,b)=>(b[1].data||'').localeCompare(a[1].data||''));
+  if(!lista.length){ el.innerHTML='<div class="empty-state">Nenhuma transferência registrada ainda.</div>'; return; }
+  let html='<div class="item-list">';
+  lista.forEach(([transferId,t])=>{
+    const origem=state.contas.find(c=>c.id===t.origemId), destino=state.contas.find(c=>c.id===t.destinoId);
+    const dataFmt=t.data?new Date(t.data).toLocaleDateString('pt-BR'):'—';
+    const obsLimpa=(t.obs||'').replace(/^Transferência para [^—]+(—\s*)?/,'');
+    html+=`<div class="item-row">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(origem?.name||'?')} → ${esc(destino?.name||'?')}</div>
+        <div class="item-row-meta">${dataFmt}${obsLimpa?' · '+esc(obsLimpa):''}</div>
+      </div>
+      <div class="item-row-val" style="font-size:15px">${fmtBRL(t.valor)}</div>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="editTransferencia('${transferId}')" title="Editar">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delTransferencia('${transferId}')" title="Excluir">✕</button>
+    </div>`;
+  });
+  html+='</div>';
+  el.innerHTML=html;
 }
 
 // ════════════════════════════════════════════════
@@ -4611,6 +4746,154 @@ function renderAnalise(){
     });
     html+='</div>';
     document.getElementById('analisePorSubcategoria').innerHTML=html;
+  }
+
+  renderComparativo();
+}
+
+// ════════════════════════════════════════════════
+// COMPARATIVO POR CATEGORIA — EVOLUÇÃO MENSAL
+// Independente dos filtros de período de cima: sempre olha pra trás a partir
+// do mês/ano em exibição no app (currentMonth/currentYear), pelos últimos N
+// meses escolhidos no seletor. Reaproveita getDespesasForMonth (mesma fonte
+// usada no Dashboard e na Análise) pra não duplicar a lógica de parcelas.
+// ════════════════════════════════════════════════
+const COMP_COLORS=['#5b7fff','#38e2b4','#ff5f6d','#ffc147','#a78bfa','#fb923c','#34d399','#60a5fa','#f472b6','#94a3b8'];
+let chartComparativo=null;
+let compCatsSelecionadas=null; // null = ainda não escolhido manualmente (usa top 5 por padrão)
+
+function getComparativoMonths(){
+  const n=parseInt(document.getElementById('compMeses')?.value||'6');
+  const months=[];
+  let m=currentMonth, y=currentYear;
+  for(let i=0;i<n;i++){
+    months.unshift({mes:m,ano:y});
+    m--; if(m<1){m=12;y--;}
+  }
+  return months;
+}
+
+function getComparativoMatrix(){
+  const months=getComparativoMonths();
+  const byCat={}; // catId -> [valor por mês, na mesma ordem de `months`]
+  months.forEach((mo,i)=>{
+    getDespesasForMonth(mo.mes,mo.ano).forEach(d=>{
+      if(!byCat[d.cat]) byCat[d.cat]=months.map(()=>0);
+      byCat[d.cat][i]+=(d._valorParcela||0);
+    });
+  });
+  return {months,byCat};
+}
+
+function compSelecionarTodas(todas){
+  const {byCat}=getComparativoMatrix();
+  compCatsSelecionadas = todas ? Object.keys(byCat) : [];
+  renderComparativo();
+}
+
+function compToggleCat(catId){
+  if(!compCatsSelecionadas) compCatsSelecionadas=[];
+  const i=compCatsSelecionadas.indexOf(catId);
+  if(i>=0) compCatsSelecionadas.splice(i,1); else compCatsSelecionadas.push(catId);
+  renderComparativo();
+}
+
+function renderComparativo(){
+  const elChecks=document.getElementById('compCategoriasChecks');
+  if(!elChecks) return; // página Análise ainda não montada
+  const {months,byCat}=getComparativoMatrix();
+  const catIds=Object.keys(byCat).sort((a,b)=>{
+    const totA=byCat[a].reduce((s,v)=>s+v,0), totB=byCat[b].reduce((s,v)=>s+v,0);
+    return totB-totA;
+  });
+
+  // Padrão na primeira renderização: top 5 categorias por gasto total no período
+  if(compCatsSelecionadas===null) compCatsSelecionadas=catIds.slice(0,5);
+  // Remove seleções de categorias que não têm mais dado nenhum no período atual
+  compCatsSelecionadas=compCatsSelecionadas.filter(id=>catIds.includes(id));
+
+  if(!catIds.length){
+    elChecks.innerHTML='<div class="empty-state">Sem despesas nesse período</div>';
+    document.getElementById('compKpis').innerHTML='';
+    document.getElementById('compTabela').innerHTML='';
+    if(chartComparativo){ chartComparativo.destroy(); chartComparativo=null; }
+    return;
+  }
+
+  // ── Checkboxes de categoria ──
+  elChecks.innerHTML=catIds.map((catId,i)=>{
+    const cat=state.categories.find(c=>c.id===catId);
+    const cor=COMP_COLORS[compCatsSelecionadas.indexOf(catId)>=0?compCatsSelecionadas.indexOf(catId)%COMP_COLORS.length:i%COMP_COLORS.length];
+    const marcado=compCatsSelecionadas.includes(catId);
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:${marcado?'var(--text)':'var(--muted)'}">
+      <input type="checkbox" style="width:auto" ${marcado?'checked':''} onchange="compToggleCat('${catId}')">
+      <span style="width:10px;height:10px;border-radius:3px;background:${cor};flex-shrink:0"></span>
+      ${esc(cat?.name||catId)}
+    </label>`;
+  }).join('');
+
+  // ── KPIs: maior queda e maior alta no último mês vs anterior (todas as categorias, não só as marcadas) ──
+  const kpisEl=document.getElementById('compKpis');
+  if(months.length<2){
+    kpisEl.innerHTML='';
+  } else {
+    const iUlt=months.length-1, iAnt=months.length-2;
+    let maiorQueda=null, maiorAlta=null;
+    catIds.forEach(catId=>{
+      const diff=byCat[catId][iUlt]-byCat[catId][iAnt];
+      if(diff<0 && (!maiorQueda || diff<maiorQueda.diff)) maiorQueda={catId,diff};
+      if(diff>0 && (!maiorAlta || diff>maiorAlta.diff)) maiorAlta={catId,diff};
+    });
+    const nomeCat=id=>esc(state.categories.find(c=>c.id===id)?.name||id);
+    kpisEl.innerHTML=`
+      <div class="kpi"><div class="kpi-label">Maior queda (${MONTHS[months[iUlt].mes-1]} vs ${MONTHS[months[iAnt].mes-1]})</div>${maiorQueda?`<div class="kpi-value" style="color:var(--accent2)">↓ ${fmtBRL(Math.abs(maiorQueda.diff))}</div><div class="kpi-sub">${nomeCat(maiorQueda.catId)}</div>`:'<div class="kpi-value">—</div><div class="kpi-sub">Nenhuma categoria caiu</div>'}</div>
+      <div class="kpi"><div class="kpi-label">Maior alta (${MONTHS[months[iUlt].mes-1]} vs ${MONTHS[months[iAnt].mes-1]})</div>${maiorAlta?`<div class="kpi-value" style="color:var(--danger)">↑ ${fmtBRL(maiorAlta.diff)}</div><div class="kpi-sub">${nomeCat(maiorAlta.catId)}</div>`:'<div class="kpi-value">—</div><div class="kpi-sub">Nenhuma categoria subiu</div>'}</div>`;
+  }
+
+  // ── Gráfico de linha: uma série por categoria marcada ──
+  const labels=months.map(mo=>MONTHS[mo.mes-1].slice(0,3)+'/'+String(mo.ano).slice(2));
+  const datasets=compCatsSelecionadas.map((catId,i)=>{
+    const cat=state.categories.find(c=>c.id===catId);
+    const cor=COMP_COLORS[i%COMP_COLORS.length];
+    return {label:cat?.name||catId,data:byCat[catId]||months.map(()=>0),borderColor:cor,backgroundColor:cor,tension:.3,pointRadius:3,pointHoverRadius:5,borderWidth:2};
+  });
+  if(chartComparativo){ chartComparativo.destroy(); chartComparativo=null; }
+  chartComparativo=new Chart(document.getElementById('chartComparativo').getContext('2d'),{
+    type:'line',
+    data:{labels,datasets},
+    options:{
+      plugins:{legend:{position:'bottom',labels:{color:'#7c84a0',font:{family:'Inter',size:11},boxWidth:10,padding:10}}},
+      scales:{
+        x:{ticks:{color:'#7c84a0',font:{family:'Inter',size:10}},grid:{color:'rgba(42,48,80,.5)'}},
+        y:{ticks:{color:'#7c84a0',font:{family:'Inter',size:10},callback:v=>'R$'+v.toLocaleString('pt-BR')},grid:{color:'rgba(42,48,80,.5)'}}
+      },
+      maintainAspectRatio:false
+    }
+  });
+
+  // ── Tabela: uma linha por categoria marcada, uma coluna por mês, + variação (último vs penúltimo mês) ──
+  const tabEl=document.getElementById('compTabela');
+  if(!compCatsSelecionadas.length){
+    tabEl.innerHTML='<div class="empty-state">Marque ao menos uma categoria acima pra ver a tabela</div>';
+  } else {
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Categoria</th>'+labels.map(l=>`<th>${l}</th>`).join('')+(months.length>1?'<th>Variação</th>':'')+'</tr></thead><tbody>';
+    compCatsSelecionadas.forEach(catId=>{
+      const cat=state.categories.find(c=>c.id===catId);
+      const vals=byCat[catId]||months.map(()=>0);
+      html+=`<tr><td><strong>${esc(cat?.name||catId)}</strong></td>`;
+      vals.forEach(v=>{ html+=`<td class="mono" style="font-size:12px">${fmtBRL(v)}</td>`; });
+      if(months.length>1){
+        const ult=vals[vals.length-1], ant=vals[vals.length-2];
+        const diff=ult-ant;
+        const pct=ant>0.004?((diff/ant)*100):(ult>0.004?100:0);
+        const cor=diff<-0.004?'var(--accent2)':(diff>0.004?'var(--danger)':'var(--muted)');
+        const seta=diff<-0.004?'↓':(diff>0.004?'↑':'—');
+        html+=`<td class="mono" style="font-size:12px;color:${cor}">${seta} ${fmtBRL(Math.abs(diff))} (${diff>=0?'+':''}${pct.toFixed(0)}%)</td>`;
+      }
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+    tabEl.innerHTML=html;
   }
 }
 
