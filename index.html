@@ -662,6 +662,10 @@ select option{background:var(--card)}
                   <label>Dia de vencimento (todo mês)</label>
                   <input type="number" id="despDiaVencimento" placeholder="Ex: 10" min="1" max="31">
                 </div>
+                <div class="checkbox-row form-group full" id="despDebitoAutoGroup" style="display:none">
+                  <input type="checkbox" id="despDebitoAutomatico" style="width:auto">
+                  <label for="despDebitoAutomatico">🔁 Débito automático — o banco desconta sozinho, o app já dá baixa no saldo quando o dia chegar</label>
+                </div>
                 <div class="checkbox-row form-group full">
                   <input type="checkbox" id="despDividida" style="width:auto" onchange="onDespDivididaChange()">
                   <label for="despDividida">Despesa compartilhada com outras pessoas</label>
@@ -871,8 +875,8 @@ select option{background:var(--card)}
         <!-- Comparativo mensal por categoria -->
         <div class="card mt-20">
           <div class="card-header">
-            <div class="card-title">Comparativo por Categoria — Evolução Mensal</div>
-            <div class="card-sub">Veja onde seus gastos estão subindo ou caindo, categoria por categoria</div>
+            <div class="card-title" id="compCardTitle">Comparativo por Categoria — Evolução Mensal</div>
+            <div class="card-sub" id="compCardSub">Veja onde seus gastos estão subindo ou caindo, categoria por categoria</div>
           </div>
           <div class="form-grid" style="margin-bottom:16px">
             <div class="form-group">
@@ -1375,6 +1379,36 @@ function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 // subcategoria) fecha a string JS antes da hora e quebra o handler.
 function escJs(s){ return String(s??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 
+// ════════════════════════════════════════════════
+// DÉBITO AUTOMÁTICO
+// Despesas fixas em Dinheiro/PIX marcadas como "débito automático" (banco
+// desconta sozinho, sem precisar clicar em "✓ Pago" toda vez) são dadas como
+// pagas sozinhas assim que a data real de hoje alcança o dia de vencimento —
+// reaproveita o mesmo pagoMeses que "✓ Pago" já usa, então dá pra desmarcar
+// manualmente depois se o banco não tiver cobrado naquele mês.
+// Roda a cada carregamento de dados (migrateState), sempre ancorada no
+// REAL_TODAY — NUNCA no mês em exibição no Dashboard (currentMonth), pra não
+// debitar contas "do futuro" só porque você está adiantando o Dashboard pra
+// pré-visualizar a próxima fatura de cartão.
+function aplicarDebitosAutomaticos(){
+  const hojeY=REAL_TODAY_YEAR, hojeM=REAL_TODAY_MONTH, hojeD=new Date().getDate();
+  const debitados=[];
+  (state.despesas||[]).forEach(d=>{
+    if(!d.fixa || d.cartao!=='dinheiro' || !d.diaVencimento || !d.debitoAutomatico) return;
+    if(!d.pagoMeses) d.pagoMeses={};
+    let mes=d.mesInicio, ano=d.anoInicio, guard=0;
+    while(guard++<240){ // 20 anos de segurança contra loop infinito
+      if(ano>hojeY || (ano===hojeY && mes>hojeM)) break; // esse mês ainda não chegou
+      const mesJaPassouInteiro = ano<hojeY || mes<hojeM;
+      if(!mesJaPassouInteiro && d.diaVencimento>hojeD) break; // mês atual, mas o dia ainda não chegou
+      const k=mesKey(mes,ano);
+      if(!d.pagoMeses[k]){ d.pagoMeses[k]=true; debitados.push({desc:d.desc,mes,ano}); }
+      mes++; if(mes>12){mes=1;ano++;}
+    }
+  });
+  return debitados;
+}
+
 function migrateState() {
   if (!state.categories || !state.categories.length) state.categories = DEFAULT_CATEGORIES.map(c=>({...c,subs:[...c.subs]}));
   if (!state.cards      || !state.cards.length)      state.cards      = DEFAULT_CARDS.map(c=>({...c}));
@@ -1409,9 +1443,11 @@ function migrateState() {
     if(d.conta===undefined) d.conta=null; // conta bancária de origem (só se aplica a despesas em Dinheiro/PIX; cartão de crédito usa a conta vinculada ao pagamento da fatura)
     if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
     if(d.diaVencimento===undefined) d.diaVencimento=null; // dia de vencimento (só despesas fixas em Dinheiro/PIX)
+    if(d.debitoAutomatico===undefined) d.debitoAutomatico=false; // banco desconta sozinho — ver aplicarDebitosAutomaticos()
     // Despesas em Dinheiro/PIX (fixas ou avulsas) respeitam o status escolhido
     // manualmente no lançamento (Previsto/Pago) — sem nenhum forçamento retroativo.
   });
+  aplicarDebitosAutomaticos();
   state.receitas.forEach(r=>{
     if(!r.createdAt) r.createdAt = r.id;
     if(r.conta===undefined) r.conta=null; // conta bancária de destino (opcional p/ lançamentos antigos)
@@ -2859,6 +2895,8 @@ function onCartaoChange(){
   // aluguel, etc pagos à vista todo mês) — usado no card "Próximos Vencimentos".
   const vencGroup=document.getElementById('despVencimentoGroup');
   if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
+  const debitoAutoGroup=document.getElementById('despDebitoAutoGroup');
+  if(debitoAutoGroup) debitoAutoGroup.style.display=(isDinheiro&&fixa)?'flex':'none';
   // Só re-sugere o Mês/Ano Início se o usuário ainda não mexeu nele nesta
   // sessão do formulário — assim escolher o cartão ajusta o mês pra você
   // automaticamente (fluxo comum: primeiro escolhe o cartão, depois o mês),
@@ -2960,6 +2998,7 @@ function addDespesa(){
   const anoI=parseInt(document.getElementById('despAno').value);
   const fixa=document.getElementById('despFixa').checked;
   const diaVencimento=(isDinheiro&&fixa)?(parseInt(document.getElementById('despDiaVencimento')?.value)||null):null;
+  const debitoAutomatico=(isDinheiro&&fixa)?!!document.getElementById('despDebitoAutomatico')?.checked:false;
   const statusEl=document.getElementById('despPagoStatus');
   // Status agora vale pra QUALQUER despesa em Dinheiro/PIX (fixa ou avulsa) —
   // dá pra planejar uma compra à vista futura como "Prevista" e só marcar
@@ -2972,10 +3011,12 @@ function addDespesa(){
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
   const split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
-  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,diaVencimento,pagoMeses,split,repasses:{},createdAt:uid()});
+  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,diaVencimento,debitoAutomatico,pagoMeses,split,repasses:{},createdAt:uid()});
+  aplicarDebitosAutomaticos(); // se o dia já passou nesse mês, já nasce dada como paga
   scheduleSave();renderDespesas();toast('Despesa adicionada!');
   document.getElementById('despDesc').value='';document.getElementById('despValor').value='';
   document.getElementById('despDiaVencimento').value='';
+  document.getElementById('despDebitoAutomatico').checked=false;
   document.getElementById('despParcelas').value=1;document.getElementById('parcelInfoDiv').style.display='none';
   currentSplitRows=[];document.getElementById('despDividida').checked=false;document.getElementById('despSplitBox').style.display='none';
 }
@@ -3227,6 +3268,10 @@ function openEditDespesa(id){
         <label>Dia de vencimento (todo mês)</label>
         <input type="number" id="eDespDiaVencimento" value="${d.diaVencimento||''}" min="1" max="31" placeholder="Ex: 10">
       </div>
+      <div class="checkbox-row form-group full" id="eDespDebitoAutoGroup" style="display:${(d.cartao==='dinheiro'&&d.fixa)?'flex':'none'}">
+        <input type="checkbox" id="eDespDebitoAutomatico" style="width:auto" ${d.debitoAutomatico?'checked':''}>
+        <label for="eDespDebitoAutomatico">🔁 Débito automático — o banco desconta sozinho, o app já dá baixa no saldo quando o dia chegar</label>
+      </div>
       <div class="checkbox-row form-group full">
         <input type="checkbox" id="eDespDividida" style="width:auto" ${hasSplit?'checked':''} onchange="eOnDespDivididaChange()">
         <label for="eDespDividida">Despesa compartilhada com outras pessoas</label>
@@ -3302,6 +3347,8 @@ function eOnCartaoChange(){
   if(info) info.style.display=isDinheiro?'none':'block';
   const vencGroup=document.getElementById('eDespVencimentoGroup');
   if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
+  const debitoAutoGroup=document.getElementById('eDespDebitoAutoGroup');
+  if(debitoAutoGroup) debitoAutoGroup.style.display=(isDinheiro&&fixa)?'flex':'none';
 }
 function saveEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
@@ -3320,8 +3367,10 @@ function saveEditDespesa(id){
   d.anoInicio=parseInt(document.getElementById('eDespAno').value);
   d.fixa=document.getElementById('eDespFixa').checked;
   d.diaVencimento=(isDinheiro&&d.fixa)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
+  d.debitoAutomatico=(isDinheiro&&d.fixa)?!!document.getElementById('eDespDebitoAutomatico')?.checked:false;
   const dividida=document.getElementById('eDespDividida').checked;
   d.split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
+  aplicarDebitosAutomaticos(); // se acabou de virar débito automático e o dia já passou nesse mês, já dá baixa
   scheduleSave();closeModal();renderDespesas();toast('Despesa atualizada!');
 }
 
@@ -4076,6 +4125,17 @@ function calcProximosVencimentos(){
     if(!d.fixa || d.cartao!=='dinheiro' || !d.diaVencimento) return;
     const started = d.anoInicio<hojeY || (d.anoInicio===hojeY && d.mesInicio<=hojeM);
     if(!started) return;
+    if(d.debitoAutomatico){
+      // Débito automático: sempre mostra a ocorrência do mês atual, paga ou
+      // não — vira uma tag informativa em vez de um "✓ Pago" pra clicar,
+      // já que quem desconta é o banco, não você (aplicarDebitosAutomaticos
+      // já cuida de marcar pagoMeses assim que o dia chega).
+      const k=mesKey(hojeM,hojeY);
+      const dataVenc=new Date(hojeY,hojeM-1,d.diaVencimento);
+      const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
+      resultado.push({tipo:'despesa', despesa:d, mes:hojeM, ano:hojeY, diffDias, jaDebitado:!!(d.pagoMeses&&d.pagoMeses[k])});
+      return;
+    }
     let mes=hojeM, ano=hojeY;
     if(d.diaVencimento < hojeD){ mes++; if(mes>12){mes=1;ano++;} }
     // acha a primeira ocorrência (a partir daqui) ainda não paga, olhando até 12 meses à frente
@@ -4148,6 +4208,19 @@ function renderProximosVencimentos(){
     }
     const d=item.despesa;
     const cat=state.categories.find(c=>c.id===d.cat);
+    if(d.debitoAutomatico){
+      // Nada pra clicar aqui: quem debita é o banco. Uma tag conta o que
+      // já aconteceu (ou vai acontecer sozinho) em vez do botão "✓ Pago".
+      const tagLabel=item.jaDebitado?'🔁 Débito automático — já debitado':'🔁 Débito automático — '+(item.diffDias<=0?'cobra hoje':'cobra em '+item.diffDias+' dia'+(item.diffDias>1?'s':''));
+      return `<div class="item-row" style="border-color:var(--border);margin-bottom:8px">
+        <div class="item-row-info">
+          <div class="item-row-name">${esc(d.desc)}</div>
+          <div class="item-row-meta">${esc(cat?.name||'')} · dia ${d.diaVencimento}</div>
+        </div>
+        <div class="item-row-val" style="color:${item.jaDebitado?'var(--muted)':'var(--text)'}">${fmtBRL(d.valor)}</div>
+        <span class="badge ${item.jaDebitado?'badge-ok':'badge-blue'}">${tagLabel}</span>
+      </div>`;
+    }
     return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
       <div class="item-row-info">
         <div class="item-row-name">${esc(d.desc)}</div>
@@ -4773,21 +4846,32 @@ function getComparativoMonths(){
   return months;
 }
 
-function getComparativoMatrix(){
+// Sem subcatDeCatId: agrupa por categoria (catId -> [valor por mês]).
+// Com subcatDeCatId: agrupa só as despesas dessa categoria, por subcategoria
+// (nome da subcategoria já é a própria chave de exibição, sem precisar
+// resolver contra state.categories).
+function getComparativoMatrix(subcatDeCatId){
   const months=getComparativoMonths();
-  const byCat={}; // catId -> [valor por mês, na mesma ordem de `months`]
+  const byKey={};
   months.forEach((mo,i)=>{
     getDespesasForMonth(mo.mes,mo.ano).forEach(d=>{
-      if(!byCat[d.cat]) byCat[d.cat]=months.map(()=>0);
-      byCat[d.cat][i]+=(d._valorParcela||0);
+      if(subcatDeCatId){
+        if(d.cat!==subcatDeCatId) return;
+        const k=d.subcat||'Sem subcategoria';
+        if(!byKey[k]) byKey[k]=months.map(()=>0);
+        byKey[k][i]+=(d._valorParcela||0);
+      } else {
+        if(!byKey[d.cat]) byKey[d.cat]=months.map(()=>0);
+        byKey[d.cat][i]+=(d._valorParcela||0);
+      }
     });
   });
-  return {months,byCat};
+  return {months,byKey};
 }
 
 function compSelecionarTodas(todas){
-  const {byCat}=getComparativoMatrix();
-  compCatsSelecionadas = todas ? Object.keys(byCat) : [];
+  const {byKey}=getComparativoMatrix();
+  compCatsSelecionadas = todas ? Object.keys(byKey) : [];
   renderComparativo();
 }
 
@@ -4801,7 +4885,7 @@ function compToggleCat(catId){
 function renderComparativo(){
   const elChecks=document.getElementById('compCategoriasChecks');
   if(!elChecks) return; // página Análise ainda não montada
-  const {months,byCat}=getComparativoMatrix();
+  const {months,byKey:byCat}=getComparativoMatrix();
   const catIds=Object.keys(byCat).sort((a,b)=>{
     const totA=byCat[a].reduce((s,v)=>s+v,0), totB=byCat[b].reduce((s,v)=>s+v,0);
     return totB-totA;
@@ -4820,7 +4904,7 @@ function renderComparativo(){
     return;
   }
 
-  // ── Checkboxes de categoria ──
+  // ── Checkboxes de categoria (sempre por categoria, é o que decide o modo abaixo) ──
   elChecks.innerHTML=catIds.map((catId,i)=>{
     const cat=state.categories.find(c=>c.id===catId);
     const cor=COMP_COLORS[compCatsSelecionadas.indexOf(catId)>=0?compCatsSelecionadas.indexOf(catId)%COMP_COLORS.length:i%COMP_COLORS.length];
@@ -4832,30 +4916,55 @@ function renderComparativo(){
     </label>`;
   }).join('');
 
-  // ── KPIs: maior queda e maior alta no último mês vs anterior (todas as categorias, não só as marcadas) ──
+  // ── Modo: exatamente 1 categoria marcada = detalha por subcategoria dela;
+  // 0, 2+ ou "todas" marcadas = comparativo entre categorias, como antes ──
+  const modoSubcat = compCatsSelecionadas.length===1;
+  let itemIds, dadosPorItem, nomeItem, tituloCategoria=null;
+  if(modoSubcat){
+    const catSelecionada=compCatsSelecionadas[0];
+    tituloCategoria=state.categories.find(c=>c.id===catSelecionada)?.name||catSelecionada;
+    const subMatrix=getComparativoMatrix(catSelecionada).byKey;
+    itemIds=Object.keys(subMatrix).sort((a,b)=>{
+      const totA=subMatrix[a].reduce((s,v)=>s+v,0), totB=subMatrix[b].reduce((s,v)=>s+v,0);
+      return totB-totA;
+    });
+    dadosPorItem=subMatrix;
+    nomeItem=id=>id; // chave de subcategoria já é o nome de exibição (ou "Sem subcategoria")
+  } else {
+    itemIds=compCatsSelecionadas;
+    dadosPorItem=byCat;
+    nomeItem=id=>state.categories.find(c=>c.id===id)?.name||id;
+  }
+
+  const subEl=document.getElementById('compCardSub');
+  if(subEl) subEl.textContent = modoSubcat
+    ? `Detalhando "${tituloCategoria}" por subcategoria — desmarque ou marque outra categoria pra voltar à visão geral`
+    : 'Veja onde seus gastos estão subindo ou caindo, categoria por categoria';
+
+  // ── KPIs: maior queda e maior alta no último mês vs anterior ──
+  // (entre categorias no modo normal; entre subcategorias da categoria escolhida no modo detalhe)
   const kpisEl=document.getElementById('compKpis');
-  if(months.length<2){
+  if(months.length<2 || !itemIds.length){
     kpisEl.innerHTML='';
   } else {
     const iUlt=months.length-1, iAnt=months.length-2;
     let maiorQueda=null, maiorAlta=null;
-    catIds.forEach(catId=>{
-      const diff=byCat[catId][iUlt]-byCat[catId][iAnt];
-      if(diff<0 && (!maiorQueda || diff<maiorQueda.diff)) maiorQueda={catId,diff};
-      if(diff>0 && (!maiorAlta || diff>maiorAlta.diff)) maiorAlta={catId,diff};
+    itemIds.forEach(id=>{
+      const diff=dadosPorItem[id][iUlt]-dadosPorItem[id][iAnt];
+      if(diff<0 && (!maiorQueda || diff<maiorQueda.diff)) maiorQueda={id,diff};
+      if(diff>0 && (!maiorAlta || diff>maiorAlta.diff)) maiorAlta={id,diff};
     });
-    const nomeCat=id=>esc(state.categories.find(c=>c.id===id)?.name||id);
+    const rotulo=modoSubcat?'subcategoria':'categoria';
     kpisEl.innerHTML=`
-      <div class="kpi"><div class="kpi-label">Maior queda (${MONTHS[months[iUlt].mes-1]} vs ${MONTHS[months[iAnt].mes-1]})</div>${maiorQueda?`<div class="kpi-value" style="color:var(--accent2)">↓ ${fmtBRL(Math.abs(maiorQueda.diff))}</div><div class="kpi-sub">${nomeCat(maiorQueda.catId)}</div>`:'<div class="kpi-value">—</div><div class="kpi-sub">Nenhuma categoria caiu</div>'}</div>
-      <div class="kpi"><div class="kpi-label">Maior alta (${MONTHS[months[iUlt].mes-1]} vs ${MONTHS[months[iAnt].mes-1]})</div>${maiorAlta?`<div class="kpi-value" style="color:var(--danger)">↑ ${fmtBRL(maiorAlta.diff)}</div><div class="kpi-sub">${nomeCat(maiorAlta.catId)}</div>`:'<div class="kpi-value">—</div><div class="kpi-sub">Nenhuma categoria subiu</div>'}</div>`;
+      <div class="kpi"><div class="kpi-label">Maior queda (${MONTHS[months[iUlt].mes-1]} vs ${MONTHS[months[iAnt].mes-1]})</div>${maiorQueda?`<div class="kpi-value" style="color:var(--accent2)">↓ ${fmtBRL(Math.abs(maiorQueda.diff))}</div><div class="kpi-sub">${esc(nomeItem(maiorQueda.id))}</div>`:`<div class="kpi-value">—</div><div class="kpi-sub">Nenhuma ${rotulo} caiu</div>`}</div>
+      <div class="kpi"><div class="kpi-label">Maior alta (${MONTHS[months[iUlt].mes-1]} vs ${MONTHS[months[iAnt].mes-1]})</div>${maiorAlta?`<div class="kpi-value" style="color:var(--danger)">↑ ${fmtBRL(maiorAlta.diff)}</div><div class="kpi-sub">${esc(nomeItem(maiorAlta.id))}</div>`:`<div class="kpi-value">—</div><div class="kpi-sub">Nenhuma ${rotulo} subiu</div>`}</div>`;
   }
 
-  // ── Gráfico de linha: uma série por categoria marcada ──
+  // ── Gráfico de linha: uma série por categoria marcada (ou por subcategoria, no modo detalhe) ──
   const labels=months.map(mo=>MONTHS[mo.mes-1].slice(0,3)+'/'+String(mo.ano).slice(2));
-  const datasets=compCatsSelecionadas.map((catId,i)=>{
-    const cat=state.categories.find(c=>c.id===catId);
+  const datasets=itemIds.map((id,i)=>{
     const cor=COMP_COLORS[i%COMP_COLORS.length];
-    return {label:cat?.name||catId,data:byCat[catId]||months.map(()=>0),borderColor:cor,backgroundColor:cor,tension:.3,pointRadius:3,pointHoverRadius:5,borderWidth:2};
+    return {label:nomeItem(id),data:dadosPorItem[id]||months.map(()=>0),borderColor:cor,backgroundColor:cor,tension:.3,pointRadius:3,pointHoverRadius:5,borderWidth:2};
   });
   if(chartComparativo){ chartComparativo.destroy(); chartComparativo=null; }
   chartComparativo=new Chart(document.getElementById('chartComparativo').getContext('2d'),{
@@ -4871,16 +4980,16 @@ function renderComparativo(){
     }
   });
 
-  // ── Tabela: uma linha por categoria marcada, uma coluna por mês, + variação (último vs penúltimo mês) ──
+  // ── Tabela: uma linha por item (categoria ou subcategoria), uma coluna por mês, + variação ──
   const tabEl=document.getElementById('compTabela');
-  if(!compCatsSelecionadas.length){
-    tabEl.innerHTML='<div class="empty-state">Marque ao menos uma categoria acima pra ver a tabela</div>';
+  if(!itemIds.length){
+    tabEl.innerHTML=`<div class="empty-state">${modoSubcat?'Sem despesas nessa categoria no período':'Marque ao menos uma categoria acima pra ver a tabela'}</div>`;
   } else {
-    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Categoria</th>'+labels.map(l=>`<th>${l}</th>`).join('')+(months.length>1?'<th>Variação</th>':'')+'</tr></thead><tbody>';
-    compCatsSelecionadas.forEach(catId=>{
-      const cat=state.categories.find(c=>c.id===catId);
-      const vals=byCat[catId]||months.map(()=>0);
-      html+=`<tr><td><strong>${esc(cat?.name||catId)}</strong></td>`;
+    const colunaLabel=modoSubcat?'Subcategoria':'Categoria';
+    let html='<div style="overflow-x:auto"><table class="data-table"><thead><tr><th>'+colunaLabel+'</th>'+labels.map(l=>`<th>${l}</th>`).join('')+(months.length>1?'<th>Variação</th>':'')+'</tr></thead><tbody>';
+    itemIds.forEach(id=>{
+      const vals=dadosPorItem[id]||months.map(()=>0);
+      html+=`<tr><td><strong>${esc(nomeItem(id))}</strong></td>`;
       vals.forEach(v=>{ html+=`<td class="mono" style="font-size:12px">${fmtBRL(v)}</td>`; });
       if(months.length>1){
         const ult=vals[vals.length-1], ant=vals[vals.length-2];
