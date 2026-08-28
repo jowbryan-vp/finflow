@@ -811,25 +811,26 @@ select option{background:var(--card)}
             </div>
             <div class="form-group">
               <label>Mês inicial</label>
-              <select id="filtMesIni">
+              <select id="filtMesIni" onchange="onFiltroPeriodoChange()">
                 <option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option>
               </select>
             </div>
             <div class="form-group">
               <label>Ano inicial</label>
-              <input type="number" id="filtAnoIni" value="2025" min="2020" max="2040">
+              <input type="number" id="filtAnoIni" value="2025" min="2020" max="2040" onchange="onFiltroPeriodoChange()">
             </div>
             <div class="form-group">
               <label>Mês final</label>
-              <select id="filtMesFim">
+              <select id="filtMesFim" onchange="onFiltroPeriodoChange()">
                 <option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option>
               </select>
             </div>
             <div class="form-group">
               <label>Ano final</label>
-              <input type="number" id="filtAnoFim" value="2025" min="2020" max="2040">
+              <input type="number" id="filtAnoFim" value="2025" min="2020" max="2040" onchange="onFiltroPeriodoChange()">
             </div>
           </div>
+          <div class="info-box" id="filtPeriodoAutoInfo" style="margin-bottom:12px;display:none">🔄 Este período está acompanhando o mês em exibição no topo do app — mude qualquer campo acima pra travar num período fixo.</div>
           <button class="btn btn-primary mt-16" onclick="renderAnalise()">
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             Aplicar filtros
@@ -4621,16 +4622,29 @@ function populateFiltros(){
   onFiltCatChange();
 }
 
+// true assim que você mexe manualmente em algum dos 4 campos de período da
+// Análise — a partir daí, navegar pelas setinhas do mês no topo do app não
+// pisa mais no período que você escolheu (ex: comparar Jan-Jun de uma vez).
+// "Limpar filtros" volta a seguir o mês do topo automaticamente.
+let filtrosPeriodoEditadoManualmente=false;
+function onFiltroPeriodoChange(){
+  filtrosPeriodoEditadoManualmente=true;
+  const info=document.getElementById('filtPeriodoAutoInfo');
+  if(info) info.style.display='none';
+}
 function initFiltrosPeriodo(){
-  // Só define o período padrão se ainda não foi definido (primeira abertura)
-  const mesIniEl=document.getElementById('filtMesIni');
-  if(!mesIniEl._initialized){
-    mesIniEl.value=currentMonth;
-    document.getElementById('filtAnoIni').value=currentYear;
-    document.getElementById('filtMesFim').value=currentMonth;
-    document.getElementById('filtAnoFim').value=currentYear;
-    mesIniEl._initialized=true;
+  const info=document.getElementById('filtPeriodoAutoInfo');
+  if(filtrosPeriodoEditadoManualmente){
+    if(info) info.style.display='none';
+    return; // você já escolheu um período específico — respeita
   }
+  // Segue o mês em exibição no topo do app (currentMonth/currentYear) até
+  // você mexer manualmente em algum dos campos acima.
+  document.getElementById('filtMesIni').value=currentMonth;
+  document.getElementById('filtAnoIni').value=currentYear;
+  document.getElementById('filtMesFim').value=currentMonth;
+  document.getElementById('filtAnoFim').value=currentYear;
+  if(info) info.style.display='block';
 }
 
 function onFiltCatChange(){
@@ -4645,9 +4659,7 @@ function resetFiltros(){
   onFiltCatChange();
   document.getElementById('filtCartao').value='';
   document.getElementById('filtPessoa').value='';
-  // Force period reset
-  const mesIniEl=document.getElementById('filtMesIni');
-  mesIniEl._initialized=false;
+  filtrosPeriodoEditadoManualmente=false; // volta a seguir o mês do topo
   renderAnalise();
 }
 
