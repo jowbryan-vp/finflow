@@ -5716,6 +5716,7 @@ function exportarRepassePessoaPDF(personId){
     rows+=`<tr>
       <td>${esc(r.desc)}</td>
       <td>${esc(cat?.name||r.cat)}</td>
+      <td>${r.parcel}/${r.total}</td>
       <td>${r.percent}%</td>
       <td>${fmtBRL(r.valorParcela)}</td>
       <td>${fmtBRL(r.valorPessoa)}</td>
@@ -5723,10 +5724,10 @@ function exportarRepassePessoaPDF(personId){
     </tr>`;
   });
   const pendente=totalDevido-totalRecebido;
-  rows+=`<tr class="print-total-row"><td colspan="4">Total</td><td>${fmtBRL(totalDevido)}</td><td>Pendente: ${fmtBRL(pendente)}</td></tr>`;
+  rows+=`<tr class="print-total-row"><td colspan="5">Total</td><td>${fmtBRL(totalDevido)}</td><td>Pendente: ${fmtBRL(pendente)}</td></tr>`;
   const html=`<h2>Repasses de ${esc(person.name)} — ${MONTHS[currentMonth-1]} ${currentYear}</h2>
     <table>
-      <thead><tr><th>Despesa</th><th>Categoria</th><th>%</th><th>Valor Total</th><th>Valor Devido</th><th>Status</th></tr></thead>
+      <thead><tr><th>Despesa</th><th>Categoria</th><th>Parcela</th><th>%</th><th>Valor Total</th><th>Valor Devido</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   exportarRelatorioPDF('Relatório de Repasses — '+esc(person.name), html);
