@@ -1258,6 +1258,9 @@ async function saveToDrive() {
       await createDataFile(saveObj);
     }
     localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
+    // Só agora que o Drive confirmou ter recebido essa versão é que ela deixa
+    // de ser "não sincronizada" — ver comentário em scheduleSave().
+    localStorage.removeItem('finflow_unsynced');
     setDriveStatus('synced', 'Sincronizado ✓');
   } catch(e) {
     console.error(e);
@@ -1269,6 +1272,13 @@ async function saveToDrive() {
 function scheduleSave() {
   // Always cache locally first
   localStorage.setItem('finflow_local_cache', JSON.stringify(buildSaveObject()));
+  // Marca que existe uma versão local mais nova do que a última confirmada no
+  // Drive. Fica gravado até o saveToDrive() ter sucesso — se a aba fechar, a
+  // internet cair ou o Drive der erro antes disso, esse marcador sobrevive ao
+  // reload. Sem ele, a próxima abertura do app faria o syncFromDrive() baixar
+  // a versão antiga do Drive e sobrescrever silenciosamente esses lançamentos
+  // que nunca chegaram a ser salvos (ver initApp()).
+  localStorage.setItem('finflow_unsynced', '1');
   setDriveStatus('saving', 'Aguardando…');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveToDrive(), 2500);
@@ -1670,8 +1680,18 @@ async function initApp() {
   updatePeriodLabel();
   renderDashboard();
 
-  // Then sync from Drive in background
-  await syncFromDrive();
+  // Se ficou um lançamento local que nunca foi confirmado no Drive (última
+  // tentativa de salvar falhou, sem internet, aba fechada no meio do caminho
+  // etc.), NÃO deixa o syncFromDrive() baixar a versão antiga do Drive por
+  // cima — isso apagaria da tela (e do cache local) o que ainda não tinha
+  // sido salvo. Em vez disso, tenta reenviar a versão local primeiro.
+  if (localStorage.getItem('finflow_unsynced') === '1') {
+    await findDataFile(); // só lê o id do arquivo do cache local, sem ir à rede
+    await saveToDrive();
+  } else {
+    // Sem alterações pendentes: seguro sincronizar a partir do Drive
+    await syncFromDrive();
+  }
   renderAll();
 }
 
