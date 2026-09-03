@@ -1129,15 +1129,28 @@ function signOut() {
 }
 
 // ── Drive status indicator ──
-function setDriveStatus(status, label) {
+function setDriveStatus(status, label, detail) {
   const dot = document.getElementById('driveDot');
   const lbl = document.getElementById('driveLabel');
+  const badge = document.getElementById('driveBadge');
   dot.className = 'drive-dot ' + status;
   lbl.textContent = label;
+  // Guarda o motivo real do erro (quando houver) no title do badge, pra dar
+  // pra ver passando o mouse em cima sem precisar abrir o console.
+  if (badge) badge.title = detail || '';
 }
 
 // ── Drive API calls ──
-async function driveRequest(method, url, body, contentType) {
+// useKeepalive só deve vir true quando a aba está fechando (ver
+// flushPendingSave) — o navegador limita o corpo de QUALQUER requisição com
+// keepalive a ~64KB no total (mesma regra do navigator.sendBeacon). O backup
+// do FinFlow inclui o histórico inteiro (despesas, receitas, repasses de
+// todos os perfis) e cresce com o tempo — depois de alguns meses de uso ele
+// passa fácil desse limite, e antes dessa correção TODO salvamento normal
+// (não só o de fechar a aba) ia com keepalive:true e começava a falhar
+// silenciosamente assim que o backup passava de ~64KB, sem nunca mais
+// conseguir salvar de novo.
+async function driveRequest(method, url, body, contentType, useKeepalive) {
   const res = await fetch(url, {
     method,
     headers: {
@@ -1145,9 +1158,25 @@ async function driveRequest(method, url, body, contentType) {
       ...(contentType ? {'Content-Type': contentType} : {})
     },
     body: body || undefined,
-    keepalive: true // permite a requisição terminar mesmo se a aba for fechada logo em seguida
+    keepalive: !!useKeepalive
   });
-  if (res.status === 401) { signOut(); throw new Error('Token expirado'); }
+  if (res.status === 401) { signOut(); throw new Error('Token expirado — faça login de novo'); }
+  if (!res.ok) {
+    // Sem isso, uma resposta de erro do Google (403 sem permissão, 404 arquivo
+    // sumiu, 429 limite de requisições, 500 etc.) seguia adiante como se fosse
+    // sucesso — os métodos que chamam driveRequest só faziam `await res.json()`
+    // sem checar o status, então o corpo de erro virava "dado salvo" (ou, se o
+    // corpo não era JSON, o erro real virava um genérico "Unexpected token"
+    // sem pista nenhuma do motivo). Agora qualquer status de erro joga uma
+    // exceção com o código e, quando o Google manda, a mensagem explicando o
+    // que aconteceu — isso é o que aparece no toast e no title do badge.
+    let detail = res.status + ' ' + res.statusText;
+    try {
+      const errBody = await res.clone().json();
+      if (errBody && errBody.error && errBody.error.message) detail = res.status + ': ' + errBody.error.message;
+    } catch(e) { /* corpo de erro não era JSON — mantém status/statusText */ }
+    throw new Error(detail);
+  }
   return res;
 }
 
@@ -1181,14 +1210,14 @@ async function readDataFile(fileId) {
   return await res.json();
 }
 
-async function createDataFile(content) {
+async function createDataFile(content, useKeepalive) {
   const meta = JSON.stringify({ name: DATA_FILENAME, mimeType: 'application/json' });
   const body_str = JSON.stringify(content);
   const boundary = '-------FinFlowBoundary';
   const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body_str}\r\n--${boundary}--`;
   const res = await driveRequest('POST',
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
-    body, `multipart/related; boundary="${boundary}"`
+    body, `multipart/related; boundary="${boundary}"`, useKeepalive
   );
   const data = await res.json();
   driveFileId = data.id;
@@ -1196,10 +1225,10 @@ async function createDataFile(content) {
   return driveFileId;
 }
 
-async function updateDataFile(fileId, content) {
+async function updateDataFile(fileId, content, useKeepalive) {
   const res = await driveRequest('PATCH',
     `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`,
-    JSON.stringify(content), 'application/json'
+    JSON.stringify(content), 'application/json', useKeepalive
   );
   return await res.json();
 }
@@ -1218,7 +1247,7 @@ async function syncFromDrive(forceRefresh) {
     setDriveStatus('synced', 'Sincronizado ✓');
   } catch(e) {
     console.error(e);
-    setDriveStatus('error', 'Erro Drive');
+    setDriveStatus('error', 'Erro Drive', e && e.message);
   }
 }
 
@@ -1242,20 +1271,20 @@ async function sincronizarAgora(){
     toast('Dados atualizados a partir do Drive!');
   }catch(e){
     console.error(e);
-    toast('Não foi possível sincronizar agora. Tente de novo.');
+    toast('Não foi possível sincronizar agora: ' + ((e && e.message) || 'motivo desconhecido'), 6000);
   }
   if(btn){ btn.disabled=false; btn.classList.remove('spinning'); }
   sincronizando=false;
 }
 
-async function saveToDrive() {
+async function saveToDrive(useKeepalive) {
   setDriveStatus('saving', 'Salvando…');
   try {
     const saveObj = buildSaveObject();
     if (driveFileId) {
-      await updateDataFile(driveFileId, saveObj);
+      await updateDataFile(driveFileId, saveObj, useKeepalive);
     } else {
-      await createDataFile(saveObj);
+      await createDataFile(saveObj, useKeepalive);
     }
     localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
     // Só agora que o Drive confirmou ter recebido essa versão é que ela deixa
@@ -1264,8 +1293,8 @@ async function saveToDrive() {
     setDriveStatus('synced', 'Sincronizado ✓');
   } catch(e) {
     console.error(e);
-    setDriveStatus('error', 'Erro ao salvar');
-    toast('Erro ao salvar no Drive. Dados salvos localmente.');
+    setDriveStatus('error', 'Erro ao salvar', e && e.message);
+    toast('Erro ao salvar no Drive: ' + ((e && e.message) || 'motivo desconhecido') + '. Dados salvos localmente.', 6000);
   }
 }
 
@@ -1290,7 +1319,7 @@ function scheduleSave() {
 // antiga do Drive. Isso força o envio imediato assim que a aba fica oculta,
 // e o `keepalive` do driveRequest garante que a requisição sobrevive ao fechamento.
 function flushPendingSave() {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveToDrive(); }
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveToDrive(true); }
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSave(); });
 window.addEventListener('pagehide', flushPendingSave);
