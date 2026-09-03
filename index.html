@@ -504,6 +504,7 @@ select option{background:var(--card)}
 
       <!-- DASHBOARD -->
       <div id="page-dashboard" class="page active">
+        <div id="dashResumoPagar"></div>
         <div id="kpiGrid"></div>
         <div id="dashSaldoContas"></div>
         <div id="dashProximosVencimentos"></div>
@@ -2282,12 +2283,87 @@ function removerAjusteFatura(cardId,mes,ano){
   toast('Ajuste removido — voltou ao valor calculado pelo app');
 }
 
+// "O que falta pagar" — pega os mesmos números que já alimentam os cenários
+// (totalDespPrevisao, emCaixaSaidas, emCaixaDisponivel, já calculados em
+// getTotalsForMonth) e monta uma resposta direta pras duas perguntas: quanto
+// ainda falta pagar esse mês, e caixa menos isso dá sobra ou furo. A lista de
+// pendências usa o mesmo critério de "pendente" que a tela de Despesas usa no
+// filtro ⏳ (fatura de cartão não paga, ou despesa em Dinheiro/PIX não marcada
+// como paga), pra não inventar um segundo critério divergente.
+function renderResumoPagar(t){
+  const el=document.getElementById('dashResumoPagar');
+  if(!el) return;
+  const{totalDespPrevisao,emCaixaSaidas,emCaixaDisponivel,byCard,desps,contrib}=t;
+  const pendenteAPagar = totalDespPrevisao - emCaixaSaidas;
+  const diferenca = emCaixaDisponivel - pendenteAPagar;
+
+  let itens=[];
+  state.cards.forEach(c=>{
+    if(!isCartaoDeCredito(c.id)) return;
+    const valor=byCard[c.id]||0;
+    if(valor>0 && !isFaturaPaga(c.id,currentMonth,currentYear)){
+      itens.push({tipo:'fatura',nome:'Fatura '+c.name,valor,cor:c.color,
+        acaoLabel:'Marcar como Paga', acao:`toggleFaturaPaga('${c.id}')`, verLink:`navigateToDespesasCartao('${c.id}')`});
+    }
+  });
+  if(contrib>0 && !isContribuicaoPaga(currentMonth,currentYear)){
+    itens.push({tipo:'contrib',nome:'Contribuição',valor:contrib,cor:'#a78bfa',
+      acaoLabel:'Marcar como paga', acao:`toggleContribuicaoPaga()`, verLink:null});
+  }
+  desps.filter(d=>!isCartaoDeCredito(d.cartao) && !d._pago).forEach(d=>{
+    itens.push({tipo:'despesa',nome:esc(d.desc),valor:d._valorParcela,cor:'#94a3b8',
+      acaoLabel:'Pago',
+      acao:`togglePago('${d.id}',${currentMonth},${currentYear})`, verLink:null});
+  });
+  itens.sort((a,b)=>b.valor-a.valor);
+
+  const mesLabel=`${MONTHS[currentMonth-1]} ${currentYear}`;
+  const isViewingReal=isMesAtualReal(currentMonth,currentYear);
+
+  const listaHTML = itens.length
+    ? itens.map(it=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+        <div style="width:8px;height:8px;border-radius:50%;background:${it.cor};flex-shrink:0"></div>
+        <div style="flex:1;font-size:13px;${it.verLink?'cursor:pointer':''}" ${it.verLink?`onclick="${it.verLink}"`:''}>${it.nome}</div>
+        <div style="font-family:var(--mono);font-size:13px;color:var(--danger);font-weight:600">${fmtBRL(it.valor)}</div>
+        <button class="btn btn-ok btn-sm" onclick="${it.acao}">✓ ${it.acaoLabel}</button>
+      </div>`).join('')
+    : `<div style="padding:14px 0;text-align:center;color:var(--muted);font-size:13px">✅ Nada pendente — tudo pago neste mês</div>`;
+
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <div>
+          <div class="card-title">💰 O que falta pagar — ${mesLabel}</div>
+          <div class="card-sub">${isViewingReal?'Caixa atual vs. o que ainda está pendente esse mês':'Mês fora do período atual — números desse mês específico'}</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:${itens.length?'16px':'0'}">
+        <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+          <div class="kpi-label" style="color:var(--accent)">🏦 Você tem em caixa</div>
+          <div class="kpi-value" style="font-size:19px;color:var(--accent)">${fmtBRL(emCaixaDisponivel)}</div>
+        </div>
+        <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
+          <div class="kpi-label" style="color:var(--danger)">⏳ Ainda falta pagar</div>
+          <div class="kpi-value" style="font-size:19px;color:var(--danger)">${fmtBRL(pendenteAPagar)}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${itens.length} pendência${itens.length===1?'':'s'}</div>
+        </div>
+        <div style="background:${diferenca>=0?'rgba(56,226,180,.08)':'rgba(255,95,109,.08)'};border:1px solid ${diferenca>=0?'rgba(56,226,180,.3)':'rgba(255,95,109,.3)'};border-radius:var(--radius);padding:14px">
+          <div class="kpi-label" style="color:${diferenca>=0?'var(--accent2)':'var(--danger)'}">${diferenca>=0?'✅ Sobra depois de pagar tudo':'⚠️ Falta arrumar'}</div>
+          <div class="kpi-value" style="font-size:19px;color:${diferenca>=0?'var(--accent2)':'var(--danger)'}">${fmtBRL(Math.abs(diferenca))}</div>
+        </div>
+      </div>
+      ${listaHTML}
+    </div>`;
+}
+
 function renderDashboard(){
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
+  renderResumoPagar(t);
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
