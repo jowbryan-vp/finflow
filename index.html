@@ -506,6 +506,8 @@ select option{background:var(--card)}
       <div id="page-dashboard" class="page active">
         <div id="dashResumoPagar"></div>
         <div id="kpiGrid"></div>
+        <div id="dashProjecaoFinanceira"></div>
+        <div id="dashPrevisaoMedia"></div>
         <div id="dashSaldoContas"></div>
         <div id="dashProximosVencimentos"></div>
         <div id="dashExcedentePanel"></div>
@@ -520,7 +522,6 @@ select option{background:var(--card)}
             <div class="chart-wrap" style="height:260px"><canvas id="chartBar"></canvas></div>
           </div>
         </div>
-        <div id="dashPrevisaoMedia"></div>
         <div class="card mt-20">
           <div class="card-header">
             <div class="card-title">Últimos lançamentos do mês</div>
@@ -1268,6 +1269,7 @@ async function sincronizarAgora(){
     // <canvas>, gerando sobreposição visual depois de sincronizar.
     if(typeof chartBar!=='undefined' && chartBar){ chartBar.destroy(); chartBar=null; }
     if(typeof chartDonut!=='undefined' && chartDonut){ chartDonut.destroy(); chartDonut=null; }
+    if(typeof chartProjecao!=='undefined' && chartProjecao){ chartProjecao.destroy(); chartProjecao=null; }
     renderAll();
     toast('Dados atualizados a partir do Drive!');
   }catch(e){
@@ -1361,7 +1363,7 @@ let currentYear  = new Date().getFullYear();
 const REAL_TODAY_MONTH = new Date().getMonth() + 1;
 const REAL_TODAY_YEAR  = new Date().getFullYear();
 function isMesAtualReal(mes,ano){ return mes===REAL_TODAY_MONTH && ano===REAL_TODAY_YEAR; }
-let chartDonut = null, chartBar = null;
+let chartDonut = null, chartBar = null, chartProjecao = null;
 let despCartaoFiltro = null; // cartão pré-selecionado ao vir do dashboard
 
 function uid()   { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -2014,6 +2016,61 @@ function calcTotaisIsoladoMes(mes,ano){
   };
 }
 
+// Projeta o saldo de um mês futuro acumulando mês a mês a partir do
+// resultado preciso do mês atual real (caixa das Contas Bancárias + tudo
+// que falta pagar/receber esse mês) e, dali em diante, da "previsão
+// recorrente" (mesma fórmula do simulador "E se..." — calcVariacaoMesRecorrente):
+// salário ainda não recebido, despesas fixas, parcelas de cartão e média
+// histórica de gastos variáveis. Isso garante que o Dashboard (meses
+// distantes) e o simulador sempre deem o mesmo número pro mesmo mês, e que
+// o resultado nunca "esqueça" o caixa real que a pessoa já tem hoje.
+// Retorna o resultado final pro mês pedido E a linha do tempo completa
+// (usada pelo card "🔮 Projeção Financeira" do Dashboard).
+function calcProjecaoFutura(mesAlvo,anoAlvo){
+  const previsaoMedia=calcPrevisaoMediaHistorica();
+  const mediaVariaveis=previsaoMedia?previsaoMedia.mediaTotal:0;
+
+  // Âncora: resultado preciso do mês atual real — sempre pega a rota
+  // isMesAtualReal de getTotalsForMonth (nunca recai em "futuro" de novo),
+  // então essa chamada não recursa infinitamente.
+  const anchor = getTotalsForMonth(REAL_TODAY_MONTH,REAL_TODAY_YEAR);
+  let acumPior=anchor.saldoPiorCenario, acumMelhor=anchor.saldoMelhorCenario;
+
+  const timeline=[{
+    mes:REAL_TODAY_MONTH, ano:REAL_TODAY_YEAR, isHoje:true,
+    saldoAcumPior:acumPior, saldoAcumMelhor:acumMelhor
+  }];
+
+  let m=REAL_TODAY_MONTH, a=REAL_TODAY_YEAR, guard=0;
+  while(!(m===mesAlvo && a===anoAlvo) && guard<240){
+    guard++;
+    const nxt=addMonths(m,a,1); m=nxt.mes; a=nxt.ano;
+    const variacao=calcVariacaoMesRecorrente(m,a,mediaVariaveis);
+    const entradasPior   = variacao.salarioNaoRecebido;
+    const entradasMelhor = variacao.salarioNaoRecebido + variacao.projetosExtra + variacao.repassesPendentes;
+    const saldoPior   = entradasPior - variacao.saidas;
+    const saldoMelhor = entradasMelhor - variacao.saidas;
+    acumPior+=saldoPior; acumMelhor+=saldoMelhor;
+    timeline.push({
+      mes:m, ano:a, isHoje:false,
+      entradasPior, entradasMelhor, saidas:variacao.saidas,
+      saldoPior, saldoMelhor,
+      saldoAcumPior:acumPior, saldoAcumMelhor:acumMelhor,
+      salarioNaoRecebido:variacao.salarioNaoRecebido,
+      projetosExtra:variacao.projetosExtra,
+      repassesPendentes:variacao.repassesPendentes,
+      despesasFixas:variacao.despesasFixas,
+      parcelasCartao:variacao.parcelasCartao,
+      mediaVariaveis
+    });
+  }
+
+  return {
+    saldoPiorCenario:acumPior, saldoMelhorCenario:acumMelhor,
+    mediaVariaveis, previsaoMedia, timeline
+  };
+}
+
 function getTotalsForMonth(mes,ano){
   const iso = calcTotaisIsoladoMes(mes,ano);
   const {recsEfetivas,desps,contrib,cofrinhoSaida,byCard,byCat,previstoEntradas,totalDespPrevisao,
@@ -2049,37 +2106,17 @@ function getTotalsForMonth(mes,ano){
       emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoContaAte(c.id,mes,ano),0);
       saldoPiorCenario = saldoMelhorCenario = emCaixaDisponivel;
     } else {
-      // Mês futuro. Duas situações possíveis:
-      //  1) É o mês IMEDIATAMENTE seguinte a hoje E o salário dele já foi
-      //     marcado como recebido (ex: adiantado) — nesse caso ele já está
-      //     refletido no caixa atual, então tratamos como extensão do caixa
-      //     de agora, sem somar o salário de novo (evita contar duas vezes).
-      //  2) Qualquer outro mês futuro (ou o mês seguinte, mas com salário
-      //     ainda não recebido) — usa a "previsão recorrente" (mesma fórmula
-      //     do simulador "E se..."): salário ainda não recebido − despesas
-      //     fixas − parcelas de cartão − média de gastos variáveis. Não
-      //     depende do caixa atual, só do que é garantido/recorrente.
-      const {mes:proxMes,ano:proxAno}=addMonths(REAL_TODAY_MONTH,REAL_TODAY_YEAR,1);
-      const ehProximoMes = (mes===proxMes && ano===proxAno);
-      const salarioDesseMesJaRecebido = ehProximoMes && getReceitasForMonth(mes,ano)
-        .some(r=>r.tipo==='salario' && receitaRecebida(r,mes,ano));
-
-      if(salarioDesseMesJaRecebido){
-        usaContasComoFonte=true;
-        emCaixaDisponivel = state.contas.reduce((s,c)=>s+calcSaldoConta(c.id),0);
-        const pendenteAPagar = totalDespPrevisao - emCaixaSaidas;
-        saldoPiorCenario   = emCaixaDisponivel - pendenteAPagar;
-        saldoMelhorCenario = emCaixaDisponivel + totalRecPrevisto + repassesPendentes - pendenteAPagar;
-      } else {
-        const previsaoMedia=calcPrevisaoMediaHistorica();
-        const mediaVariaveis=previsaoMedia?previsaoMedia.mediaTotal:0;
-        const variacao=calcVariacaoMesRecorrente(mes,ano,mediaVariaveis);
-        saldoPiorCenario   = variacao.saldoPior;
-        saldoMelhorCenario = variacao.saldoMelhor;
-        // "Em Caixa Agora" de um mês futuro é projeção, não fato — usa o
-        // cenário conservador (Pior) pra não mostrar um número descolado.
-        emCaixaDisponivel = saldoPiorCenario;
-      }
+      // Mês futuro: acumula mês a mês a partir do caixa real das Contas
+      // Bancárias hoje — mesma lógica do simulador "E se..." (calcProjecaoFutura),
+      // garantindo que os dois sempre deem o mesmo número pro mesmo mês e que
+      // o "Em Caixa" nunca apareça negativo por engano quando o caixa real
+      // está apenas zerado (ver renderProjecaoFinanceira no Dashboard).
+      const projecao = calcProjecaoFutura(mes,ano);
+      saldoPiorCenario   = projecao.saldoPiorCenario;
+      saldoMelhorCenario = projecao.saldoMelhorCenario;
+      // "Em Caixa Agora" de um mês futuro é projeção, não fato — usa o
+      // cenário conservador (Pior) pra não mostrar um número descolado.
+      emCaixaDisponivel = saldoPiorCenario;
     }
   } else {
     // Sem Contas Bancárias cadastradas: mantém o comportamento anterior — cada
@@ -2293,9 +2330,17 @@ function removerAjusteFatura(cardId,mes,ano){
 function renderResumoPagar(t){
   const el=document.getElementById('dashResumoPagar');
   if(!el) return;
-  const{totalDespPrevisao,emCaixaSaidas,emCaixaDisponivel,byCard,desps,contrib}=t;
+  const{totalDespPrevisao,emCaixaSaidas,emCaixaDisponivel,byCard,desps,contrib,isProjecaoFutura,saldoPiorCenario}=t;
   const pendenteAPagar = totalDespPrevisao - emCaixaSaidas;
-  const diferenca = emCaixaDisponivel - pendenteAPagar;
+  // Em mês futuro, "emCaixaDisponivel" já É o Pior Cenário projetado (soma o
+  // caixa real de hoje com o resultado acumulado até esse mês) — comparar
+  // com o pendente DESSE mês de novo contaria a mesma saída duas vezes. Por
+  // isso, em mês futuro mostramos o caixa REAL de hoje (fato) separado do
+  // saldo projetado (que já é a resposta, vem pronto de t.saldoPiorCenario).
+  const caixaTile = isProjecaoFutura
+    ? (state.contas||[]).reduce((s,c)=>s+calcSaldoConta(c.id),0)
+    : emCaixaDisponivel;
+  const diferenca = isProjecaoFutura ? saldoPiorCenario : (emCaixaDisponivel - pendenteAPagar);
 
   let itens=[];
   state.cards.forEach(c=>{
@@ -2335,26 +2380,154 @@ function renderResumoPagar(t){
       <div class="card-header">
         <div>
           <div class="card-title">💰 O que falta pagar — ${mesLabel}</div>
-          <div class="card-sub">${isViewingReal?'Caixa atual vs. o que ainda está pendente esse mês':'Mês fora do período atual — números desse mês específico'}</div>
+          <div class="card-sub">${isViewingReal?'Caixa atual vs. o que ainda está pendente esse mês':isProjecaoFutura?'Mês futuro — caixa real de hoje vs. pendências específicas desse mês':'Mês fora do período atual — números desse mês específico'}</div>
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:${itens.length?'16px':'0'}">
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
-          <div class="kpi-label" style="color:var(--accent)">🏦 Você tem em caixa</div>
-          <div class="kpi-value" style="font-size:19px;color:var(--accent)">${fmtBRL(emCaixaDisponivel)}</div>
+          <div class="kpi-label" style="color:var(--accent)">🏦 ${isProjecaoFutura?'Caixa real hoje':'Você tem em caixa'}</div>
+          <div class="kpi-value" style="font-size:19px;color:var(--accent)">${fmtBRL(caixaTile)}</div>
         </div>
         <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px">
-          <div class="kpi-label" style="color:var(--danger)">⏳ Ainda falta pagar</div>
+          <div class="kpi-label" style="color:var(--danger)">⏳ Ainda falta pagar${isProjecaoFutura?' nesse mês':''}</div>
           <div class="kpi-value" style="font-size:19px;color:var(--danger)">${fmtBRL(pendenteAPagar)}</div>
           <div style="font-size:10px;color:var(--muted);margin-top:2px">${itens.length} pendência${itens.length===1?'':'s'}</div>
         </div>
         <div style="background:${diferenca>=0?'rgba(56,226,180,.08)':'rgba(255,95,109,.08)'};border:1px solid ${diferenca>=0?'rgba(56,226,180,.3)':'rgba(255,95,109,.3)'};border-radius:var(--radius);padding:14px">
-          <div class="kpi-label" style="color:${diferenca>=0?'var(--accent2)':'var(--danger)'}">${diferenca>=0?'✅ Sobra depois de pagar tudo':'⚠️ Falta arrumar'}</div>
-          <div class="kpi-value" style="font-size:19px;color:${diferenca>=0?'var(--accent2)':'var(--danger)'}">${fmtBRL(Math.abs(diferenca))}</div>
+          <div class="kpi-label" style="color:${diferenca>=0?'var(--accent2)':'var(--danger)'}">${isProjecaoFutura?(diferenca>=0?'✅ Pior Cenário projetado':'⚠️ Pior Cenário projetado'):(diferenca>=0?'✅ Sobra depois de pagar tudo':'⚠️ Falta arrumar')}</div>
+          <div class="kpi-value" style="font-size:19px;color:${diferenca>=0?'var(--accent2)':'var(--danger)'}">${diferenca<0&&isProjecaoFutura?'-':''}${fmtBRL(Math.abs(diferenca))}</div>
+          ${isProjecaoFutura?`<div style="font-size:10px;color:var(--muted);margin-top:2px">Ver como chegamos nesse número ↓</div>`:''}
         </div>
       </div>
       ${listaHTML}
     </div>`;
+}
+
+// Card "🔮 Projeção Financeira" — só aparece em meses futuros (com Contas
+// Bancárias cadastradas). Mostra as premissas usadas e o acúmulo mês a mês
+// que gera o Pior/Melhor Cenário, pra deixar claro de onde vêm esses
+// números — mesma lógica e mesmos números do simulador "E se...".
+function renderProjecaoFinanceira(t){
+  const el=document.getElementById('dashProjecaoFinanceira');
+  if(!el) return;
+  if(!t.isProjecaoFutura){ el.innerHTML=''; if(chartProjecao){chartProjecao.destroy();chartProjecao=null;} return; }
+
+  const proj=calcProjecaoFutura(currentMonth,currentYear);
+  const {timeline,previsaoMedia,mediaVariaveis}=proj;
+  const alvo=timeline[timeline.length-1];
+  const mesLabel=`${MONTHS[currentMonth-1]} ${currentYear}`;
+
+  const mesesMelhorNeg = timeline.filter(r=>!r.isHoje && r.saldoAcumMelhor<0);
+  let alertHtml;
+  if(t.saldoMelhorCenario<0){
+    alertHtml=`<div style="background:rgba(255,95,109,.1);border:1px solid rgba(255,95,109,.3);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;font-size:13px">
+      ⚠️ <strong>Atenção:</strong> mesmo no melhor cenário, o saldo projetado fica negativo em ${mesLabel}${mesesMelhorNeg.length>1?` — e já antes, em ${mesesMelhorNeg.slice(0,-1).map(r=>MONTHS[r.mes-1]+'/'+String(r.ano).slice(2)).join(', ')}`:''}. Vale já ir se organizando.
+    </div>`;
+  } else if(t.saldoPiorCenario<0){
+    alertHtml=`<div style="background:rgba(255,193,71,.08);border:1px solid rgba(255,193,71,.25);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;font-size:13px">
+      💡 No melhor cenário o saldo fica positivo, mas <strong>se os repasses/projetos extra não caírem</strong>, o saldo em ${mesLabel} ficaria negativo.
+    </div>`;
+  } else {
+    alertHtml=`<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;font-size:13px">
+      ✅ Nos dois cenários, o saldo projetado continua positivo até ${mesLabel}.
+    </div>`;
+  }
+
+  const semHistorico = !previsaoMedia ? `<div style="background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.25);border-radius:var(--radius);padding:10px 16px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+    ℹ️ Ainda não há histórico suficiente (mínimo 3 meses) pra estimar seus gastos variáveis — essa projeção <strong>não inclui</strong> essa estimativa, então as saídas podem estar subestimadas.
+  </div>` : '';
+
+  const assumpTile=(label,val,note)=>`
+    <div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px">
+      <div class="kpi-label" style="font-size:10px">${label}</div>
+      <div style="font-family:var(--mono);font-size:15px;font-weight:600">${fmtBRL(val)}</div>
+      ${note?`<div style="font-size:9px;color:var(--muted);margin-top:2px">${note}</div>`:''}
+    </div>`;
+  const assumpRow=`
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      ${assumpTile('Salário previsto', alvo.salarioNaoRecebido)}
+      ${assumpTile('Despesas fixas', alvo.despesasFixas)}
+      ${assumpTile('Parcelas de cartão', alvo.parcelasCartao)}
+      ${assumpTile('Média de gastos variáveis', mediaVariaveis, previsaoMedia?`*Baseado na média dos últimos ${previsaoMedia.n} mês${previsaoMedia.n>1?'es':''}`:'*Sem histórico suficiente ainda')}
+    </div>`;
+
+  const rows=timeline.map(r=>{
+    if(r.isHoje){
+      return `<tr>
+        <td>${MONTHS[r.mes-1]} ${r.ano} <span class="badge badge-blue" style="margin-left:4px">hoje</span></td>
+        <td colspan="3" style="color:var(--muted)">Caixa atual das Contas Bancárias</td>
+        <td style="font-family:var(--mono)">${fmtBRL(r.saldoAcumPior)}</td>
+        <td style="font-family:var(--mono)">${fmtBRL(r.saldoAcumMelhor)}</td>
+      </tr>`;
+    }
+    const isAlvo=(r.mes===alvo.mes && r.ano===alvo.ano);
+    return `<tr${isAlvo?' style="background:rgba(91,127,255,.06)"':''}>
+      <td>${MONTHS[r.mes-1]} ${r.ano}${isAlvo?' <span class="badge badge-blue" style="margin-left:4px">mês navegado</span>':''}</td>
+      <td style="font-family:var(--mono);color:var(--accent2)">+${fmtBRL(r.entradasMelhor)}</td>
+      <td style="font-family:var(--mono);color:var(--danger)">-${fmtBRL(r.saidas)}</td>
+      <td style="font-family:var(--mono);color:${r.saldoMelhor>=0?'var(--accent2)':'var(--danger)'}">${r.saldoMelhor>=0?'+':''}${fmtBRL(r.saldoMelhor)}</td>
+      <td style="font-family:var(--mono);color:${r.saldoAcumPior>=0?'var(--text)':'var(--danger)'}">${fmtBRL(r.saldoAcumPior)}</td>
+      <td style="font-family:var(--mono);color:${r.saldoAcumMelhor>=0?'var(--text)':'var(--danger)'}">${fmtBRL(r.saldoAcumMelhor)}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header">
+        <div>
+          <div class="card-title">🔮 Projeção Financeira — ${mesLabel}</div>
+          <div class="card-sub">Como o Pior/Melhor Cenário chegam a esses números — mesma lógica do simulador "E se..."</div>
+        </div>
+      </div>
+      ${semHistorico}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <div style="background:rgba(255,193,71,.08);border:1px solid rgba(255,193,71,.25);border-radius:var(--radius);padding:14px">
+          <div class="kpi-label" style="color:var(--warn)">📉 Pior Cenário em ${mesLabel}</div>
+          <div class="kpi-value" style="font-size:20px;color:${t.saldoPiorCenario>=0?'var(--text)':'var(--danger)'}">${fmtBRL(t.saldoPiorCenario)}</div>
+          <div class="kpi-sub">Sem repasses de terceiros nem projetos extra</div>
+        </div>
+        <div style="background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.25);border-radius:var(--radius);padding:14px">
+          <div class="kpi-label" style="color:var(--accent)">📈 Melhor Cenário em ${mesLabel}</div>
+          <div class="kpi-value" style="font-size:20px;color:${t.saldoMelhorCenario>=0?'var(--text)':'var(--danger)'}">${fmtBRL(t.saldoMelhorCenario)}</div>
+          <div class="kpi-sub">Recebendo repasses e projetos extra previstos</div>
+        </div>
+      </div>
+      ${alertHtml}
+      <div style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Premissas usadas nessa projeção</div>
+      ${assumpRow}
+      <div style="overflow-x:auto;margin-bottom:16px">
+        <table class="data-table">
+          <thead><tr><th>Mês</th><th>Entradas previstas</th><th>Saídas previstas</th><th>Resultado do mês</th><th>Saldo acum. Pior</th><th>Saldo acum. Melhor</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="chart-wrap" style="height:220px"><canvas id="chartProjecao"></canvas></div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)">
+        💡 Essa é a mesma lógica do simulador <a href="javascript:void(0)" onclick="navigate('eSe')" style="color:var(--accent)">"E se..."</a> — os dois sempre batem pro mesmo mês.
+      </div>
+    </div>`;
+
+  const labels=timeline.map(r=>MONTHS[r.mes-1].slice(0,3)+'/'+String(r.ano).slice(2)+(r.isHoje?' (hoje)':''));
+  const dataMelhor=timeline.map(r=>r.saldoAcumMelhor);
+  const dataPior=timeline.map(r=>r.saldoAcumPior);
+  if(chartProjecao){ chartProjecao.destroy(); chartProjecao=null; }
+  chartProjecao=new Chart(document.getElementById('chartProjecao').getContext('2d'),{
+    type:'bar',
+    data:{
+      labels,
+      datasets:[
+        {label:'Melhor cenário',data:dataMelhor,backgroundColor:dataMelhor.map(v=>v<0?'rgba(255,95,109,.8)':'rgba(91,127,255,.6)'),borderRadius:4},
+        {label:'Pior cenário',data:dataPior,backgroundColor:dataPior.map(v=>v<0?'rgba(255,95,109,.5)':'rgba(255,193,71,.7)'),borderRadius:4}
+      ]
+    },
+    options:{
+      plugins:{legend:{labels:{color:'#7c84a0',font:{family:'Inter',size:11},boxWidth:10,padding:12}}},
+      scales:{
+        x:{ticks:{color:'#7c84a0',font:{family:'Inter',size:11}},grid:{color:'rgba(42,48,80,.5)'}},
+        y:{ticks:{color:'#7c84a0',font:{family:'Inter',size:11},callback:v=>'R$'+v.toLocaleString('pt-BR')},grid:{color:'rgba(42,48,80,.5)'}}
+      }
+    }
+  });
 }
 
 function renderDashboard(){
@@ -2364,6 +2537,7 @@ function renderDashboard(){
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
   renderResumoPagar(t);
+  renderProjecaoFinanceira(t);
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
