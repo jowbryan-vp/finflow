@@ -261,9 +261,15 @@ visível ao nomear a função — não é uma regressão introduzida por este ga
 38929df feat(cards): derive statement period from purchase date and closing day
 eba9026 feat(finance): add exact purchase date to the despesa form
 80f45a1 test(finance): add permanent financial regression suite
+78e543f docs(finance): add Gate 1 implementation report   <- commita este próprio relatório
 ```
 
-`git status` no `FINAL_HEAD`: limpo (working tree clean, nada não
+`FINAL_HEAD` (`80f45a1`) marca o último commit de código/teste — o estado
+que este relatório efetivamente audita. O commit `78e543f`, que vem depois,
+é só a adição deste arquivo de relatório em si (documentação, sem tocar em
+`index.html` nem em `tests/`).
+
+`git status` depois de `78e543f`: limpo (working tree clean, nada não
 commitado).
 
 Arquivos modificados desde `INITIAL_HEAD`: `index.html` (179 inserções, 21
