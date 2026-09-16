@@ -1,0 +1,13 @@
+{
+  "name": "finflow-financial-engine-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Permanent regression suite for FinFlow's temporal/financial engine (Gate 1). Deterministic, isolated, no OAuth, no real user data.",
+  "type": "module",
+  "scripts": {
+    "test": "node run-all.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}
