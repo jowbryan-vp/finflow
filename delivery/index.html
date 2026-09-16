@@ -1532,13 +1532,6 @@ function migrateState() {
     if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
     if(d.diaVencimento===undefined) d.diaVencimento=null; // dia de vencimento (só despesas fixas em Dinheiro/PIX)
     if(d.debitoAutomatico===undefined) d.debitoAutomatico=false; // banco desconta sozinho — ver aplicarDebitosAutomaticos()
-    // dataCompra: data real da compra (YYYY-MM-DD), usada por getCompetenciaFatura
-    // pra saber em qual fatura ela cai considerando o dia de fechamento do cartão.
-    // null = MODO LEGADO — nunca inferimos essa data a partir de mesInicio/anoInicio
-    // pra um registro antigo; o app continua tratando esse registro exatamente como
-    // sempre tratou (mês da compra + 1 pro cartão), até o usuário explicitamente
-    // informar uma data real (ver eOnDataCompraChange/saveEditDespesa).
-    if(d.dataCompra===undefined) d.dataCompra=null;
     // Despesas em Dinheiro/PIX (fixas ou avulsas) respeitam o status escolhido
     // manualmente no lançamento (Previsto/Pago) — sem nenhum forçamento retroativo.
   });
@@ -1911,49 +1904,19 @@ function getReceitasPrevistasForMonth(mes,ano){
 // Valor de uma receita naquele mês
 function valorReceita(r){ return r._isParcela?(r._parcelaValor||0):(r.valor||0); }
 
-// Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
-// data real da compra e do dia de fechamento configurado pro cartão. Pura — não
-// lê nem escreve state, não decide nada sobre despesas em Dinheiro/PIX (essas
-// nunca "rolam" — ver getDespesasForMonth).
-//
-//   dia da compra <= cartao.fecha → cai na fatura do MESMO mês da compra
-//   dia da compra >  cartao.fecha → cai na fatura do mês SEGUINTE
-//
-// MODO LEGADO (regra histórica "mês da compra + 1", sem olhar o dia nenhum):
-// aplicado sempre que dataCompra ou cartao.fecha não existirem. Isso cobre dois
-// casos de propósito: (1) despesas antigas, lançadas antes de existir o campo
-// dataCompra — nunca tentamos adivinhar o dia a partir do mês; (2) despesas
-// novas num cartão que não tem dia de fechamento configurado — sem saber o dia
-// de corte, a única regra segura é a mesma de sempre. mesInicioLegacy/
-// anoInicioLegacy só são usados nesse caminho.
-function getCompetenciaFatura(dataCompra, cartao, mesInicioLegacy, anoInicioLegacy){
-  if(dataCompra && cartao && cartao.fecha){
-    const [y,m,d] = dataCompra.split('-').map(Number);
-    if(y && m && d){
-      return d<=cartao.fecha ? {mes:m,ano:y} : addMonths(m,y,1);
-    }
-  }
-  return addMonths(mesInicioLegacy,anoInicioLegacy,1); // modo legado
-}
-
-// Despesas em cartão de crédito viram fatura no mês em que a compra efetivamente
-// caiu, segundo o dia de fechamento do cartão (ver getCompetenciaFatura) — pra
-// despesas antigas, sem essa informação, continua valendo a regra histórica
-// "mês da compra + 1" (ex: compras de 03/jun a 02/jul saem como "fatura de
-// julho"). "Mês Início"/"Ano Início" continuam sendo o mês/ano de referência da
-// compra; dataCompra (quando existir) é que decide o dia dentro desse mês.
-// Dinheiro/PIX não rola — o mês lançado já é o mês em que o dinheiro sai da conta.
+// Despesas em cartão de crédito viram fatura no mês SEGUINTE ao da compra —
+// é assim que Nubank, Mercado Pago, Bradescard etc. nomeiam a fatura (ex:
+// compras de 03/jun a 02/jul saem como "fatura de julho"). "Mês Início"
+// continua sendo o mês real da compra (o que você digita ao lançar); o
+// deslocamento de +1 mês só vale pra exibição/cálculo (Dashboard, Análise,
+// Relatório, Parcelamentos, Próximos Vencimentos). Dinheiro/PIX não rola —
+// o mês lançado já é o mês em que o dinheiro sai da conta.
 function getDespesasForMonth(mes,ano){
   const result=[];
   state.despesas.forEach(d=>{
     const parcelas=d.parcelas||1;
-    let mIni,yIni;
-    if(isCartaoDeCredito(d.cartao)){
-      const cartaoObj=state.cards.find(c=>c.id===d.cartao);
-      ({mes:mIni,ano:yIni}=getCompetenciaFatura(d.dataCompra,cartaoObj,d.mesInicio,d.anoInicio));
-    } else {
-      mIni=d.mesInicio; yIni=d.anoInicio; // Dinheiro/PIX: nunca rola
-    }
+    const roll=isCartaoDeCredito(d.cartao)?1:0;
+    const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
     // ignorarAntes: parcelas de compras antigas (lançadas no app depois de já
     // terem começado na vida real) anteriores a esse mês/ano ficam de fora do
     // cálculo inteiro — não entram em previsão, cenários nem próximos

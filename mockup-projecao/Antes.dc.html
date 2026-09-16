@@ -1,0 +1,135 @@
+<script src="./support.js"></script>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0f1117;--surface:#181c27;--card:#1e2335;--border:#2a3050;
+    --accent:#5b7fff;--accent2:#38e2b4;--danger:#ff5f6d;--warn:#ffc147;--ok:#22c55e;
+    --text:#e8eaf2;--muted:#7c84a0;--input-bg:#141824;
+    --radius:10px;--radius-lg:16px;--shadow:0 4px 24px rgba(0,0,0,.45);
+    --font:'Inter',system-ui,sans-serif;--mono:'JetBrains Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:var(--font);background:var(--bg);color:var(--text);}
+  .shell{display:flex;width:1440px;min-height:900px;background:var(--bg);}
+  .sidebar{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:20px 14px;}
+  .sidebar-logo{font-weight:800;font-size:18px;color:var(--text);margin-bottom:18px;padding:0 6px;}
+  .sidebar-logo span{color:var(--accent);}
+  .perfil-switcher{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px;font-size:13px;color:var(--muted);margin-bottom:18px;}
+  .perfil-switcher b{color:var(--text);display:block;font-size:14px;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius);font-size:14px;color:var(--muted);margin-bottom:2px;}
+  .nav-item.active{background:rgba(91,127,255,.14);color:var(--text);font-weight:600;}
+  .main{flex:1;padding:22px 28px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;}
+  .topbar-title{font-size:20px;font-weight:700;}
+  .topbar-right{display:flex;align-items:center;gap:12px;}
+  .drive-badge{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:12px;color:var(--muted);}
+  .drive-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);}
+  .period-nav{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:6px 14px;}
+  .period-label{font-weight:600;font-size:14px;min-width:90px;text-align:center;}
+  .period-btn{color:var(--muted);font-size:16px;cursor:pointer;}
+  .period-context-badge{font-size:11px;padding:4px 10px;border-radius:20px;background:rgba(255,193,71,.14);color:var(--warn);border:1px solid rgba(255,193,71,.3);font-weight:600;}
+
+  .banner-confuso{background:rgba(255,95,109,.08);border:1px dashed var(--danger);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:20px;font-size:13px;color:var(--danger);display:flex;align-items:center;gap:10px;}
+
+  .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px;}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px 20px;box-shadow:var(--shadow);}
+  .kpi-label{font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;}
+  .kpi-value{font-family:var(--mono);font-size:24px;font-weight:700;}
+  .kpi-value.danger{color:var(--danger);}
+  .kpi-value.ok{color:var(--ok);}
+  .kpi-value.neutral{color:var(--text);}
+
+  .qmark{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:var(--border);color:var(--muted);font-size:10px;font-weight:700;margin-left:6px;}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 22px;box-shadow:var(--shadow);margin-bottom:20px;}
+  .card-title{font-size:15px;font-weight:700;margin-bottom:4px;}
+  .card-sub{font-size:12px;color:var(--muted);margin-bottom:16px;}
+
+  .empty-explain{border:1px dashed var(--border);border-radius:var(--radius);padding:24px;text-align:center;color:var(--muted);font-size:13px;}
+  .empty-explain b{display:block;color:var(--text);font-size:14px;margin-bottom:6px;}
+
+  .annot{position:absolute;font-family:var(--font);}
+</style>
+</helmet>
+
+<div class="shell">
+  <div class="sidebar">
+    <div class="sidebar-logo">Fin<span>Flow</span></div>
+    <div class="perfil-switcher"><b>JONATHAN</b>Arquitetura · Cacoal</div>
+    <div class="nav-item active">📊 Dashboard</div>
+    <div class="nav-item">💳 Cartões</div>
+    <div class="nav-item">🧾 Despesas</div>
+    <div class="nav-item">💵 Receitas</div>
+    <div class="nav-item">🏦 Contas</div>
+    <div class="nav-item">👥 Pessoas</div>
+    <div class="nav-item">🔮 E se...</div>
+  </div>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="topbar-title">Dashboard</div>
+      <div class="topbar-right">
+        <div class="drive-badge"><span class="drive-dot"></span>Sincronizado ✓</div>
+        <div class="period-nav">
+          <span class="period-btn">‹</span>
+          <span class="period-label">Dez 2026</span>
+          <span class="period-btn">›</span>
+        </div>
+        <div class="period-context-badge">🔮 Futuro</div>
+      </div>
+    </div>
+
+    <div class="banner-confuso">
+      ⚠️ Hoje: os números abaixo não deixam claro <b>de onde vêm</b> nem <b>por que</b> — e às vezes o "Em Caixa" aparece negativo mesmo quando o caixa real está zerado, nunca negativo.
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-label">Previsão de Entrada</div>
+        <div class="kpi-value neutral">R$5.968,57</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Previsão de Saída</div>
+        <div class="kpi-value neutral">R$7.283,63</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Pior Cenário<span class="qmark">?</span></div>
+        <div class="kpi-value danger">-R$4.103,50</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Melhor Cenário<span class="qmark">?</span></div>
+        <div class="kpi-value danger">-R$3.519,07</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Entrada Real</div>
+        <div class="kpi-value neutral">R$0,00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Saída Real</div>
+        <div class="kpi-value neutral">R$0,00</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Em Caixa Agora<span class="qmark">?</span></div>
+        <div class="kpi-value danger">-R$4.103,50</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">Contribuição Total</div>
+        <div class="kpi-value neutral">R$629,36</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📊 Previsão de Gastos Variáveis</div>
+      <div class="card-sub">Baseado na média dos últimos meses</div>
+      <div class="empty-explain">
+        <b>Sem contexto</b>
+        Aparece isolado, sem ligação com o Pior/Melhor Cenário acima — e nenhuma tabela ou gráfico mostra como o saldo chega até dezembro.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script data-dc-script>class Component extends DCLogic {}</script>

@@ -1,0 +1,10 @@
+{
+  "artboards": [
+    { "file": "Antes.dc.html", "x": 0, "y": 0, "w": 1440, "h": 900, "title": "Hoje" },
+    { "file": "Main.dc.html", "x": 1600, "y": 0, "w": 1440, "h": 1500, "title": "Proposta" }
+  ],
+  "annotations": [
+    { "id": "brief-summary", "x": 0, "y": -140, "w": 620, "text": "Hoje → Proposta: o Pior/Melhor Cenário deixa de ser um número solto e passa a mostrar de onde vem (premissas) e como chega lá (acúmulo mês a mês a partir do caixa real), igual à lógica do simulador 'E se...'." }
+  ],
+  "launch": { "view": "canvas" }
+}
