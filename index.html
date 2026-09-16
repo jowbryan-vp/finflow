@@ -686,6 +686,11 @@ select option{background:var(--card)}
                 <div class="form-group full" id="parcelInfoDiv" style="display:none"><div class="info-box" id="parcelInfoText">—</div></div>
                 <div class="form-group"><label>Mês Início</label><select id="despMes" onchange="onDespMesAnoChange()"><option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option></select></div>
                 <div class="form-group"><label>Ano Início</label><input type="number" id="despAno" value="2025" min="2020" max="2040" onchange="onDespMesAnoChange()"></div>
+                <div class="form-group full">
+                  <label>Data da compra</label>
+                  <input type="date" id="despDataCompra" onchange="onDespDataCompraChange()">
+                  <div style="font-size:10px;color:var(--muted);margin-top:3px">Usada pra calcular em qual fatura a compra cai, considerando o dia de fechamento do cartão.</div>
+                </div>
                 <div class="form-group full" id="despFaturaPreview" style="display:none"></div>
                 <div class="form-group full" id="despContaGroup">
                   <label>Conta bancária (de onde sai o dinheiro)</label>
@@ -1440,13 +1445,40 @@ function getDespesaDefaultMes(cartaoId){
 // a troca de cartão para de "adivinhar" o mês por ele (evita apagar um ajuste
 // que ele já fez de propósito). Resetado sempre que o formulário é reaberto.
 let despMesEditadoManualmente=false;
+// Mantém o campo "Data da compra" coerente com Mês/Ano Início (dia mantido, ou
+// o dia de hoje na primeira vez, com clamp pro último dia do mês escolhido) —
+// ver addDespesa(), onde dataCompra é a fonte primária pra despesas novas.
+function syncDespDataCompraMesAno(mes,ano){
+  const el=document.getElementById('despDataCompra');
+  if(!el||!mes||!ano) return;
+  let dia = el.value ? (parseInt(el.value.split('-')[2])||1) : new Date().getDate();
+  const ultimoDia = new Date(ano,mes,0).getDate();
+  if(dia>ultimoDia) dia=ultimoDia;
+  el.value = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+}
 function onDespMesAnoChange(){
+  despMesEditadoManualmente=true;
+  syncDespDataCompraMesAno(parseInt(document.getElementById('despMes')?.value),parseInt(document.getElementById('despAno')?.value));
+  updateFaturaPreview();
+}
+// Quando o usuário mexe diretamente na Data da compra, ela passa a mandar no
+// Mês/Ano Início (mesma lógica de onDespMesAnoChange, só que na direção
+// oposta) — os dois campos nunca podem divergir silenciosamente.
+function onDespDataCompraChange(){
+  const val=document.getElementById('despDataCompra')?.value;
+  if(!val) return;
+  const [y,m]=val.split('-').map(Number);
+  if(!y||!m) return;
+  const mesEl=document.getElementById('despMes'), anoEl=document.getElementById('despAno');
+  if(mesEl) mesEl.value=m;
+  if(anoEl) anoEl.value=y;
   despMesEditadoManualmente=true;
   updateFaturaPreview();
 }
 // Atualiza o aviso "Vai pra fatura de: ..." abaixo do Mês/Ano Início, com base
-// no que está selecionado agora no formulário — assim dá pra conferir antes
-// de salvar, mesmo que você tenha ajustado o mês manualmente.
+// no que está selecionado agora no formulário (incluindo a Data da compra,
+// quando preenchida) — assim dá pra conferir antes de salvar, considerando o
+// dia de fechamento do cartão (ver getCompetenciaFatura).
 function updateFaturaPreview(){
   const el=document.getElementById('despFaturaPreview');
   if(!el) return;
@@ -1454,7 +1486,9 @@ function updateFaturaPreview(){
   const mes=parseInt(document.getElementById('despMes')?.value);
   const ano=parseInt(document.getElementById('despAno')?.value);
   if(!cartaoId||!isCartaoDeCredito(cartaoId)||!mes||!ano){ el.style.display='none'; return; }
-  const {mes:faturaMes,ano:faturaAno}=addMonths(mes,ano,1);
+  const cartaoObj=state.cards.find(c=>c.id===cartaoId);
+  const dataCompra=document.getElementById('despDataCompra')?.value||null;
+  const {mes:faturaMes,ano:faturaAno}=getCompetenciaFatura(dataCompra,cartaoObj,mes,ano);
   el.style.display='block';
   el.innerHTML=`<div class="info-box">🧾 Vai entrar na fatura de <strong>${MONTHS[faturaMes-1]} ${faturaAno}</strong></div>`;
 }
@@ -3262,6 +3296,15 @@ function populateDespForma(){
       ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
   }
+  // Data da compra: preenche com a data real de hoje por padrão (editável) —
+  // toda despesa nova passa a ter uma data real (ver addDespesa()). onCartaoChange(),
+  // logo abaixo, pode ajustar o mês/ano dela se sugerir um Mês Início diferente
+  // (fluxo de planejar uma fatura futura navegando o Dashboard adiante).
+  const dataCompraEl=document.getElementById('despDataCompra');
+  if(dataCompraEl){
+    const hoje=new Date();
+    dataCompraEl.value=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  }
   onCartaoChange();
   currentSplitRows=[];
   const dividida=document.getElementById('despDividida');
@@ -3308,6 +3351,7 @@ function onCartaoChange(){
     const def=getDespesaDefaultMes(cartaoId);
     document.getElementById('despMes').value=def.mes;
     document.getElementById('despAno').value=def.ano;
+    syncDespDataCompraMesAno(def.mes,def.ano);
   }
   updateFaturaPreview();
 }
@@ -3397,8 +3441,21 @@ function addDespesa(){
   const conta=isDinheiro?(document.getElementById('despConta')?.value||''):null;
   const valor=parseFloat(document.getElementById('despValor').value);
   const parcelas=parseInt(document.getElementById('despParcelas').value)||1;
-  const mesI=parseInt(document.getElementById('despMes').value);
-  const anoI=parseInt(document.getElementById('despAno').value);
+  // dataCompra é a fonte primária pra despesas NOVAS (mesInicio/anoInicio são
+  // derivados dela, nunca lidos direto dos selects, pra nunca divergir
+  // silenciosamente — ver seção 7 do FINFLOW_FINANCIAL_ENGINE_AUDIT.md). O
+  // campo é preenchido automaticamente com a data de hoje em populateDespForma()
+  // e mantido em sincronia com Mês/Ano Início pelos handlers on*Change acima —
+  // só fica vazio se o próprio input de data falhar, daí o fallback abaixo.
+  const dataCompraRaw=document.getElementById('despDataCompra')?.value||'';
+  let mesI,anoI,dataCompra=null;
+  const partesData=dataCompraRaw.split('-').map(Number);
+  if(dataCompraRaw && partesData[0] && partesData[1]){
+    dataCompra=dataCompraRaw; anoI=partesData[0]; mesI=partesData[1];
+  } else {
+    mesI=parseInt(document.getElementById('despMes').value);
+    anoI=parseInt(document.getElementById('despAno').value);
+  }
   const fixa=document.getElementById('despFixa').checked;
   const diaVencimento=(isDinheiro&&fixa)?(parseInt(document.getElementById('despDiaVencimento')?.value)||null):null;
   const debitoAutomatico=(isDinheiro&&fixa)?!!document.getElementById('despDebitoAutomatico')?.checked:false;
@@ -3414,7 +3471,7 @@ function addDespesa(){
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
   const split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
-  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,diaVencimento,debitoAutomatico,pagoMeses,split,repasses:{},createdAt:uid()});
+  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,dataCompra,fixa,diaVencimento,debitoAutomatico,pagoMeses,split,repasses:{},createdAt:uid()});
   aplicarDebitosAutomaticos(); // se o dia já passou nesse mês, já nasce dada como paga
   scheduleSave();renderDespesas();toast('Despesa adicionada!');
   document.getElementById('despDesc').value='';document.getElementById('despValor').value='';
@@ -3651,6 +3708,12 @@ function openEditDespesa(id){
         <select id="eDespMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${d.mesInicio===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
+      <div class="form-group full" id="eDespDataCompraGroup">
+        <label>Data da compra</label>
+        <input type="date" id="eDespDataCompra" value="${d.dataCompra||''}" onchange="eOnDataCompraChange('${id}')">
+        ${!d.dataCompra?'<div style="font-size:10px;color:var(--muted);margin-top:3px">Lançamento antigo, sem data exata registrada — deixe em branco pra manter o comportamento de sempre (mês da compra + 1 pro cartão). Preencher uma data real pode mudar em qual fatura essa compra aparece; o app avisa antes de aplicar.</div>':''}
+        <div id="eDespDataCompraWarn" style="display:none"></div>
+      </div>
       <div class="form-group full" id="eDespIgnorarGroup" style="display:${(d.parcelas||1)>1?'block':'none'}">
         <div class="checkbox-row"><input type="checkbox" id="eDespIgnorarCheck" style="width:auto" ${d.ignorarAntes?'checked':''} onchange="eOnIgnorarChange()"><label for="eDespIgnorarCheck">Compra antiga — desconsiderar parcelas anteriores a um mês (já pagas antes de eu usar o app)</label></div>
         <div id="eDespIgnorarFields" style="display:${d.ignorarAntes?'flex':'none'};gap:10px;margin-top:8px">
@@ -3690,6 +3753,10 @@ function openEditDespesa(id){
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
   if(hasSplit) eRenderSplitRows();
+  // Reabrir o modal sempre começa "sem mudança pendente" na Data da compra —
+  // só fica bloqueado depois que o usuário efetivamente alterar esse campo
+  // pra algo que mude a competência da fatura (ver eOnDataCompraChange).
+  window._eDespDataCompraConfirmado=true;
 }
 function eOnDespDivididaChange(){
   const checked=document.getElementById('eDespDividida').checked;
@@ -3753,8 +3820,46 @@ function eOnCartaoChange(){
   const debitoAutoGroup=document.getElementById('eDespDebitoAutoGroup');
   if(debitoAutoGroup) debitoAutoGroup.style.display=(isDinheiro&&fixa)?'flex':'none';
 }
+// Roda quando o usuário mexe na Data da compra de uma despesa existente.
+// Compara a competência de fatura ATUAL (com o dataCompra salvo, ou legado se
+// nunca teve) com a que resultaria da NOVA data digitada — se mudar, exige
+// confirmação explícita antes de deixar salvar (nunca corrige silenciosamente
+// uma fatura histórica). Sem cartão de crédito envolvido, não há fatura pra
+// mudar — libera direto.
+function eOnDataCompraChange(id){
+  const d=state.despesas.find(x=>x.id===id); if(!d) return;
+  const warnEl=document.getElementById('eDespDataCompraWarn');
+  if(!warnEl) return;
+  const novaData=document.getElementById('eDespDataCompra')?.value||null;
+  const cartaoId=document.getElementById('eDespCartao')?.value||d.cartao;
+  if(!isCartaoDeCredito(cartaoId)){
+    warnEl.style.display='none'; window._eDespDataCompraConfirmado=true; return;
+  }
+  const mes=parseInt(document.getElementById('eDespMes')?.value)||d.mesInicio;
+  const ano=parseInt(document.getElementById('eDespAno')?.value)||d.anoInicio;
+  const cartaoObj=state.cards.find(c=>c.id===cartaoId);
+  const competenciaAtual=getCompetenciaFatura(d.dataCompra,cartaoObj,d.mesInicio,d.anoInicio);
+  const competenciaNova=getCompetenciaFatura(novaData,cartaoObj,mes,ano);
+  const mudou = (novaData||null)!==(d.dataCompra||null) &&
+    (competenciaAtual.mes!==competenciaNova.mes || competenciaAtual.ano!==competenciaNova.ano);
+  if(mudou){
+    window._eDespDataCompraConfirmado=false;
+    warnEl.style.display='block';
+    warnEl.innerHTML=`<div class="alert alert-warn" style="margin-top:8px">⚠️ Isso muda a fatura dessa compra de <strong>${MONTHS[competenciaAtual.mes-1]} ${competenciaAtual.ano}</strong> para <strong>${MONTHS[competenciaNova.mes-1]} ${competenciaNova.ano}</strong>. Se a fatura antiga já foi paga ou tem ajuste manual, isso pode desalinhar o histórico.
+      <div class="checkbox-row" style="margin-top:8px"><input type="checkbox" id="eDespDataCompraConfirma" style="width:auto" onchange="window._eDespDataCompraConfirmado=this.checked"><label for="eDespDataCompraConfirma">Entendi, quero mudar mesmo assim</label></div>
+    </div>`;
+  } else {
+    warnEl.style.display='none';
+    window._eDespDataCompraConfirmado=true;
+  }
+}
 function saveEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
+  const novaDataCompra=document.getElementById('eDespDataCompra')?.value||null;
+  if(window._eDespDataCompraConfirmado===false){
+    toast('Confirme a mudança de fatura antes de salvar (veja o aviso na Data da compra)');
+    return;
+  }
   d.desc=document.getElementById('eDespDesc').value.trim();
   d.cat=document.getElementById('eDespCat').value;
   d.subcat=document.getElementById('eDespSubcat').value;
@@ -3766,8 +3871,19 @@ function saveEditDespesa(id){
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
   const ignorarCheck=document.getElementById('eDespIgnorarCheck')?.checked;
   d.ignorarAntes=(ignorarCheck&&d.parcelas>1)?{mes:parseInt(document.getElementById('eDespIgnorarMes').value),ano:parseInt(document.getElementById('eDespIgnorarAno').value)}:null;
-  d.mesInicio=parseInt(document.getElementById('eDespMes').value);
-  d.anoInicio=parseInt(document.getElementById('eDespAno').value);
+  d.dataCompra=novaDataCompra;
+  if(novaDataCompra){
+    // dataCompra é a fonte primária assim que existir — mesInicio/anoInicio
+    // passam a ser sempre derivados dela, nunca lidos direto dos selects
+    // (evita os dois campos divergirem silenciosamente, ver seção 7 da auditoria).
+    const partes=novaDataCompra.split('-').map(Number);
+    d.mesInicio=partes[1]; d.anoInicio=partes[0];
+  } else {
+    // Sem data real (registro continua/volta a ser legado): Mês/Ano Início
+    // seguem exatamente como o formulário sempre permitiu editar.
+    d.mesInicio=parseInt(document.getElementById('eDespMes').value);
+    d.anoInicio=parseInt(document.getElementById('eDespAno').value);
+  }
   d.fixa=document.getElementById('eDespFixa').checked;
   d.diaVencimento=(isDinheiro&&d.fixa)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
   d.debitoAutomatico=(isDinheiro&&d.fixa)?!!document.getElementById('eDespDebitoAutomatico')?.checked:false;
@@ -3786,13 +3902,18 @@ function renderParcelamentos(){
   if(!parceled.length){document.getElementById('parcelamentosList').innerHTML='<div class="empty-state">Nenhum parcelamento cadastrado</div>';return;}
   let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Total</th><th>Parcela</th><th>Início</th><th>Progresso</th><th>Valor/x</th><th></th></tr></thead><tbody>';
   parceled.forEach(d=>{
-    // Progresso usa o mesmo deslocamento de fatura (cartão = +1 mês) pra bater com o Dashboard.
-    const roll=isCartaoDeCredito(d.cartao)?1:0;
-    const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
+    // Progresso usa a mesma competência de fatura que o resto do app (ver
+    // getCompetenciaFatura) — pra bater com o Dashboard e com Faturas dos Cartões.
+    const card=state.cards.find(c=>c.id===d.cartao);
+    let mIni,yIni;
+    if(isCartaoDeCredito(d.cartao)){
+      ({mes:mIni,ano:yIni}=getCompetenciaFatura(d.dataCompra,card,d.mesInicio,d.anoInicio));
+    } else {
+      mIni=d.mesInicio; yIni=d.anoInicio;
+    }
     let cp=0;
     for(let i=0;i<d.parcelas;i++){let m=(mIni-1)+i,y=yIni+Math.floor(m/12),mo=(m%12)+1;if(y<currentYear||(y===currentYear&&mo<=currentMonth))cp=i+1;}
     const pct=Math.min(100,(cp/d.parcelas)*100).toFixed(0);
-    const card=state.cards.find(c=>c.id===d.cartao);
     html+=`<tr>
       <td>${esc(d.desc)}<br><span style="font-size:11px;color:${card?.color||'var(--muted)'}">${esc(card?.name||d.cartao)}</span></td>
       <td class="mono">${fmtBRL(d.valor)}</td>
