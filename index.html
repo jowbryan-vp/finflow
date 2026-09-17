@@ -2354,6 +2354,46 @@ function getCurrentFinancialCycle(referenceDate){
   return getFinancialCycle(ref,events,expectedNextDate);
 }
 
+// Gate 4.2: a planning buffer, never a realized transaction or a fabricated payment date.
+function getVariableExpenseEstimate(referenceDate,endDate,method='weighted'){
+  if(!isValidISODateString(referenceDate)||!isValidISODateString(endDate)||endDate<referenceDate)
+    return {unavailable:true,total:0,months:[],reason:'invalid_period'};
+  const [ry,rm,rd]=referenceDate.split('-').map(Number),[ey,em,ed]=endDate.split('-').map(Number);
+  if((ey-ry)*12+em-rm>11) return {unavailable:true,total:0,months:[],reason:'period_too_long'};
+  const weights=method==='simple'?[1,1,1]:[1,2,3];
+  const history=[],averages={};
+  for(let offset=-3;offset<0;offset++){
+    const {mes,ano}=addMonths(rm,ry,offset),items=getDespesasForMonth(mes,ano);
+    if(!items.length) return {unavailable:true,total:0,months:[],reason:'insufficient_history'};
+    const categories={};
+    for(const d of items) if(!d.fixa&&(d.parcelas||1)===1){
+      const cat=d.cat||'uncategorized';categories[cat]=(categories[cat]||0)+Math.max(0,d._valorParcela||0);
+    }
+    history.push({month:mesKey(mes,ano),categories,weight:weights[offset+3]});
+  }
+  const divisor=weights.reduce((a,b)=>a+b,0),round=v=>Math.round((v+Number.EPSILON)*100)/100;
+  for(const h of history) for(const [cat,total] of Object.entries(h.categories)) averages[cat]=(averages[cat]||0)+total*h.weight/divisor;
+  const months=[];
+  for(let serial=ry*12+rm-1;serial<=ey*12+em-1;serial++){
+    const year=Math.floor(serial/12),month=serial%12+1,days=new Date(year,month,0).getDate();
+    const start=year===ry&&month===rm?rd:1,finish=year===ey&&month===em?ed:days;
+    const fraction=(finish-start+1)/(days-start+1),known={};
+    for(const d of getDespesasForMonth(month,year)) if(!d.fixa&&(d.parcelas||1)===1){
+      const cat=d.cat||'uncategorized';known[cat]=(known[cat]||0)+Math.max(0,d._valorParcela||0);
+    }
+    const categories=Object.keys(averages).map(category=>({category,expected:round(averages[category]),
+      registered:round(known[category]||0),remaining:round(Math.max(0,averages[category]-(known[category]||0))*fraction)}));
+    months.push({month:mesKey(month,year),fraction,categories,total:round(categories.reduce((s,c)=>s+c.remaining,0))});
+  }
+  return {unavailable:false,method:method==='simple'?'simple':'weighted',history,months,total:round(months.reduce((s,m)=>s+m.total,0)),assumption:'uniform_remaining_days'};
+}
+function getFinancialOutlook(referenceDate,endDate){
+  const known=getChronologicalProjection(referenceDate,endDate);if(known.unavailable)return known;
+  const variable=getVariableExpenseEstimate(referenceDate,endDate,state.financialPreferences?.variableMethod||'weighted');
+  return {...known,knownProjected:known.projected,projected:known.projected-variable.total,variable,
+    incomplete:known.incomplete||variable.unavailable};
+}
+
 // Gate 4.1: derived cash planning. Never writes movements or changes source records.
 function projectionDate(year,month,day){
   if(!Number.isInteger(Number(day))||Number(day)<1||Number(day)>31) return null;

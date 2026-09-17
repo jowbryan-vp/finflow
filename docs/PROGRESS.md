@@ -10,3 +10,5 @@ Autorização atual: usuário solicitou execução imediata e sequencial dos gat
 Decisão confirmada: salário principal escolhido deve definir o ciclo; não misturar todos os salários.
 
 Antes de retomar, conferir branch e status para não sobrepor execução em curso. Branch de trabalho atual gate/4.1. Nunca concluir que passou somente porque relatório remoto afirma PASS; executar verificações apropriadas.
+
+Gate 4.2: motor implementado com ambos os métodos; 289/289 PASS. Média ponderada usada como padrão ajustável na ausência de preferência. Próximo Gate 4.3.

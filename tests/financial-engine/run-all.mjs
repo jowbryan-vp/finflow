@@ -65,6 +65,7 @@ const FILES = [
   'gate2-2-cash-view.test.mjs', 'gate2-2-salary-ui.test.mjs', 'gate2-2-cycle-adapter.test.mjs',
   'gate2-2-audit.test.mjs',
   'gate4-1-projection.test.mjs',
+  'gate4-2-variables.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
