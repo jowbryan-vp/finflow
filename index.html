@@ -2263,7 +2263,7 @@ function isRevenueRealized(receita, mes, ano){ return receitaRecebida(receita, m
 // dataRecebimento válida (seção 12 — SALARY_CASH_INV_01).
 function getRecurringRevenueCashDate(receita, competenciaKey){
   const sub=(receita&&receita.recebidoPorMes||{})[competenciaKey];
-  if(!sub||sub.estado!=='recebido'||!sub.dataRecebimento) return null;
+  if(!sub||sub.estado!=='recebido'||!isValidISODateString(sub.dataRecebimento)) return null;
   return sub.dataRecebimento;
 }
 
@@ -4206,6 +4206,10 @@ function onERecEstado2Change(){
 }
 function saveEditReceitaNovoModelo(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  if(!r.recorrencia&&document.getElementById('eRecEstado2').value==='recebido'&&
+    !isValidISODateString(document.getElementById('eRecDataRecebimento2').value)){
+    toast('Informe a data real de recebimento'); return;
+  }
   r.nome=document.getElementById('eRecNome2').value.trim();
   r.valor=parseFloat(document.getElementById('eRecValor2').value)||0;
   const contaSel=document.getElementById('eRecConta2')?.value;
@@ -5413,7 +5417,7 @@ function calcSaldoConta(contaId){
       // não tem corte temporal — ver calcSaldoContaAte pra isso).
       if(r.recorrencia){
         Object.keys(r.recebidoPorMes||{}).forEach(mk=>{ if(getRecurringRevenueCashDate(r,mk)) saldo+=(r.valor||0); });
-      } else if(r.estado==='recebido'){
+      } else if(r.estado==='recebido'&&isValidISODateString(r.dataRecebimento)){
         saldo+=(r.valor||0);
       }
     } else {
@@ -5493,8 +5497,8 @@ function calcSaldoContaAte(contaId,mes,ano){
           const cashDate=getRecurringRevenueCashDate(r,mk);
           if(cashDate && cashDate.slice(0,7)<=limite) saldo+=(r.valor||0);
         });
-      } else if(r.estado==='recebido'){
-        const dataCaixa=getRevenueCashDate(r);
+      } else if(r.estado==='recebido'&&isValidISODateString(r.dataRecebimento)){
+        const dataCaixa=r.dataRecebimento;
         const mk=dataCaixa?dataCaixa.slice(0,7):null;
         if(mk&&mk<=limite) saldo+=(r.valor||0);
       }
