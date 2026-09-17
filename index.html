@@ -2305,12 +2305,13 @@ function getFinancialCycle(referenceDate, salaryEvents, expectedNextDate){
 // A COMPETÊNCIA da ocorrência nunca determina a fronteira do ciclo (seção 19)
 // — só a dataRecebimento real entra em salaryEvents; getFinancialCycle
 // ordena e decide a fronteira sozinho.
-function getReceivedSalaryEvents(){
+function getReceivedSalaryEvents(salaryId){
   const events=[];
   (state.receitas||[]).forEach(r=>{
     if(r.certeza===undefined) return; // ciclo só é derivado do novo modelo (granularidade por competência)
     if(!r.recorrencia) return;
     if(r.tipo!=='salario') return;
+    if(salaryId&&r.id!==salaryId) return;
     Object.keys(r.recebidoPorMes||{}).forEach(competenciaKey=>{
       const dataRecebimento=getRecurringRevenueCashDate(r,competenciaKey);
       if(!dataRecebimento) return;
@@ -2332,8 +2333,11 @@ function getReceivedSalaryEvents(){
 function getCurrentFinancialCycle(referenceDate){
   const hoje=new Date();
   const ref=referenceDate||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
-  const events=getReceivedSalaryEvents();
-  const salaryRevenue=(state.receitas||[]).find(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
+  const candidates=(state.receitas||[]).filter(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
+  const selected=state.financialPreferences?.primarySalaryId;
+  const salaryRevenue=selected?candidates.find(r=>r.id===selected):(candidates.length===1?candidates[0]:null);
+  if(!salaryRevenue) return {cycleUnavailable:true,selectionRequired:candidates.length>0};
+  const events=getReceivedSalaryEvents(salaryRevenue.id);
   let expectedNextDate=null;
   if(salaryRevenue){
     const [ry,rm]=ref.split('-').map(Number);
@@ -2342,8 +2346,96 @@ function getCurrentFinancialCycle(referenceDate){
       const nxt=addMonths(rm,ry,1);
       expectedNextDate=getExpectedSalaryDate(nxt.ano,nxt.mes,salaryRevenue.recorrencia);
     }
+    const start=mesKey(salaryRevenue.competenciaMes||salaryRevenue.mes,salaryRevenue.competenciaAno||salaryRevenue.ano);
+    if(expectedNextDate&&expectedNextDate.slice(0,7)<start){
+      expectedNextDate=getExpectedSalaryDate(salaryRevenue.competenciaAno||salaryRevenue.ano,salaryRevenue.competenciaMes||salaryRevenue.mes,salaryRevenue.recorrencia);
+    }
   }
   return getFinancialCycle(ref,events,expectedNextDate);
+}
+
+// Gate 4.1: derived cash planning. Never writes movements or changes source records.
+function projectionDate(year,month,day){
+  if(!Number.isInteger(Number(day))||Number(day)<1||Number(day)>31) return null;
+  return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(Number(day),new Date(year,month,0).getDate())).padStart(2,'0')}`;
+}
+function getChronologicalProjection(referenceDate,endDate){
+  if(!isValidISODateString(referenceDate)||!isValidISODateString(endDate)||endDate<referenceDate)
+    return {unavailable:true,reason:'invalid_period'};
+  const [ry,rm]=referenceDate.split('-').map(Number), [ey,em]=endDate.split('-').map(Number);
+  if((ey-ry)*12+em-rm>11) return {unavailable:true,reason:'period_too_long'};
+  const available=(state.contas||[]).reduce((s,c)=>s+calcSaldoConta(c.id),0);
+  const events=[], undated=[], issues=[];
+  const add=(event)=>{
+    if(!Number.isFinite(event.amount)){ issues.push({id:event.id,reason:'invalid_amount'});return; }
+    if(!event.amount) return;
+    if(!isValidISODateString(event.date)){ undated.push({...event,date:null});return; }
+    if(event.date>endDate) return;
+    events.push({...event,originalDate:event.date,overdue:event.date<referenceDate,date:event.date<referenceDate?referenceDate:event.date});
+  };
+  // Start from the earliest recorded monthly item, with a visible guard against unbounded imports.
+  const starts=[ry*12+rm-1];
+  for(const d of state.despesas||[]) if(d.anoInicio&&d.mesInicio) starts.push(d.anoInicio*12+d.mesInicio-1);
+  for(const r of state.receitas||[]) if(r.ano&&r.mes) starts.push(r.ano*12+r.mes-1);
+  for(const r of state.receitas||[]) if(isValidISODateString(r.dataPrevista)){
+    const [y,m]=r.dataPrevista.split('-').map(Number);starts.push(y*12+m-1);
+  }
+  const earliest=Math.min(...starts), first=Math.max(earliest,ry*12+rm-1-239);
+  if(first>earliest) issues.push({reason:'history_limited'});
+  const accounts=new Set((state.contas||[]).map(c=>c.id));
+  for(let serial=first;serial<=ey*12+em-1;serial++){
+    const year=Math.floor(serial/12),month=serial%12+1,key=mesKey(month,year);
+    const debts=getDespesasForMonth(month,year);
+    for(const d of debts){
+      if(d.cartao!=='dinheiro'&&!(state.cards||[]).some(c=>c.id===d.cartao)) issues.push({id:d.id,reason:'missing_card'});
+      if(d.cartao!=='dinheiro'||d._pago) continue;
+      add({id:`expense:${d.id}:${key}`,kind:'expense',label:d.desc||'Despesa',amount:-d._valorParcela,
+        date:d.diaVencimento?projectionDate(year,month,d.diaVencimento):(!d.fixa&&isValidISODateString(d.dataCompra)&&d.dataCompra.slice(0,7)===key?d.dataCompra:null),month:key,category:d.cat});
+    }
+    const invoices=calcByCardForMonth(month,year);
+    for(const card of state.cards||[]){
+      if(card.id==='dinheiro'||isFaturaPaga(card.id,month,year)) continue;
+      add({id:`invoice:${card.id}:${key}`,kind:'invoice',label:`Fatura ${card.name}`,amount:-(invoices[card.id]||0),date:projectionDate(year,month,card.paga),month:key});
+    }
+    // Preserve existing contribution policy; there is no exact due-date field in this schema.
+    if(!isContribuicaoPaga(month,year)) add({id:`contribution:${key}`,kind:'contribution',label:'Contribuição',amount:-calcContribuicao(month,year),date:null,month:key});
+    for(const r of getReceitasForMonth(month,year)){
+      if(receitaRecebida(r,month,year)) continue;
+      const kind=r.certeza==='potencial'?'potential':'income';
+      const date=r.recorrencia?r._dataPrevistaOcorrencia:r.dataPrevista;
+      const item={id:`revenue:${r.id}:${r._isParcela?r._parcelaIdx:key}`,kind,label:r.nome||'Receita',amount:valorReceita(r),date,month:key};
+      if(!accounts.has(r.conta)){ issues.push({id:item.id,reason:'missing_personal_account'}); continue; }
+      // Legacy items have neither a reliable daily date nor a declared certainty level.
+      if(r.certeza===undefined) item.kind='potential';
+      add(item);
+    }
+  }
+  // New one-off receipts with no planned date never materialize in the monthly helper.
+  for(const r of state.receitas||[]){
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado!=='recebido'&&!isValidISODateString(r.dataPrevista))
+      issues.push({id:r.id,reason:'missing_revenue_date'});
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado==='recebido'&&!isValidISODateString(r.dataRecebimento))
+      issues.push({id:r.id,reason:'invalid_received_date'});
+    if(r.recorrencia) for(const [key,receipt] of Object.entries(r.recebidoPorMes||{})){
+      if(receipt?.estado==='recebido'&&!getRecurringRevenueCashDate(r,key)) issues.push({id:`${r.id}:${key}`,reason:'invalid_received_date'});
+    }
+  }
+  const all=events.concat(undated);
+  const obligations=-all.filter(e=>e.kind!=='income'&&e.kind!=='potential').reduce((s,e)=>s+e.amount,0);
+  const contracted=events.filter(e=>e.kind==='income').reduce((s,e)=>s+e.amount,0);
+  const potentials=all.filter(e=>e.kind==='potential').reduce((s,e)=>s+e.amount,0);
+  events.sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
+  const timeline=[]; let running=available,minimum=available,firstShortfall=null;
+  for(const date of [...new Set(events.map(e=>e.date))]){
+    const dayEvents=events.filter(e=>e.date===date);
+    running+=dayEvents.filter(e=>e.kind!=='potential').reduce((s,e)=>s+e.amount,0);
+    minimum=Math.min(minimum,running);
+    if(running<0&&!firstShortfall) firstShortfall=date;
+    timeline.push({date,balance:running,events:dayEvents});
+  }
+  return {referenceDate,endDate,available,obligations,contracted,potentials,committed:available-obligations,
+    projected:available-obligations+contracted,events,undated,issues,timeline,minimum,firstShortfall,
+    incomplete:undated.length>0||issues.length>0,cycle:getCurrentFinancialCycle(referenceDate)};
 }
 
 // ════════════════════════════════════════════════

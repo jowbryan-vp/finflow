@@ -64,6 +64,7 @@ const FILES = [
   // continua uma visão derivada, sem persistir cycleId em nada.
   'gate2-2-cash-view.test.mjs', 'gate2-2-salary-ui.test.mjs', 'gate2-2-cycle-adapter.test.mjs',
   'gate2-2-audit.test.mjs',
+  'gate4-1-projection.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
