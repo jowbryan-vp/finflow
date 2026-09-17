@@ -2073,11 +2073,100 @@ function receitaRecebida(r,mes,ano){
   return !!(r.recebidaMeses&&r.recebidaMeses[mesKey(mes,ano)]);
 }
 
-// Receitas que efetivamente entraram no caixa
-function getReceitasEfetivasForMonth(mes,ano){
-  return getReceitasForMonth(mes,ano).filter(r=>receitaRecebida(r,mes,ano));
+// GATE 2.2 (seção 17) — validação real de data ISO (YYYY-MM-DD): não basta
+// ter 10 caracteres, precisa ser um dia de calendário que existe de verdade.
+// Rejeita "2026-13-10", "2026-02-31", "2026-00-10", "abcd-ef-gh". Usada só
+// pra decidir se uma data pode produzir impacto de caixa (ponto de escrita
+// do novo modal de confirmação de recebimento) — nunca aplicada
+// retroativamente a registros legados (nenhuma migração destrutiva).
+function isValidISODateString(str){
+  if(typeof str!=='string') return false;
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+  if(!m) return false;
+  const y=Number(m[1]), mo=Number(m[2]), d=Number(m[3]);
+  if(mo<1||mo>12||d<1||d>31) return false;
+  const dt=new Date(y,mo-1,d);
+  return dt.getFullYear()===y && dt.getMonth()===mo-1 && dt.getDate()===d;
 }
-// Receitas previstas mas ainda não recebidas
+
+// GATE 2.2 — VISÃO DE CAIXA REAL mensal, distinta da visão de COMPETÊNCIA de
+// getReceitasForMonth (seção 3/4 do Gate 2.2): "que receitas efetivamente
+// tiveram impacto de caixa neste mês?", nunca "que ocorrência de competência
+// existe/foi marcada como recebida neste mês?" — essas são perguntas
+// diferentes que a função antiga (getReceitasEfetivasForMonth, abaixo)
+// colapsava incorretamente pra receita recorrente.
+//
+// Recorrente (salário): a chave em recebidoPorMes é a COMPETÊNCIA da
+// ocorrência, não o mês do impacto de caixa (seção 6) — por isso esta função
+// varre TODAS as chaves de competência de cada receita recorrente (nunca só
+// a do mês consultado) e usa getRecurringRevenueCashDate (motor já existente
+// do Gate 2.1 — nunca uma fórmula duplicada aqui) pra achar a data real de
+// cada ocorrência. Uma ocorrência de competência de setembro paga em outubro
+// aparece na visão de caixa de OUTUBRO, nunca na de setembro — e vice-versa
+// pra antecipação (seção 6/REV-TIME-06/08).
+//
+// Evento único (novo modelo): já não tinha esse problema — getReceitasForMonth
+// já materializa evento único pelo mês da própria data de caixa (dataRecebimento
+// se recebido, senão dataPrevista — nunca uma competência separada, seção 7 do
+// Gate 2.2). Aqui só reforça a regra absoluta de caixa (seção 8): estado
+// 'recebido' + dataRecebimento válida (isValidISODateString), nunca dataPrevista.
+//
+// Legado (sem `certeza`) e parceladas: preserva o critério que já existia
+// (receitaRecebida) — sem granularidade de data real nesses modelos, nunca
+// inventa uma (seção 9).
+function getCashRevenuesForMonth(mes,ano){
+  const targetKey=mesKey(mes,ano);
+  const result=[];
+  state.receitas.forEach(r=>{
+    if(r.tipo==='extra'&&Array.isArray(r.parcelas)&&r.parcelas.length>0){
+      r.parcelas.forEach((p,i)=>{
+        if(p.recebida&&p.mes===mes&&p.ano===ano){
+          result.push({...r,_isParcela:true,_parcelaIdx:i,_parcelaValor:p.valor,_parcelaRecebida:true,_parcelaNum:i+1,_parcelaTotal:r.parcelas.length,valor:p.valor||0});
+        }
+      });
+      return;
+    }
+    if(r.certeza!==undefined){
+      if(r.recorrencia){
+        Object.keys(r.recebidoPorMes||{}).forEach(competenciaKey=>{
+          const cashDate=getRecurringRevenueCashDate(r,competenciaKey);
+          if(!cashDate||cashDate.slice(0,7)!==targetKey) return;
+          const [cAno,cMes]=competenciaKey.split('-').map(Number);
+          result.push({...r,_competenciaKey:competenciaKey,_competenciaMes:cMes,_competenciaAno:cAno,_dataRecebimentoOcorrencia:cashDate});
+        });
+        return;
+      }
+      if(r.estado==='recebido'&&r.dataRecebimento&&isValidISODateString(r.dataRecebimento)&&r.dataRecebimento.slice(0,7)===targetKey){
+        result.push(r);
+      }
+      return;
+    }
+    // Legado — mesmo critério de sempre (receitaRecebida), nunca uma data
+    // inventada; ver getReceitasForMonth pra como cada forma legada é
+    // materializada por mês.
+    if(r.recorrente){
+      const roll=r.tipo==='salario'?1:0;
+      const {mes:mIni,ano:yIni}=addMonths(r.mes,r.ano,roll);
+      if((yIni<ano||(yIni===ano&&mIni<=mes))&&receitaRecebida(r,mes,ano)) result.push(r);
+      return;
+    }
+    if(r.mes===mes&&r.ano===ano&&receitaRecebida(r,mes,ano)) result.push(r);
+  });
+  return result;
+}
+
+// GATE 2.2 (seção 10) — redefinida: os dois únicos callers existentes
+// (getReceitasContribuiveis e calcTotaisIsoladoMes.recsEfetivas/emCaixaEntradas)
+// são perguntas de CAIXA REAL ("quanto efetivamente entrou este mês"), nunca
+// de competência — a auditoria de callers do Gate 2.2 confirmou isso pros
+// dois. Mantido como nome/wrapper (em vez de removido) por compatibilidade —
+// delega inteiramente pro motor correto acima, nunca duplica a lógica.
+function getReceitasEfetivasForMonth(mes,ano){
+  return getCashRevenuesForMonth(mes,ano);
+}
+// Receitas previstas mas ainda não recebidas (visão de COMPETÊNCIA — status
+// da ocorrência daquele mês, não impacto de caixa; ver seção 4 do Gate 2.2 —
+// função inalterada, callers existentes já faziam essa pergunta corretamente).
 function getReceitasPrevistasForMonth(mes,ano){
   return getReceitasForMonth(mes,ano).filter(r=>!receitaRecebida(r,mes,ano));
 }
@@ -2204,6 +2293,57 @@ function getFinancialCycle(referenceDate, salaryEvents, expectedNextDate){
   if(proximoRecebido) return {startDate,endDate:addDaysISO(proximoRecebido,-1),startSource:'received_salary',endSource:'received_salary'};
   if(expectedNextDate) return {startDate,endDate:addDaysISO(expectedNextDate,-1),startSource:'received_salary',endSource:'expected_salary'};
   return {startDate,endDate:null,startSource:'received_salary',endSource:null};
+}
+
+// GATE 2.2 (seção 18) — adapter puro entre state.receitas e getFinancialCycle
+// (motor acima, NUNCA reescrito): percorre as receitas de salário recorrente
+// do novo modelo e materializa, pra cada ocorrência de competência marcada
+// como recebida com data real válida, um evento {competenciaKey,
+// dataRecebimento}. Reusa getRecurringRevenueCashDate (nunca duplica a
+// fórmula) — por isso uma ocorrência 'recebida' sem dataRecebimento válida
+// nunca produz um evento (a mesma regra absoluta de caixa de sempre).
+// A COMPETÊNCIA da ocorrência nunca determina a fronteira do ciclo (seção 19)
+// — só a dataRecebimento real entra em salaryEvents; getFinancialCycle
+// ordena e decide a fronteira sozinho.
+function getReceivedSalaryEvents(){
+  const events=[];
+  (state.receitas||[]).forEach(r=>{
+    if(r.certeza===undefined) return; // ciclo só é derivado do novo modelo (granularidade por competência)
+    if(!r.recorrencia) return;
+    if(r.tipo!=='salario') return;
+    Object.keys(r.recebidoPorMes||{}).forEach(competenciaKey=>{
+      const dataRecebimento=getRecurringRevenueCashDate(r,competenciaKey);
+      if(!dataRecebimento) return;
+      events.push({competenciaKey,dataRecebimento,receitaId:r.id});
+    });
+  });
+  return events;
+}
+
+// GATE 2.2 (seção 21) — integra state.receitas + getExpectedSalaryDate (regra
+// de recorrência já existente, nunca reinventada) + getFinancialCycle (motor
+// puro inalterado) numa função só, testável, sem acoplamento a UI.
+// referenceDate ('YYYY-MM-DD', opcional — default: hoje real).
+// expectedNextDate é usado por getFinancialCycle SOMENTE como limite
+// projetado quando ainda não existe um próximo salário efetivamente
+// recebido — nunca tratado como se já fosse um evento de caixa (seção 20):
+// é a próxima data prevista (getExpectedSalaryDate) a partir da referência,
+// avançando um mês se a deste mês já tiver passado.
+function getCurrentFinancialCycle(referenceDate){
+  const hoje=new Date();
+  const ref=referenceDate||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  const events=getReceivedSalaryEvents();
+  const salaryRevenue=(state.receitas||[]).find(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
+  let expectedNextDate=null;
+  if(salaryRevenue){
+    const [ry,rm]=ref.split('-').map(Number);
+    expectedNextDate=getExpectedSalaryDate(ry,rm,salaryRevenue.recorrencia);
+    if(expectedNextDate&&expectedNextDate<=ref){
+      const nxt=addMonths(rm,ry,1);
+      expectedNextDate=getExpectedSalaryDate(nxt.ano,nxt.mes,salaryRevenue.recorrencia);
+    }
+  }
+  return getFinancialCycle(ref,events,expectedNextDate);
 }
 
 // ════════════════════════════════════════════════
@@ -3845,30 +3985,83 @@ function toggleReceitaRecebida(recId){
     // GATE 2 — novo modelo: atualiza o MESMO evento lógico (nunca cria uma
     // segunda receita, seção 24). recorrente (salário): estado por mês em
     // recebidoPorMes; evento único: estado/dataRecebimento no topo do objeto.
-    const hoje=new Date();
-    const dataReal=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
-    let agoraRecebida;
+    // GATE 2.2 (seção 15/16) — DESMARCAR (recebido → previsto) continua
+    // instantâneo aqui, sem precisar de data. MARCAR como recebido (previsto
+    // → recebido) precisa da data REAL de recebimento, que pode ser
+    // diferente de hoje (lançamento retroativo) — nunca forçar a data atual
+    // sem dar chance de o usuário informar a data real; isso agora abre um
+    // modal de confirmação (openConfirmarReceitaRecebidaModal) em vez de
+    // gravar direto.
     if(r.recorrencia){
-      if(!r.recebidoPorMes) r.recebidoPorMes={};
       const k=mesKey(currentMonth,currentYear);
-      const jaRecebida=r.recebidoPorMes[k]&&r.recebidoPorMes[k].estado==='recebido';
-      if(jaRecebida) delete r.recebidoPorMes[k];
-      else r.recebidoPorMes[k]={estado:'recebido',dataRecebimento:dataReal};
-      agoraRecebida=!jaRecebida;
-    } else {
-      if(r.estado==='recebido'){ r.estado='previsto'; r.dataRecebimento=null; agoraRecebida=false; }
-      else { r.estado='recebido'; r.dataRecebimento=dataReal; agoraRecebida=true; }
+      const jaRecebida=r.recebidoPorMes&&r.recebidoPorMes[k]&&r.recebidoPorMes[k].estado==='recebido';
+      if(jaRecebida){
+        delete r.recebidoPorMes[k];
+        scheduleSave();renderReceitas();renderDashboard();
+        toast('Voltou para prevista');
+        return;
+      }
+      openConfirmarReceitaRecebidaModal(recId);
+      return;
     }
-    scheduleSave();renderReceitas();renderDashboard();
-    toast(agoraRecebida?'✓ Marcada como recebida — entra no caixa na data de hoje!':'Voltou para prevista');
+    if(r.estado==='recebido'){
+      r.estado='previsto'; r.dataRecebimento=null;
+      scheduleSave();renderReceitas();renderDashboard();
+      toast('Voltou para prevista');
+      return;
+    }
+    openConfirmarReceitaRecebidaModal(recId);
     return;
   }
-  // Legado — comportamento inalterado.
+  // Legado — comportamento inalterado (seção 9 do Gate 2.2: sem
+  // granularidade de data real nesse modelo, nunca inventar uma).
   if(!r.recebidaMeses) r.recebidaMeses={};
   const k=mesKey(currentMonth,currentYear);
   r.recebidaMeses[k]=!r.recebidaMeses[k];
   scheduleSave();renderReceitas();renderDashboard();
   toast(r.recebidaMeses[k]?'✓ Marcada como recebida — entra no caixa!':'Voltou para prevista');
+}
+
+// GATE 2.2 (seção 15) — modal de confirmação com a data real de recebimento
+// editável: sugere hoje como default (a maioria dos casos é "acabei de
+// receber"), mas o usuário pode alterar pra uma data passada (lançamento
+// retroativo) ou de outro mês antes de confirmar — nunca é forçado a aceitar
+// a data de hoje. Usado tanto pra salário recorrente quanto pra evento único
+// (mesma necessidade, mesmo bug — seção 15 cita salário como exemplo, mas o
+// código de toggleReceitaRecebida era idêntico nos dois ramos).
+function openConfirmarReceitaRecebidaModal(recId){
+  const r=state.receitas.find(x=>x.id===recId); if(!r) return;
+  const hoje=new Date();
+  const hojeISO=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  document.getElementById('modalTitle').textContent='Confirmar Recebimento';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Informe a data em que o dinheiro efetivamente entrou — pode ser diferente de hoje (lançamento retroativo) e de mês diferente da competência.</div>
+    <div class="form-grid">
+      <div class="form-group full"><label>Data real de recebimento</label><input type="date" id="confRecDataRecebimento" value="${hojeISO}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarReceitaRecebidaComData('${recId}')">Confirmar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarReceitaRecebidaComData(recId){
+  const r=state.receitas.find(x=>x.id===recId); if(!r) return;
+  const dataReal=document.getElementById('confRecDataRecebimento')?.value;
+  // Seção 17 — data inválida nunca produz impacto de caixa: bloqueia antes
+  // de tocar em qualquer coisa (um <input type="date"> já normaliza a maior
+  // parte dos formatos malformados pra string vazia, que também é rejeitada
+  // aqui).
+  if(!isValidISODateString(dataReal)){ toast('Informe uma data válida'); return; }
+  if(r.recorrencia){
+    if(!r.recebidoPorMes) r.recebidoPorMes={};
+    const k=mesKey(currentMonth,currentYear);
+    r.recebidoPorMes[k]={estado:'recebido',dataRecebimento:dataReal};
+  } else {
+    r.estado='recebido'; r.dataRecebimento=dataReal;
+  }
+  scheduleSave();closeModal();renderReceitas();renderDashboard();
+  toast('✓ Marcada como recebida — entra no caixa na data informada!');
 }
 
 function toggleParcelaReceita(recId, parcelaIdx){
