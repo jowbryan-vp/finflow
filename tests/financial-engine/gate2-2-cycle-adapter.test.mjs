@@ -236,12 +236,10 @@ await check('CYCLE_ADAPTER_INTEGRATED_29', async () => {
       recorrencia: { type: 'last_weekday_of_month', weekday: 5 },
       recebidoPorMes: { '2026-08': { estado: 'recebido', dataRecebimento: '2026-08-28' } }, createdAt: 'sal_ago',
     });
-    state.receitas.push({
-      id: 'sal_set', tipo: 'salario', nome: 'Salário', valor: 5000, mes: 9, ano: 2026,
-      competenciaMes: 9, competenciaAno: 2026, conta: 'c1', certeza: 'recorrente',
-      recorrencia: { type: 'last_weekday_of_month', weekday: 5 },
-      recebidoPorMes: { '2026-09': { estado: 'recebido', dataRecebimento: '2026-10-02' } }, createdAt: 'sal_set',
-    });
+    // Gate 4.1: usuário escolheu ciclo por salário principal. As duas
+    // competências pertencem ao MESMO salário; manter todas as asserções de data.
+    state.receitas.find(r=>r.id==='sal_ago').recebidoPorMes['2026-09']={estado:'recebido',dataRecebimento:'2026-10-02'};
+    state.financialPreferences={primarySalaryId:'sal_ago'};
     return getCurrentFinancialCycle('2026-09-15');
   });
   const ok = r.startDate === '2026-08-28' && r.endDate === '2026-10-01' && r.startSource === 'received_salary' && r.endSource === 'received_salary';
