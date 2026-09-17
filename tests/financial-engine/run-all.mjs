@@ -7,7 +7,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const FILES = ['temporal.test.mjs', 'cards.test.mjs', 'legacy.test.mjs', 'cash-invariants.test.mjs'];
+const FILES = [
+  // Gate 1 — fundação temporal de despesas/cartões (must keep passing forever)
+  'temporal.test.mjs', 'cards.test.mjs', 'legacy.test.mjs', 'cash-invariants.test.mjs',
+  // Gate 2 — receitas, salário, transferências, patrimônio reservado, ciclo
+  'gate2-salary.test.mjs', 'gate2-revenue.test.mjs', 'gate2-transfers.test.mjs',
+  'gate2-cofrinhos.test.mjs', 'gate2-cycle.test.mjs', 'gate2-invariants.test.mjs',
+  'gate2-import-export.test.mjs', 'gate2-real-patterns.test.mjs',
+];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
 for (const file of FILES) {
