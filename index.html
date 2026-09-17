@@ -2310,9 +2310,20 @@ function getOfficeReceivablesPrevistoTotal(mes,ano){
 
 // Reservas empresariais — mesma filosofia dos cofrinhos pessoais (seção 14 do
 // Gate 3): patrimônio reservado, nunca caixa operacional disponível.
+//
+// GATE 3.1 (seção 4/5): reserva.saldoInicial é preservado aqui SOMENTE por
+// compatibilidade histórica com reservas criadas antes deste patch — nenhuma
+// migração destrutiva foi feita, o cálculo de reservas já existentes continua
+// exatamente como estava. A partir do Gate 3.1, NENHUMA reserva NOVA pode
+// nascer com saldoInicial != 0 (ver addOfficeReserva) — o único jeito de
+// colocar dinheiro numa reserva nova é uma "Aplicação em Reserva" explícita,
+// que sai de uma conta empresarial real (confirmarAplicarOfficeReserva),
+// nunca um número digitado sem contrapartida. saldoInicial>0 num registro
+// novo criaria patrimônio do nada (CAIXA + RESERVA teria que ser igual ao
+// PATRIMÔNIO real do escritório — seção 2 do Gate 3.1).
 function getSaldoOfficeReserva(reservaId){
   const r=((state.office&&state.office.reservas)||[]).find(x=>x.id===reservaId);
-  const saldoInicial=(r&&r.saldoInicial)||0;
+  const saldoInicial=(r&&r.saldoInicial)||0; // legacy opening balance — compatibilidade histórica somente
   const movs=((state.office&&state.office.movimentacoesReservas)||[]).filter(m=>m.reservaId===reservaId);
   const aplicacoes=movs.filter(m=>m.tipo!=='resgate').reduce((s,m)=>s+(m.valor||0),0);
   const resgates=movs.filter(m=>m.tipo==='resgate').reduce((s,m)=>s+(m.valor||0),0);
@@ -2321,20 +2332,63 @@ function getSaldoOfficeReserva(reservaId){
 function getOfficeReservedBalance(){
   return ((state.office&&state.office.reservas)||[]).reduce((s,r)=>s+getSaldoOfficeReserva(r.id),0);
 }
+// Patrimônio financeiro total do escritório (seção 2/18 do Gate 3.1): caixa
+// operacional + reservas empresariais. Mover dinheiro entre os dois nunca
+// altera esta soma — é a invariante que a aplicação/resgate de reserva (e a
+// proibição de saldoInicial em reserva nova) protegem. Principalmente uma
+// invariante de teste; não é (ainda) um indicador visual obrigatório.
+function getOfficeFinancialPatrimony(){
+  return getOfficeOperationalBalance()+getOfficeReservedBalance();
+}
+
+// Valida a SOMA e os valores individuais das regras de distribuição (seção
+// 9-12 do Gate 3.1). NUNCA inventa nem normaliza percentuais — só diz se o
+// que já está configurado é matematicamente válido.
+//   - Enquanto qualquer destino ainda estiver null/undefined: configured é
+//     sempre false (comportamento pré-3.1 preservado — nenhum repasse
+//     automático) e a soma dos destinos já preenchidos NÃO precisa ser 100;
+//     um percentual individual fora do intervalo [0,100] ou não numérico
+//     ainda assim invalida a configuração inteira (nunca é salvo).
+//   - Quando TODOS os destinos estiverem preenchidos: configured=true, e a
+//     soma tem que ser exatamente 100 (com tolerância segura de ponto
+//     flutuante) — caso contrário valid=false.
+function validateOfficeDistributionRules(rules){
+  const list=rules||[];
+  if(!list.length) return { valid:true, configured:false, totalPercent:0, reason:null };
+  let totalPercent=0, allFilled=true;
+  for(const rule of list){
+    const p=rule&&rule.percentual;
+    if(p===null||p===undefined){ allFilled=false; continue; }
+    if(typeof p!=='number' || !Number.isFinite(p)) return { valid:false, configured:false, totalPercent:null, reason:'percentual_invalido' };
+    if(p<0||p>100) return { valid:false, configured:false, totalPercent:null, reason:'percentual_fora_do_intervalo' };
+    totalPercent+=p;
+  }
+  totalPercent=Math.round(totalPercent*100)/100;
+  if(!allFilled) return { valid:true, configured:false, totalPercent, reason:null };
+  const TOL=0.005; // tolerância segura de ponto flutuante — nunca "quase 100"
+  if(Math.abs(totalPercent-100)>TOL) return { valid:false, configured:true, totalPercent, reason:'total_diferente_de_100' };
+  return { valid:true, configured:true, totalPercent, reason:null };
+}
 
 // Distribuição de um recebível pelas regras configuradas (seção 17/18/63 do
-// Gate 3). NUNCA inventa percentuais: quando regrasDistribuicao ainda não foi
-// preenchida pelo usuário pra um destino, esse destino volta com valor=null e
-// configured=false — quem chama decide o que fazer (ex.: não gerar repasse).
+// Gate 3; validação de integridade adicionada no Gate 3.1). NUNCA inventa
+// percentuais: quando regrasDistribuicao ainda não foi preenchida pelo
+// usuário pra um destino, OU a configuração preenchida não é matematicamente
+// válida (soma != 100, percentual fora de [0,100], NaN/Infinity — seção 9-12
+// do Gate 3.1), esse destino volta com valor=null e configured=false — quem
+// chama decide o que fazer (ex.: não gerar repasse). A base de cálculo (valor
+// do recebível) NÃO foi alterada neste Gate — DISTRIBUTION_BASE_DEFINITION_REQUIRED
+// permanece uma decisão futura, fora de escopo aqui.
 function calculateOfficeDistribution(recebivel){
   const regras=(state.office&&state.office.regrasDistribuicao)||[];
+  const validation=validateOfficeDistributionRules(regras);
+  const ativa=validation.valid && validation.configured;
   const porDestino={};
-  let configured=regras.length>0;
   regras.forEach(rule=>{
-    if(rule.percentual===null||rule.percentual===undefined){ configured=false; porDestino[rule.destino]=null; }
-    else porDestino[rule.destino]=(recebivel.valor||0)*(rule.percentual/100);
+    const p=rule.percentual;
+    porDestino[rule.destino]=(ativa && p!==null && p!==undefined) ? (recebivel.valor||0)*(p/100) : null;
   });
-  return { valor:recebivel.valor||0, configured, porDestino };
+  return { valor:recebivel.valor||0, configured:ativa, porDestino, validation };
 }
 
 // Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
@@ -7451,8 +7505,8 @@ function renderOfficeReservasTab(){
             </select>
           </div>
           <div class="form-group"><label>Cor</label><input type="color" id="newOReservaColor" value="#5b7fff" style="height:38px;padding:4px"></div>
-          <div class="form-group full"><label>Saldo inicial (R$)</label><input type="number" id="newOReservaSaldoInicial" placeholder="0,00" min="0" step="0.01"></div>
         </div>
+        <div class="info-box" style="margin-top:10px">Toda reserva nova começa com R$ 0,00 — para colocar dinheiro nela, use "+ Aplicar" depois de criá-la, saindo de uma conta empresarial real (nunca um saldo inicial digitado sem contrapartida).</div>
         <button class="btn btn-primary mt-16" onclick="addOfficeReserva()">Adicionar Reserva</button>
       </div>
       <div class="card"><div class="card-header"><div class="card-title">Reservas Empresariais</div></div><div class="item-list">${rows}</div></div>
@@ -7463,8 +7517,11 @@ function addOfficeReserva(){
   if(!nome){toast('Informe o nome');return;}
   const finalidade=document.getElementById('newOReservaFinalidade').value;
   const color=document.getElementById('newOReservaColor').value;
-  const saldoInicial=parseFloat(document.getElementById('newOReservaSaldoInicial').value)||0;
-  state.office.reservas.push({id:'oreserva_'+uid(),nome,finalidade,color,saldoInicial});
+  // Gate 3.1 (seção 4-7): uma reserva NOVA nunca nasce com saldo != 0 — isso
+  // criaria patrimônio do nada (caixa + reserva > patrimônio real do
+  // escritório). saldoInicial=0 sempre aqui; dinheiro só entra via aplicação
+  // explícita, que sai de uma conta empresarial de verdade.
+  state.office.reservas.push({id:'oreserva_'+uid(),nome,finalidade,color,saldoInicial:0});
   scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva adicionada!');
 }
 function delOfficeReserva(id){
@@ -7645,7 +7702,8 @@ function renderOfficeConfigTab(){
     </div>`).join('') || '<div class="info-box">Nenhuma conta empresarial cadastrada ainda.</div>';
   const destinoLabel={reserva:'Reserva empresarial',impostos:'Impostos',repasse_pessoal:'Repasse ao Jow'};
   const regras=(state.office.regrasDistribuicao||[]);
-  const todasConfiguradas=regras.length>0 && regras.every(r=>r.percentual!==null&&r.percentual!==undefined);
+  const validacao=validateOfficeDistributionRules(regras);
+  const todasConfiguradas=validacao.configured;
   const rowsRegras=regras.map((r,i)=>`
     <div class="form-group"><label>${destinoLabel[r.destino]||r.destino} (%)</label><input type="number" id="regraPercentual_${i}" value="${r.percentual===null||r.percentual===undefined?'':r.percentual}" min="0" max="100" step="0.1" placeholder="não configurado"></div>`).join('');
   el.innerHTML=`
@@ -7668,6 +7726,8 @@ function renderOfficeConfigTab(){
         ? `<div class="info-box" style="margin-bottom:10px">Configuradas — usadas para sugerir o repasse previsto sempre que um recebível de um projeto contratado é cadastrado ou alterado.</div>`
         : `<div class="info-box" style="margin-bottom:10px;border-color:var(--warn)">⚠ Nenhuma regra de distribuição foi encontrada configurada ou documentada no app até agora — não vamos inventar um percentual. Enquanto ficar em branco, nenhum repasse previsto é gerado automaticamente (DISTRIBUTION_RULES_CONFIGURATION_REQUIRED). Preencha abaixo quando quiser ativar a geração automática.</div>`}
       <div class="form-grid">${rowsRegras}</div>
+      <div class="item-row-meta" style="margin-top:8px">Total da distribuição: <strong>${validacao.totalPercent===null?'—':validacao.totalPercent+'%'}</strong></div>
+      ${(!validacao.valid) ? `<div class="info-box" style="margin-top:8px;border-color:var(--warn)">⚠ ${validacao.reason==='total_diferente_de_100' ? 'A distribuição precisa totalizar exatamente 100%.' : 'Há um percentual inválido — use apenas valores numéricos entre 0 e 100.'} Uma configuração assim nunca é salva nem usada para gerar repasse.</div>` : ''}
       <button class="btn btn-primary mt-16" onclick="saveOfficeRegrasDistribuicao()">Salvar Regras</button>
     </div>`;
 }
@@ -7713,10 +7773,24 @@ function saveEditOfficeConta(id){
 }
 function saveOfficeRegrasDistribuicao(){
   const regras=(state.office.regrasDistribuicao||[]);
-  regras.forEach((r,i)=>{
+  // Gate 3.1 (seção 10-12): valida ANTES de gravar qualquer coisa em
+  // state.office.regrasDistribuicao. Uma tentativa inválida nunca altera a
+  // configuração anterior (mesmo que ela estivesse válida) nem os repasses já
+  // derivados dela (OD09/OD10) — o array real só é tocado depois do "return".
+  const candidatos=regras.map((r,i)=>{
     const val=document.getElementById('regraPercentual_'+i)?.value;
-    r.percentual=(val===''||val===undefined||val===null)?null:parseFloat(val);
+    const percentual=(val===''||val===undefined||val===null)?null:parseFloat(val);
+    return { destino:r.destino, percentual };
   });
+  const validacao=validateOfficeDistributionRules(candidatos);
+  if(!validacao.valid){
+    toast('Distribuição inválida — '+(validacao.reason==='total_diferente_de_100'
+      ? `total=${validacao.totalPercent}% (precisa ser exatamente 100%)`
+      : 'use apenas valores numéricos entre 0 e 100')+'. Nada foi salvo.');
+    renderOfficeConfigTab();
+    return;
+  }
+  regras.forEach((r,i)=>{ r.percentual=candidatos[i].percentual; });
   // Recalcula todos os repasses previstos derivados (nunca duplica — mesma
   // chave officeTransferId — e nunca sobrescreve repasse já realizado).
   (state.office.recebiveis||[]).forEach(r=>syncDerivedPersonalTransfer(r.id));
