@@ -2400,6 +2400,33 @@ function canDeleteOfficeAccount(contaId){
   return {allowed:true, reason:null};
 }
 
+// Gate 3.4 — decorre da auditoria patrimonial final do Gate 3.3: diferente de
+// recebível (que só é caixa real quando estado==='recebido' — isOfficeRecebivelRealizado)
+// e de reserva/conta (protegidas por histórico/saldo acima), uma despesa
+// empresarial NÃO TEM estado "previsto" — addOfficeDespesa sempre grava
+// status:'pago', e calcSaldoOfficeConta desconta TODA despesa cadastrada da
+// conta correspondente incondicionalmente (sem checar status). Ou seja, no
+// modelo atual:
+//   DESPESA EMPRESARIAL CADASTRADA == DESPESA FINANCEIRAMENTE REALIZADA
+// Apagar uma despesa cadastrada recria, no cálculo, o dinheiro que já saiu de
+// verdade — sem nenhum estorno/reembolso/contrapartida real (a mesma classe
+// de bug que canDeleteOfficeReserve/canDeleteOfficeAccount já bloqueiam pra
+// reserva/conta). Este Gate NÃO introduz um novo modelo de estados de despesa
+// (previsto/pago/cancelado/estornado) — decisão de produto explicitamente
+// fora de escopo — só reconhece a semântica financeira JÁ REAL do código:
+// toda despesa existente é realizada, logo nenhuma despesa existente pode
+// ser excluída destrutivamente. Puro — nunca altera state/DOM/toast/scheduleSave.
+function canDeleteOfficeExpense(despesaId){
+  const off=state.office||{};
+  const d=(off.despesas||[]).find(x=>x.id===despesaId);
+  if(!d) return {allowed:false, reason:'not_found'};
+  // Toda despesa que existe em state.office.despesas já é descontada
+  // incondicionalmente por calcSaldoOfficeConta — não há, no modelo atual,
+  // nenhuma despesa "ainda não realizada" que possa ser excluída sem alterar
+  // patrimônio já efetivado.
+  return {allowed:false, reason:'realized_expense'};
+}
+
 // Valida a SOMA e os valores individuais das regras de distribuição (seção
 // 9-12 do Gate 3.1). NUNCA inventa nem normaliza percentuais — só diz se o
 // que já está configurado é matematicamente válido.
@@ -7534,6 +7561,20 @@ function addOfficeDespesa(){
   scheduleSave();renderOfficeDespesasTab();renderEscritorioResumo();toast('Despesa registrada!');
 }
 function delOfficeDespesa(id){
+  // Gate 3.4: toda despesa empresarial cadastrada já é financeiramente
+  // realizada (ver comentário de canDeleteOfficeExpense) — excluí-la faria
+  // dinheiro que já saiu reaparecer no cálculo de saldo/patrimônio, sem
+  // nenhum evento financeiro real (estorno/reembolso) por trás. Bloqueio
+  // total, zero mutation — nunca uma "exclusão inteligente" que compensa.
+  // EDITAR a despesa (corrigir descrição/valor/data/conta digitados errado)
+  // continua permitido normalmente — isso não é o caminho destrutivo que
+  // este guard fecha.
+  const check=canDeleteOfficeExpense(id);
+  if(!check.allowed){
+    if(check.reason==='not_found') toast('Despesa não encontrada.');
+    else toast('Esta despesa já está registrada como realizada e não pode ser excluída. Edite o lançamento caso precise corrigir os dados.');
+    return;
+  }
   state.office.despesas=(state.office.despesas||[]).filter(d=>d.id!==id);
   scheduleSave();renderOfficeDespesasTab();renderEscritorioResumo();toast('Despesa removida');
 }
