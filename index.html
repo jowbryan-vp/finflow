@@ -2341,6 +2341,16 @@ function getOfficeFinancialPatrimony(){
   return getOfficeOperationalBalance()+getOfficeReservedBalance();
 }
 
+// Gate 3.3 (seção 6): tolerância monetária explícita para decidir "saldo
+// efetivamente zero" sem comparar float com === 0 (risco de resíduo binário
+// tipo 0.0000000001). Uso restrito a esta decisão semântica de exclusão —
+// NUNCA usada para arredondar patrimônio, saldo exibido ou qualquer outro
+// cálculo financeiro do app.
+const MONEY_EPSILON = 0.005;
+function isEffectivelyZeroMoney(value){
+  return Math.abs(Number(value)||0) < MONEY_EPSILON;
+}
+
 // Gate 3.2 — seção 4-9: um registro financeiro do escritório com histórico
 // REALIZADO nunca pode ser apagado destrutivamente (isso faria dinheiro que
 // já existiu desaparecer contabilmente, quebrando PATRIMÔNIO = CAIXA +
@@ -2360,16 +2370,33 @@ function getOfficeFinancialPatrimony(){
 //   state.office.repasses          → nenhuma referência a conta diretamente
 //     (o vínculo com a conta empresarial de origem só existe através do
 //     lançamento em movimentacoesContas que realizeOfficeTransfer cria)
+//
+// Gate 3.3 (seção 4/7/8/10): "sem movimentações/referências" não é o mesmo
+// que "financeiramente vazio". ENTIDADE FINANCEIRAMENTE EXCLUÍVEL = SEM
+// HISTÓRICO + SEM REFERÊNCIAS + SALDO EFETIVO = ZERO — as três condições
+// juntas, nunca uma substituindo a outra. Ordem de checagem (precedência
+// preservada do Gate 3.2): (1) a entidade existe? se não, not_found — nunca
+// allowed:true para um ID que não existe; (2) tem histórico/referência? se
+// sim, bloqueia por ISSO primeiro, mesmo que o saldo seja zero; (3) só então
+// o saldo efetivo é checado, usando o motor de cálculo real (getSaldoOfficeReserva/
+// calcSaldoOfficeConta — nunca uma fórmula duplicada aqui) com a tolerância
+// de isEffectivelyZeroMoney (saldo negativo também bloqueia: só zero exclui).
 function canDeleteOfficeReserve(reservaId){
+  const r=((state.office&&state.office.reservas)||[]).find(x=>x.id===reservaId);
+  if(!r) return {allowed:false, reason:'not_found'};
   const temMovimentacao=((state.office&&state.office.movimentacoesReservas)||[]).some(m=>m.reservaId===reservaId);
   if(temMovimentacao) return {allowed:false, reason:'has_financial_history'};
+  if(!isEffectivelyZeroMoney(getSaldoOfficeReserva(reservaId))) return {allowed:false, reason:'has_nonzero_balance'};
   return {allowed:true, reason:null};
 }
 function canDeleteOfficeAccount(contaId){
   const off=state.office||{};
+  const c=(off.contas||[]).find(x=>x.id===contaId);
+  if(!c) return {allowed:false, reason:'not_found'};
   if((off.recebiveis||[]).some(r=>r.contaDestino===contaId)) return {allowed:false, reason:'has_recebivel'};
   if((off.despesas||[]).some(d=>d.conta===contaId)) return {allowed:false, reason:'has_despesa'};
   if((off.movimentacoesContas||[]).some(m=>m.contaId===contaId)) return {allowed:false, reason:'has_movimentacao'};
+  if(!isEffectivelyZeroMoney(calcSaldoOfficeConta(contaId))) return {allowed:false, reason:'has_nonzero_balance'};
   return {allowed:true, reason:null};
 }
 
@@ -7562,10 +7589,17 @@ function delOfficeReserva(id){
   // tocar em nada (nem a reserva, nem movimentacoesReservas, nem
   // movimentacoesContas). Nenhuma "exclusão inteligente"/compensação
   // automática (seção 6) — o passado nunca é reescrito silenciosamente.
+  // Gate 3.3 (seção 12): saldo e histórico são conceitos diferentes — mensagens
+  // distintas para cada motivo de bloqueio (nunca um "está em uso" genérico).
   const check=canDeleteOfficeReserve(id);
-  if(!check.allowed){ toast('Esta reserva possui movimentações financeiras e não pode ser excluída.'); return; }
-  // Sem movimentação vinculada (garantido pelo guard acima) — só o registro
-  // da reserva em si é removido.
+  if(!check.allowed){
+    if(check.reason==='has_nonzero_balance') toast('Esta reserva possui saldo e não pode ser excluída.');
+    else if(check.reason==='not_found') toast('Reserva não encontrada.');
+    else toast('Esta reserva possui movimentações financeiras e não pode ser excluída.');
+    return;
+  }
+  // Sem movimentação vinculada e com saldo efetivo zero (garantido pelo guard
+  // acima) — só o registro da reserva em si é removido.
   state.office.reservas=(state.office.reservas||[]).filter(r=>r.id!==id);
   scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva removida');
 }
@@ -7790,11 +7824,19 @@ function delOfficeConta(id){
   // alterando o patrimônio calculado. canDeleteOfficeAccount cobre as 3
   // estruturas reais que guardam conta empresarial (ver mapa de referências
   // no comentário de canDeleteOfficeAccount) — bloqueia sem tocar em nada.
+  // Gate 3.3 (seção 12): saldo e referência são conceitos diferentes — mensagens
+  // distintas para cada motivo de bloqueio (nunca um "está em uso" genérico).
   const check=canDeleteOfficeAccount(id);
-  if(!check.allowed){ toast('Esta conta possui lançamentos ou movimentações vinculadas e não pode ser excluída.'); return; }
-  // Sem nenhuma referência (garantido pelo guard acima) — só o registro da
-  // conta em si é removido; NUNCA apagar movimentacoesContas como forma de
-  // "liberar" a exclusão (isso apagaria histórico financeiro realizado).
+  if(!check.allowed){
+    if(check.reason==='has_nonzero_balance') toast('Esta conta possui saldo e não pode ser excluída.');
+    else if(check.reason==='not_found') toast('Conta não encontrada.');
+    else toast('Esta conta possui lançamentos ou movimentações vinculadas e não pode ser excluída.');
+    return;
+  }
+  // Sem nenhuma referência e com saldo efetivo zero (garantido pelo guard
+  // acima) — só o registro da conta em si é removido; NUNCA apagar
+  // movimentacoesContas como forma de "liberar" a exclusão (isso apagaria
+  // histórico financeiro realizado).
   state.office.contas=(state.office.contas||[]).filter(c=>c.id!==id);
   scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta removida');
 }
