@@ -28,6 +28,11 @@ const FILES = [
   // precisa ser exatamente 100% quando totalmente preenchida (nunca
   // normalizada, nunca inventada)
   'gate3-1-reserve-integrity.test.mjs', 'gate3-1-distribution-validation.test.mjs',
+  // Gate 3.2 — patch: uma reserva/conta empresarial com histórico financeiro
+  // realizado (movimentação/recebível/despesa vinculada) nunca pode ser
+  // excluída destrutivamente — bloqueio com zero mutation, nunca uma
+  // "exclusão inteligente" que compensa ou apaga o passado
+  'gate3-2-delete-integrity.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
