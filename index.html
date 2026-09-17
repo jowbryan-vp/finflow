@@ -602,7 +602,10 @@ select option{background:var(--card)}
                     <option value="salario">Salário Fixo</option>
                     <option value="decimo">13º Salário</option>
                     <option value="ferias">1/3 de Férias</option>
-                    <option value="extra">Projeto Extra</option>
+                    <option value="extra">Projeto Extra (parcelado)</option>
+                    <option value="projeto">Projeto (previsto/recebido)</option>
+                    <option value="rendimento">Rendimento</option>
+                    <option value="outro">Outro</option>
                     <option value="repasse">Presente / Repasse</option>
                   </select>
                 </div>
@@ -631,7 +634,40 @@ select option{background:var(--card)}
                   <label for="recFixo">Recorrente (mensal)</label>
                 </div>
                 <div class="form-group full" id="recSalarioRollInfo" style="display:none">
-                  <div class="info-box">💡 Salário Fixo recorrente: lance no mês em que você <strong>recebe</strong> (ex: dia 26-30) — o app já conta esse dinheiro como disponível no <strong>mês seguinte</strong>, que é quando ele é de fato usado pra pagar as contas.</div>
+                  <div class="info-box">💡 Salário Fixo recorrente (novo modelo): o dinheiro entra no caixa <strong>na data real em que você recebe</strong>, no próprio mês — nunca deslocado pro mês seguinte. Mês/Ano acima ficam só como competência de referência. A previsão de cada mês usa a última sexta-feira automaticamente.</div>
+                </div>
+                <div class="checkbox-row form-group full" id="recSalarioJaRecebidoRow" style="display:none">
+                  <input type="checkbox" id="recSalarioJaRecebido" style="width:auto" onchange="onRecSalarioJaRecebidoChange()">
+                  <label for="recSalarioJaRecebido">Já recebi o salário desta competência</label>
+                </div>
+                <div class="form-group full" id="recSalarioDataRecebimentoGroup" style="display:none">
+                  <label>Data em que caiu na conta</label>
+                  <input type="date" id="recSalarioDataRecebimento">
+                </div>
+                <div class="form-group" id="recCertezaGroup" style="display:none">
+                  <label>Certeza</label>
+                  <select id="recCerteza" onchange="onRecCertezaOuEstadoChange()">
+                    <option value="contratado">Contratado</option>
+                    <option value="potencial">Potencial (proposta ainda não fechada)</option>
+                  </select>
+                </div>
+                <div class="form-group" id="recEstadoGroup" style="display:none">
+                  <label>Situação</label>
+                  <select id="recEstado" onchange="onRecCertezaOuEstadoChange()">
+                    <option value="previsto">Prevista (ainda não caiu na conta)</option>
+                    <option value="recebido">Já recebida</option>
+                  </select>
+                </div>
+                <div class="form-group full" id="recDataPrevistaGroup" style="display:none">
+                  <label>Data prevista</label>
+                  <input type="date" id="recDataPrevista">
+                </div>
+                <div class="form-group full" id="recDataRecebimentoGroup" style="display:none">
+                  <label>Data em que caiu na conta</label>
+                  <input type="date" id="recDataRecebimento">
+                </div>
+                <div class="form-group full" id="recNovoModeloInfo" style="display:none">
+                  <div class="info-box">💡 Mês/Ano acima passam a ser só a <strong>competência</strong> (referência de relatório) — o dinheiro entra no caixa na data prevista/recebida informada acima, não na competência. Ex: previsto pra outubro mas recebido em setembro conta como caixa de setembro.</div>
                 </div>
                 <div class="form-group full" id="repasseInfo" style="display:none">
                   <div class="info-box">💡 Presente/Repasse <strong>não entra no cálculo de contribuição</strong> — é contabilizado separadamente.</div>
@@ -1550,6 +1586,11 @@ function migrateState() {
     if(!r.recebidaMeses) r.recebidaMeses={}; // {mesKey: true/false} para salario/decimo/ferias/repasse/extra não parcelado
   });
   if (!state.movimentacoesCofrinhos) state.movimentacoesCofrinhos = [];
+  // motivoResgate: só existe pra resgates NOVOS (Gate 2, seção 17) — nunca
+  // inferido pra registros antigos. null = não informado/legado (mesmo
+  // princípio de dataCompra=null no Gate 1 — normalizar a presença do campo
+  // não é o mesmo que inventar o valor).
+  state.movimentacoesCofrinhos.forEach(m=>{ if(m.tipo==='resgate'&&m.motivoResgate===undefined) m.motivoResgate=null; });
   if (!state.excedentes) state.excedentes = {}; // {mesKey: valor}
   if (!state.contribuicaoAjustes) state.contribuicaoAjustes = {}; // {mesKey: valorAjustado}
   if (!state.faturasPagas) state.faturasPagas = {};
@@ -1903,6 +1944,34 @@ function getReceitasForMonth(mes,ano){
       });
       return;
     }
+    // GATE 2 — novo modelo semântico (r.certeza!==undefined é o marcador de
+    // "não é legado": toda receita nova sempre grava certeza). Nunca aplicado
+    // a registros antigos, que nunca têm esse campo.
+    if(r.certeza!==undefined){
+      if(r.recorrencia){
+        // Recorrente (salário): uma ocorrência por mês a partir da própria
+        // competência de criação, SEM deslocamento +1 (ver seção 7 do Gate 2
+        // — "salário recebido em julho ≠ receita de agosto"). O recebimento
+        // de cada ocorrência é independente (recebidoPorMes), nunca duplica
+        // o registro nem desloca a data.
+        const inicioMes=r.competenciaMes||r.mes, inicioAno=r.competenciaAno||r.ano;
+        if(ano>inicioAno||(ano===inicioAno&&mes>=inicioMes)){
+          const sub=(r.recebidoPorMes||{})[mesKey(mes,ano)];
+          result.push({...r,_dataPrevistaOcorrencia:getExpectedSalaryDate(ano,mes,r.recorrencia),_dataRecebimentoOcorrencia:sub?sub.dataRecebimento:null});
+        }
+        return;
+      }
+      // Evento único (projeto/rendimento/outro): pertence ao mês da DATA DE
+      // CAIXA (recebimento se já recebida, senão a previsão) — nunca à
+      // competência (seção 9 do Gate 2). Ex.: previsto p/ outubro mas
+      // recebido em setembro -> impacto de caixa é setembro (R04/R05).
+      const cashDate=getRevenueCashDate(r);
+      if(cashDate){
+        const [y,m]=cashDate.split('-').map(Number);
+        if(y===ano&&m===mes) result.push(r);
+      }
+      return;
+    }
     if(r.recorrente){
       const roll=r.tipo==='salario'?1:0;
       const {mes:mIni,ano:yIni}=addMonths(r.mes,r.ano,roll);
@@ -1917,6 +1986,18 @@ function getReceitasForMonth(mes,ano){
 // True se esta receita foi marcada como recebida neste mês
 function receitaRecebida(r,mes,ano){
   if(r._isParcela) return r._parcelaRecebida;
+  // GATE 2 — novo modelo semântico: só existe "recebido" quando estado
+  // (evento único) ou recebidoPorMes[mesKey] (recorrente) diz isso
+  // explicitamente. Sem o hack de "mês passado = recebido automaticamente"
+  // que o modelo legado usa abaixo — ver seção 7/regra absoluta de caixa
+  // real (seção 6) do Gate 2: previsão nunca é caixa real.
+  if(r.certeza!==undefined){
+    if(r.recorrencia){
+      const sub=(r.recebidoPorMes||{})[mesKey(mes,ano)];
+      return !!(sub&&sub.estado==='recebido');
+    }
+    return r.estado==='recebido';
+  }
   // Meses passados: salário recorrente considerado recebido automaticamente
   // (evita ter que marcar retroativamente o histórico todo).
   // IMPORTANTE: "passado" aqui tem que ser em relação à data real de hoje
@@ -1944,6 +2025,101 @@ function getReceitasPrevistasForMonth(mes,ano){
 }
 // Valor de uma receita naquele mês
 function valorReceita(r){ return r._isParcela?(r._parcelaValor||0):(r.valor||0); }
+
+// ════════════════════════════════════════════════
+// GATE 2 — FUNDAÇÃO TEMPORAL DE RECEITAS, SALÁRIO, TRANSFERÊNCIAS E
+// PATRIMÔNIO RESERVADO. Todas as funções abaixo são puras (não lêem nem
+// escrevem state) e testáveis isoladamente — ver tests/financial-engine/.
+//
+// Detecção legado vs. novo modelo: uma receita SÓ é "novo modelo" quando
+// tem `certeza` definida ('recorrente'|'contratado'|'potencial'). Registros
+// antigos nunca têm esse campo — é por isso que ele serve de marcador,
+// exatamente como `dataCompra` serviu pra despesas no Gate 1.
+// ════════════════════════════════════════════════
+
+// Soma/subtrai dias de uma data YYYY-MM-DD sem depender de fuso (usa
+// componentes de data local, igual ao resto do app — nunca UTC/ISO parsing
+// direto, que desloca a data conforme o fuso do navegador).
+function addDaysISO(iso, n){
+  const [y,m,d]=iso.split('-').map(Number);
+  const dt=new Date(y,m-1,d);
+  dt.setDate(dt.getDate()+n);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+
+// Data prevista de salário segundo uma regra de recorrência pura.
+// Convenção de dia da semana (documentada explicitamente, seção 8 do Gate 2):
+// mesma do Date.prototype.getDay() nativo — 0=domingo, 1=segunda, 2=terça,
+// 3=quarta, 4=quinta, 5=sexta, 6=sábado. `month` é 1-based, como no resto do
+// app. Única regra suportada por ora: "last_weekday_of_month" (última
+// ocorrência daquele dia da semana no mês) — a estrutura já é extensível
+// pra outras regras no futuro sem mudar a assinatura.
+function getExpectedSalaryDate(year, month, recurrenceRule){
+  if(!recurrenceRule||recurrenceRule.type!=='last_weekday_of_month') return null;
+  const weekday=recurrenceRule.weekday;
+  if(weekday===undefined||weekday===null) return null;
+  const ultimoDia=new Date(year,month,0).getDate(); // dia 0 do mês seguinte = último dia deste mês
+  for(let d=ultimoDia; d>=1; d--){
+    if(new Date(year,month-1,d).getDay()===weekday){
+      return `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    }
+  }
+  return null;
+}
+
+// Data que efetivamente rege o impacto de caixa de uma receita do novo
+// modelo (evento único): a data real de recebimento se já recebida, senão a
+// previsão (que ainda NÃO é caixa real — só usada pra saber em qual mês uma
+// receita prevista deveria aparecer numa futura tela de previsão; ver seção
+// 9/11 do Gate 2 — nunca a competência).
+function getRevenueCashDate(receita){
+  if(receita.dataRecebimento) return receita.dataRecebimento;
+  if(receita.dataPrevista) return receita.dataPrevista;
+  return null;
+}
+
+// Competência de relatório (mês/ano de referência) de uma receita — nunca
+// usada como data de caixa (seção 9 do Gate 2). Cai no legado (r.mes/r.ano)
+// quando competenciaMes/Ano não existem.
+function getRevenueCompetence(receita){
+  if(receita.competenciaMes!==undefined&&receita.competenciaAno!==undefined) return {mes:receita.competenciaMes,ano:receita.competenciaAno};
+  return {mes:receita.mes,ano:receita.ano};
+}
+
+// Regra absoluta de caixa real (seção 6 do Gate 2): uma receita só afeta
+// caixa real quando está efetivamente recebida NAQUELE mês. Delega pra
+// receitaRecebida, que já implementa essa regra pros dois modelos — existe
+// como função nomeada separada porque a seção 31 do Gate 2 pede esse nome
+// especificamente como parte da API pública/testável do motor.
+function isRevenueRealized(receita, mes, ano){ return receitaRecebida(receita, mes, ano); }
+
+// Uma movimentação de conta é uma transferência interna (própria pra
+// própria) quando tem transferId — nunca receita/despesa (seção 12).
+function isInternalTransfer(mov){ return !!(mov&&mov.transferId); }
+
+// Uma movimentação pertence a patrimônio reservado (cofrinho) quando tem
+// cofrinhoId — depósito/resgate nunca são despesa/receita econômica
+// (seções 13-15).
+function isReservedAssetMovement(mov){ return !!(mov&&mov.cofrinhoId); }
+
+// Deriva o ciclo financeiro pessoal (entre salários) que contém
+// referenceDate ('YYYY-MM-DD'). salaryEvents: [{dataRecebimento}] — SOMENTE
+// salários efetivamente recebidos, nunca previstos (nunca finge que um
+// salário previsto já entrou). expectedNextDate ('YYYY-MM-DD'|null): usada
+// SÓ como limite projetado quando ainda não existe um próximo recebimento
+// real. Pura, sem UI, sem gravar o ciclo em cada transação (é uma visão
+// derivada — seção 18-20 do Gate 2).
+function getFinancialCycle(referenceDate, salaryEvents, expectedNextDate){
+  const recebidos=(salaryEvents||[]).map(e=>e&&e.dataRecebimento).filter(Boolean).slice().sort();
+  if(!recebidos.length) return {cycleUnavailable:true};
+  let startDate=null, idx=-1;
+  for(let i=0;i<recebidos.length;i++){ if(recebidos[i]<=referenceDate){ startDate=recebidos[i]; idx=i; } }
+  if(!startDate) return {cycleUnavailable:true}; // referenceDate é anterior a qualquer salário recebido conhecido
+  const proximoRecebido=recebidos[idx+1];
+  if(proximoRecebido) return {startDate,endDate:addDaysISO(proximoRecebido,-1),startSource:'received_salary',endSource:'received_salary'};
+  if(expectedNextDate) return {startDate,endDate:addDaysISO(expectedNextDate,-1),startSource:'received_salary',endSource:'expected_salary'};
+  return {startDate,endDate:null,startSource:'received_salary',endSource:null};
+}
 
 // Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
 // data real da compra e do dia de fechamento configurado pro cartão. Pura — não
@@ -3002,7 +3178,7 @@ function renderRelatorio(){
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
-    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
     recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
@@ -3027,14 +3203,39 @@ function renderRelatorio(){
 // ════════════════════════════════════════════════
 // RECEITAS
 // ════════════════════════════════════════════════
+// GATE 2: tipos que usam o novo modelo semântico (certeza + estado +
+// datas), sempre como evento único (sem recorrência nem parcelamento).
+const NOVO_MODELO_TIPOS_SINGULARES=['projeto','rendimento','outro'];
+
 function onRecTipoChange(){
   const tipo=document.getElementById('recTipo').value;
-  document.getElementById('recNomeGroup').style.display=(tipo==='extra'||tipo==='repasse')?'flex':'none';
+  const isNovoSingular=NOVO_MODELO_TIPOS_SINGULARES.includes(tipo);
+  document.getElementById('recNomeGroup').style.display=(tipo==='extra'||tipo==='repasse'||isNovoSingular)?'flex':'none';
   document.getElementById('repasseInfo').style.display=tipo==='repasse'?'block':'none';
-  document.getElementById('recRecorrenteRow').style.display=(tipo==='repasse'||tipo==='extra')?'none':'flex';
+  document.getElementById('recRecorrenteRow').style.display=(tipo==='repasse'||tipo==='extra'||isNovoSingular)?'none':'flex';
   document.getElementById('recParceladoRow').style.display=tipo==='extra'?'flex':'none';
   if(tipo!=='extra'){ document.getElementById('recParceladoBox').style.display='none'; document.getElementById('recParcelado').checked=false; }
+  ['recCertezaGroup','recEstadoGroup','recNovoModeloInfo'].forEach(elId=>{ const el=document.getElementById(elId); if(el) el.style.display=isNovoSingular?'flex':'none'; });
+  if(isNovoSingular) onRecCertezaOuEstadoChange();
+  else { ['recDataPrevistaGroup','recDataRecebimentoGroup'].forEach(elId=>{ const el=document.getElementById(elId); if(el) el.style.display='none'; }); }
   onRecFixoChange();
+}
+
+// Mostra Data Prevista ou Data de Recebimento conforme a Situação escolhida
+// (evento único do novo modelo — seções 4/9/23 do Gate 2). Nunca os dois ao
+// mesmo tempo: previsto usa dataPrevista, recebido usa dataRecebimento.
+function onRecCertezaOuEstadoChange(){
+  const estado=document.getElementById('recEstado')?.value||'previsto';
+  const gPrevista=document.getElementById('recDataPrevistaGroup');
+  const gRecebimento=document.getElementById('recDataRecebimentoGroup');
+  if(gPrevista) gPrevista.style.display=(estado==='previsto')?'flex':'none';
+  if(gRecebimento){
+    gRecebimento.style.display=(estado==='recebido')?'flex':'none';
+    if(estado==='recebido'){
+      const inp=document.getElementById('recDataRecebimento');
+      if(inp&&!inp.value){ const h=new Date(); inp.value=`${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`; }
+    }
+  }
 }
 
 function onRecFixoChange(){
@@ -3042,6 +3243,26 @@ function onRecFixoChange(){
   const fixo=document.getElementById('recFixo').checked;
   const box=document.getElementById('recSalarioRollInfo');
   if(box) box.style.display=(tipo==='salario'&&fixo)?'block':'none';
+  const jaRecebidoRow=document.getElementById('recSalarioJaRecebidoRow');
+  if(jaRecebidoRow) jaRecebidoRow.style.display=(tipo==='salario'&&fixo)?'flex':'none';
+  if(!(tipo==='salario'&&fixo)){
+    const chk=document.getElementById('recSalarioJaRecebido');
+    if(chk) chk.checked=false;
+    onRecSalarioJaRecebidoChange();
+  }
+}
+
+// Mostra o campo de data real quando o usuário marca "já recebi o salário
+// desta competência" ao cadastrar um salário recorrente novo (seção 23 —
+// "receita já recebida exige dataRecebimento").
+function onRecSalarioJaRecebidoChange(){
+  const checked=document.getElementById('recSalarioJaRecebido')?.checked;
+  const g=document.getElementById('recSalarioDataRecebimentoGroup');
+  if(g) g.style.display=checked?'flex':'none';
+  if(checked){
+    const inp=document.getElementById('recSalarioDataRecebimento');
+    if(inp&&!inp.value){ const h=new Date(); inp.value=`${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`; }
+  }
 }
 
 function onRecValorChange(){ if(document.getElementById('recParcelado')?.checked) gerarParcelasReceita(); }
@@ -3090,19 +3311,55 @@ function addReceita(){
   const mes=parseInt(document.getElementById('recMes').value);
   const ano=parseInt(document.getElementById('recAno').value);
   const conta=document.getElementById('recConta')?.value||'';
-  const rec=document.getElementById('recFixo').checked&&tipo!=='repasse'&&tipo!=='extra';
+  const isNovoSingular=NOVO_MODELO_TIPOS_SINGULARES.includes(tipo);
+  const isSalarioRecorrenteNovo=tipo==='salario'&&document.getElementById('recFixo').checked;
+  const rec=document.getElementById('recFixo').checked&&tipo!=='repasse'&&tipo!=='extra'&&!isNovoSingular;
   const parcelado=tipo==='extra'&&document.getElementById('recParcelado')?.checked;
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   if(!conta){toast('Cadastre e selecione uma conta bancária de destino');return;}
   if(parcelado&&recParcelasData.length<2){toast('Gere as parcelas primeiro');return;}
-  const novaRec={id:uid(),tipo,nome,valor,mes,ano,conta,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
-  if(parcelado) novaRec.parcelas=recParcelasData.map(p=>({...p}));
+
+  let novaRec;
+  if(isSalarioRecorrenteNovo){
+    // GATE 2 (seções 7/8): salário recorrente NOVO — sem deslocamento +1.
+    // certeza:'recorrente' é o marcador de novo modelo; cada mês tem seu
+    // próprio estado de recebimento em recebidoPorMes (nunca duplica o
+    // registro, nunca desloca a data — ver getReceitasForMonth/receitaRecebida).
+    novaRec={id:uid(),tipo,nome:nome||'Salário',valor,mes,ano,competenciaMes:mes,competenciaAno:ano,conta,
+      certeza:'recorrente',recorrencia:{type:'last_weekday_of_month',weekday:5},recebidoPorMes:{},createdAt:uid()};
+    if(document.getElementById('recSalarioJaRecebido')?.checked){
+      const hoje=new Date();
+      const dataRec=document.getElementById('recSalarioDataRecebimento')?.value||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+      novaRec.recebidoPorMes[mesKey(mes,ano)]={estado:'recebido',dataRecebimento:dataRec};
+    }
+  } else if(isNovoSingular){
+    // GATE 2 (seções 4/9/10/11): projeto/rendimento/outro — evento único,
+    // certeza+estado+datas separados de competência (mes/ano acima).
+    const certeza=document.getElementById('recCerteza')?.value||'contratado';
+    const estado=document.getElementById('recEstado')?.value||'previsto';
+    const dataPrevista=document.getElementById('recDataPrevista')?.value||null;
+    let dataRecebimento=null;
+    if(estado==='recebido'){
+      const hoje=new Date();
+      dataRecebimento=document.getElementById('recDataRecebimento')?.value||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+    } else if(!dataPrevista){
+      toast('Informe a data prevista'); return;
+    }
+    novaRec={id:uid(),tipo,nome,valor,mes,ano,competenciaMes:mes,competenciaAno:ano,conta,
+      certeza,estado,dataPrevista,dataRecebimento,createdAt:uid()};
+  } else {
+    novaRec={id:uid(),tipo,nome,valor,mes,ano,conta,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
+    if(parcelado) novaRec.parcelas=recParcelasData.map(p=>({...p}));
+  }
   state.receitas.push(novaRec);
   scheduleSave();renderReceitas();toast('Receita adicionada!');
   document.getElementById('recValor').value='';document.getElementById('recNome').value='';
   recParcelasData=[];
   if(document.getElementById('recParcelado')) document.getElementById('recParcelado').checked=false;
   if(document.getElementById('recParceladoBox')) document.getElementById('recParceladoBox').style.display='none';
+  if(document.getElementById('recSalarioJaRecebido')) document.getElementById('recSalarioJaRecebido').checked=false;
+  if(document.getElementById('recDataPrevista')) document.getElementById('recDataPrevista').value='';
+  if(document.getElementById('recDataRecebimento')) document.getElementById('recDataRecebimento').value='';
 }
 function renderReceitas(){
   document.getElementById('recPeriodLabel').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
@@ -3128,7 +3385,7 @@ function renderReceitas(){
     bannerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:12px;gap:10px"><span>✓ Mostrando só as receitas <strong>já recebidas</strong></span><button class="btn btn-ghost btn-sm" onclick="window._recFiltro='todas';renderReceitas()">✕ Ver todas</button></div>`;
   }
 
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
   let html=bannerHTML;
 
   // ── Seção de Repasses agrupada por pessoa ──
@@ -3215,6 +3472,29 @@ function renderReceitas(){
 
 function toggleReceitaRecebida(recId){
   const r=state.receitas.find(x=>x.id===recId);if(!r)return;
+  if(r.certeza!==undefined){
+    // GATE 2 — novo modelo: atualiza o MESMO evento lógico (nunca cria uma
+    // segunda receita, seção 24). recorrente (salário): estado por mês em
+    // recebidoPorMes; evento único: estado/dataRecebimento no topo do objeto.
+    const hoje=new Date();
+    const dataReal=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+    let agoraRecebida;
+    if(r.recorrencia){
+      if(!r.recebidoPorMes) r.recebidoPorMes={};
+      const k=mesKey(currentMonth,currentYear);
+      const jaRecebida=r.recebidoPorMes[k]&&r.recebidoPorMes[k].estado==='recebido';
+      if(jaRecebida) delete r.recebidoPorMes[k];
+      else r.recebidoPorMes[k]={estado:'recebido',dataRecebimento:dataReal};
+      agoraRecebida=!jaRecebida;
+    } else {
+      if(r.estado==='recebido'){ r.estado='previsto'; r.dataRecebimento=null; agoraRecebida=false; }
+      else { r.estado='recebido'; r.dataRecebimento=dataReal; agoraRecebida=true; }
+    }
+    scheduleSave();renderReceitas();renderDashboard();
+    toast(agoraRecebida?'✓ Marcada como recebida — entra no caixa na data de hoje!':'Voltou para prevista');
+    return;
+  }
+  // Legado — comportamento inalterado.
   if(!r.recebidaMeses) r.recebidaMeses={};
   const k=mesKey(currentMonth,currentYear);
   r.recebidaMeses[k]=!r.recebidaMeses[k];
@@ -3233,6 +3513,7 @@ function delReceita(id){state.receitas=state.receitas.filter(r=>r.id!==id);sched
 
 function openEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  if(r.certeza!==undefined) return openEditReceitaNovoModelo(id);
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
@@ -3270,6 +3551,90 @@ function saveEditReceita(id){
   r.conta=contaSelecionada!==undefined?(contaSelecionada||null):(r.conta||null);
   r.recorrente=document.getElementById('eRecFixo').checked;
   r.isRepasse=r.tipo==='repasse';
+  scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
+}
+
+// GATE 2 — edição de receita do novo modelo (certeza!==undefined). Nunca
+// aplicado a registros legados: abrir uma receita legada continua chamando
+// exatamente o modal/salvamento acima, sem ganhar `certeza` nem `estado` —
+// editar um campo não-temporal de uma receita antiga não a "promove" pro
+// novo modelo (mesmo princípio do Gate 1 pra despesas legadas).
+function openEditReceitaNovoModelo(id){
+  const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  const contaOpts = state.contas.length
+    ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
+      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+    : `<option value="">— Nenhuma conta cadastrada —</option>`;
+  document.getElementById('modalTitle').textContent='Editar Receita';
+  if(r.recorrencia){
+    document.getElementById('modalBody').innerHTML=`
+      <div class="info-box" style="margin-bottom:14px">Salário recorrente (novo modelo) — recorrência: última sexta-feira do mês. O recebimento de cada competência é controlado pelo botão Prevista/Recebida na lista de Receitas, não aqui.</div>
+      <div class="form-grid">
+        <div class="form-group full"><label>Nome</label><input type="text" id="eRecNome2" value="${esc(r.nome||'')}"></div>
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor2" value="${r.valor}" min="0" step="0.01"></div>
+        <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      </div>`;
+  } else {
+    document.getElementById('modalBody').innerHTML=`
+      <div class="form-grid">
+        <div class="form-group full"><label>Nome</label><input type="text" id="eRecNome2" value="${esc(r.nome||'')}"></div>
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor2" value="${r.valor}" min="0" step="0.01"></div>
+        <div class="form-group"><label>Certeza</label>
+          <select id="eRecCerteza2">
+            <option value="contratado" ${r.certeza==='contratado'?'selected':''}>Contratado</option>
+            <option value="potencial" ${r.certeza==='potencial'?'selected':''}>Potencial</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Situação</label>
+          <select id="eRecEstado2" onchange="onERecEstado2Change()">
+            <option value="previsto" ${r.estado==='previsto'?'selected':''}>Prevista</option>
+            <option value="recebido" ${r.estado==='recebido'?'selected':''}>Recebida</option>
+            <option value="cancelado" ${r.estado==='cancelado'?'selected':''}>Cancelada</option>
+          </select>
+        </div>
+        <div class="form-group full" id="eRecDataPrevista2Group"><label>Data prevista</label><input type="date" id="eRecDataPrevista2" value="${r.dataPrevista||''}"></div>
+        <div class="form-group full" id="eRecDataRecebimento2Group" style="${r.estado==='recebido'?'':'display:none'}"><label>Data em que caiu na conta</label><input type="date" id="eRecDataRecebimento2" value="${r.dataRecebimento||''}"></div>
+        <div class="form-group full"><label>Competência (mês/ano de referência — não é a data de caixa)</label>
+          <div style="display:flex;gap:8px">
+            <select id="eRecCompMes2" style="flex:1">${MONTHS.map((m,i)=>`<option value="${i+1}" ${(r.competenciaMes||r.mes)===i+1?'selected':''}>${m}</option>`).join('')}</select>
+            <input type="number" id="eRecCompAno2" value="${r.competenciaAno||r.ano}" min="2020" max="2040" style="flex:1">
+          </div>
+        </div>
+        <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      </div>`;
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function onERecEstado2Change(){
+  const estado=document.getElementById('eRecEstado2')?.value;
+  const grp=document.getElementById('eRecDataRecebimento2Group');
+  if(grp) grp.style.display=(estado==='recebido')?'block':'none';
+}
+function saveEditReceitaNovoModelo(id){
+  const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  r.nome=document.getElementById('eRecNome2').value.trim();
+  r.valor=parseFloat(document.getElementById('eRecValor2').value)||0;
+  const contaSel=document.getElementById('eRecConta2')?.value;
+  r.conta=contaSel!==undefined?(contaSel||null):(r.conta||null);
+  if(!r.recorrencia){
+    // Evento único: continua sendo o MESMO evento lógico — nunca cria uma
+    // segunda receita ao transicionar previsto -> recebido (seção 24).
+    r.certeza=document.getElementById('eRecCerteza2').value;
+    r.estado=document.getElementById('eRecEstado2').value;
+    r.dataPrevista=document.getElementById('eRecDataPrevista2').value||null;
+    r.dataRecebimento=r.estado==='recebido'?(document.getElementById('eRecDataRecebimento2').value||r.dataRecebimento||null):null;
+    r.competenciaMes=parseInt(document.getElementById('eRecCompMes2').value);
+    r.competenciaAno=parseInt(document.getElementById('eRecCompAno2').value);
+    r.mes=r.competenciaMes; r.ano=r.competenciaAno; // mantém mes/ano em sincronia pra qualquer leitura legada desses campos
+  }
   scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
 }
 
@@ -4451,6 +4816,15 @@ function calcSaldoConta(contaId){
     if(r.conta!==contaId) return;
     if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
       r.parcelas.forEach(p=>{ if(p.recebida) saldo+=(p.valor||0); });
+    } else if(r.certeza!==undefined){
+      // GATE 2 — novo modelo semântico: só entra no caixa real quando
+      // efetivamente recebido (estado/recebidoPorMes) — nunca por previsão,
+      // certeza ou competência (regra absoluta de caixa real, seção 6).
+      if(r.recorrencia){
+        Object.values(r.recebidoPorMes||{}).forEach(sub=>{ if(sub&&sub.estado==='recebido') saldo+=(r.valor||0); });
+      } else if(r.estado==='recebido'){
+        saldo+=(r.valor||0);
+      }
     } else {
       // recorrente ou única: soma os meses marcados como recebidos
       Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk]) saldo+=(r.valor||0); });
@@ -4511,6 +4885,17 @@ function calcSaldoContaAte(contaId,mes,ano){
     if(r.conta!==contaId) return;
     if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
       r.parcelas.forEach(p=>{ if(p.recebida && mesKey(p.mes,p.ano)<=limite) saldo+=(p.valor||0); });
+    } else if(r.certeza!==undefined){
+      // GATE 2 — mesmo corte temporal do modelo legado, mas usando a data
+      // real de recebimento (ou o mês da ocorrência recorrente) em vez de
+      // recebidaMeses.
+      if(r.recorrencia){
+        Object.keys(r.recebidoPorMes||{}).forEach(mk=>{ const sub=r.recebidoPorMes[mk]; if(sub&&sub.estado==='recebido'&&mk<=limite) saldo+=(r.valor||0); });
+      } else if(r.estado==='recebido'){
+        const dataCaixa=getRevenueCashDate(r);
+        const mk=dataCaixa?dataCaixa.slice(0,7):null;
+        if(mk&&mk<=limite) saldo+=(r.valor||0);
+      }
     } else {
       Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk] && mk<=limite) saldo+=(r.valor||0); });
     }
@@ -6125,13 +6510,14 @@ function openResgatarCofrinho(cofrinhoId){
   document.getElementById('modalTitle').textContent='Resgatar do '+nomeCofr;
   const mesOpts=MONTHS.map((m,i)=>'<option value="'+(i+1)+'"'+(i+1===currentMonth?' selected':'')+'>'+m+'</option>').join('');
   document.getElementById('modalBody').innerHTML=
-    '<div class="info-box" style="margin-bottom:14px">Saldo disponível: <strong style="color:var(--accent2)">'+fmtBRL(saldoDisp)+'</strong><br>O valor resgatado entra como receita <strong>não tributável</strong>, já creditada na conta escolhida.</div>'+
+    '<div class="info-box" style="margin-bottom:14px">Saldo disponível: <strong style="color:var(--accent2)">'+fmtBRL(saldoDisp)+'</strong><br>O valor volta pra sua conta disponível — <strong>não é receita</strong>, é o mesmo dinheiro que já era seu, só saindo do patrimônio reservado.</div>'+
     '<div class="form-grid">'+
       '<div class="form-group full"><label>Valor a resgatar (R$)</label><input type="number" id="resgateValor" value="'+saldoDisp.toFixed(2)+'" min="0.01" step="0.01"></div>'+
       '<div class="form-group full"><label>Conta bancária de destino</label><select id="resgateConta">'+contaOpts+'</select></div>'+
-      '<div class="form-group"><label>Mês de entrada no caixa</label><select id="resgatesMes">'+mesOpts+'</select></div>'+
+      '<div class="form-group"><label>Mês de referência</label><select id="resgatesMes">'+mesOpts+'</select></div>'+
       '<div class="form-group"><label>Ano</label><input type="number" id="resgateAno" value="'+currentYear+'" min="2020" max="2040"></div>'+
-      '<div class="form-group full"><label>Motivo (opcional)</label><input type="text" id="resgateObs" placeholder="Ex: Cobertura de déficit de Julho"></div>'+
+      '<div class="form-group full"><label>Motivo</label><select id="resgateMotivo"><option value="planejado">Resgate planejado</option><option value="cobertura_caixa">Cobertura de caixa (déficit)</option><option value="outro" selected>Outro</option></select></div>'+
+      '<div class="form-group full"><label>Observação (opcional)</label><input type="text" id="resgateObs" placeholder="Ex: Cobertura de déficit de Julho"></div>'+
     '</div>'+
     '<div style="display:flex;gap:10px;margin-top:20px">'+
       '<button class="btn btn-warn" onclick="confirmarResgateCofrinho(\'' + cofrinhoId + '\')">↩ Confirmar resgate</button>'+
@@ -6146,20 +6532,28 @@ function confirmarResgateCofrinho(cofrinhoId){
   const ano=parseInt(document.getElementById('resgateAno').value);
   const contaId=document.getElementById('resgateConta')?.value;
   const obs=document.getElementById('resgateObs').value.trim();
+  const motivo=document.getElementById('resgateMotivo')?.value||'outro';
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   if(!contaId){toast('Cadastre e selecione a conta bancária de destino');return;}
   const saldoDisp=getSaldoCofrinho(cofrinhoId);
   if(valor>saldoDisp){toast('Saldo insuficiente (disponível: '+fmtBRL(saldoDisp)+')');return;}
   const cofr=state.cofrinhos.find(x=>x.id===cofrinhoId);
   const nomeCofr=cofr?cofr.name:'';
-  const movId=uid(); // ID compartilhado entre a movimentação do cofrinho e a receita gerada, pra exclusão exata
-  state.movimentacoesCofrinhos.push({id:movId,cofrinhoId,valor,mes,ano,obs:obs||'Resgate '+nomeCofr,tipo:'resgate',createdAt:uid()});
-  // Já entra creditado e recebido na conta escolhida — é um movimento imediato e real.
-  // tipo:'resgate' (não 'repasse') — é dinheiro que já era seu, não uma nova
-  // entrada operacional; tributavel:false garante que fica fora da base de 10%
-  // mesmo sem depender do flag isRepasse (que é conceito de terceiros).
-  state.receitas.push({id:uid(),tipo:'resgate',nome:'Resgate do Cofrinho: '+nomeCofr+(obs?' - '+obs:''),valor,mes,ano,conta:contaId,recorrente:false,isResgate:true,tributavel:false,cofrinhoMovId:movId,recebidaMeses:{[mesKey(mes,ano)]:true},createdAt:uid()});
+  const movId=uid(); // ID compartilhado entre a movimentação do cofrinho e o crédito na conta, pra exclusão exata
+  // GATE 2 (seção 15) — CORREÇÃO CONCEITUAL: resgate de cofrinho NÃO é
+  // receita. É patrimônio reservado voltando pra caixa disponível — mesma
+  // ideia de uma transferência interna, não uma nova entrada econômica.
+  // Pra eventos NOVOS (a partir daqui), o impacto de caixa é uma
+  // movimentacoesContas positiva, no mesmo padrão simétrico do depósito
+  // (que já debitava direto, nunca como despesa) — nunca mais um push em
+  // state.receitas. Registros ANTIGOS (tipo:'resgate' já existentes em
+  // state.receitas, de antes deste Gate) NÃO são migrados nem
+  // reinterpretados — continuam exatamente como estão (ver migrateState,
+  // isRevenueRealized só olha `certeza`, que esses registros nunca têm).
+  state.movimentacoesCofrinhos.push({id:movId,cofrinhoId,valor,mes,ano,obs:obs||'Resgate '+nomeCofr,tipo:'resgate',motivoResgate:motivo,createdAt:uid()});
+  state.movimentacoesContas.push({id:movId,contaId,valor:valor,data:new Date().toISOString(),obs:'Resgate do cofrinho: '+nomeCofr+(obs?' — '+obs:'')});
   scheduleSave();closeModal();renderCofrinho();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='contas') renderContas();
   if(mes===currentMonth&&ano===currentYear) renderDashboard();
   toast('Resgate de '+fmtBRL(valor)+' registrado! Já creditado na conta.');
 }
@@ -6259,7 +6653,7 @@ function exportarRepassePessoaPDF(personId){
 // Relatório de caixa (balanço consolidado do mês)
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
   let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
   if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
