@@ -14,6 +14,9 @@ const FILES = [
   'gate2-salary.test.mjs', 'gate2-revenue.test.mjs', 'gate2-transfers.test.mjs',
   'gate2-cofrinhos.test.mjs', 'gate2-cycle.test.mjs', 'gate2-invariants.test.mjs',
   'gate2-import-export.test.mjs', 'gate2-real-patterns.test.mjs',
+  // Gate 2.1 — patch: caixa de salário recorrente usa a data real de
+  // recebimento, nunca a chave de competência (correção pós-auditoria)
+  'gate2-1-salary-cash.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
