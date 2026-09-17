@@ -33,6 +33,13 @@ const FILES = [
   // excluída destrutivamente — bloqueio com zero mutation, nunca uma
   // "exclusão inteligente" que compensa ou apaga o passado
   'gate3-2-delete-integrity.test.mjs',
+  // Gate 3.3 — patch: "sem movimentações/referências" não é o mesmo que
+  // "financeiramente vazio" — uma reserva/conta com saldo efetivo != 0 (via
+  // tolerância monetária, nunca === 0 direto) também não pode ser excluída,
+  // mesmo sem nenhum histórico/referência; histórico/referência continuam
+  // tendo precedência sobre a checagem de saldo; ID inexistente nunca é
+  // allowed:true
+  'gate3-3-balance-protection.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
