@@ -2091,7 +2091,34 @@ function getRevenueCompetence(receita){
 // receitaRecebida, que já implementa essa regra pros dois modelos — existe
 // como função nomeada separada porque a seção 31 do Gate 2 pede esse nome
 // especificamente como parte da API pública/testável do motor.
+//
+// GATE 2.1 (seção 14) — ATENÇÃO AO SIGNIFICADO: pra receita recorrente
+// (salário), mes/ano aqui é a COMPETÊNCIA da ocorrência (a chave usada em
+// recebidoPorMes), não necessariamente o mês em que o dinheiro entrou no
+// caixa — receitaRecebida responde "a ocorrência desta competência já foi
+// marcada como recebida?", nunca "houve impacto de caixa neste mês?". Essas
+// são perguntas diferentes (seção 13) e não devem ser confundidas: a
+// primeira é útil pra exibição/lista de receitas por competência; a segunda
+// é a que calcSaldoConta/calcSaldoContaAte respondem, usando
+// getRecurringRevenueCashDate (dataRecebimento real), abaixo — nunca a
+// chave de competência. Mantido conservador aqui (sem refatoração ampla),
+// só documentado — ver relatório do Gate 2.1 seção 8/9.
 function isRevenueRealized(receita, mes, ano){ return receitaRecebida(receita, mes, ano); }
+
+// GATE 2.1 (seção 7/13) — data de caixa de UMA ocorrência específica de
+// receita recorrente, identificada pela sua própria chave de competência
+// (competenciaKey, formato 'YYYY-MM' — a mesma chave usada em
+// recebidoPorMes). Nunca retorna a própria competenciaKey como se fosse a
+// data de caixa (esse era exatamente o bug encontrado pela auditoria
+// externa em calcSaldoContaAte): usa dataRecebimento de dentro do
+// recebidoPorMes[competenciaKey]. Retorna null (nunca inventa uma data)
+// quando a ocorrência não está com estado 'recebido' ou não tem
+// dataRecebimento válida (seção 12 — SALARY_CASH_INV_01).
+function getRecurringRevenueCashDate(receita, competenciaKey){
+  const sub=(receita&&receita.recebidoPorMes||{})[competenciaKey];
+  if(!sub||sub.estado!=='recebido'||!sub.dataRecebimento) return null;
+  return sub.dataRecebimento;
+}
 
 // Uma movimentação de conta é uma transferência interna (própria pra
 // própria) quando tem transferId — nunca receita/despesa (seção 12).
@@ -4820,8 +4847,13 @@ function calcSaldoConta(contaId){
       // GATE 2 — novo modelo semântico: só entra no caixa real quando
       // efetivamente recebido (estado/recebidoPorMes) — nunca por previsão,
       // certeza ou competência (regra absoluta de caixa real, seção 6).
+      // GATE 2.1 (seção 6/12): exige dataRecebimento válida — sem ela, não
+      // existe impacto de caixa determinável, e o motor não pode inventar
+      // uma data (SALARY_CASH_INV_01). Cada competência entra no máximo uma
+      // vez, sem depender de qual mês está sendo consultado (calcSaldoConta
+      // não tem corte temporal — ver calcSaldoContaAte pra isso).
       if(r.recorrencia){
-        Object.values(r.recebidoPorMes||{}).forEach(sub=>{ if(sub&&sub.estado==='recebido') saldo+=(r.valor||0); });
+        Object.keys(r.recebidoPorMes||{}).forEach(mk=>{ if(getRecurringRevenueCashDate(r,mk)) saldo+=(r.valor||0); });
       } else if(r.estado==='recebido'){
         saldo+=(r.valor||0);
       }
@@ -4887,10 +4919,21 @@ function calcSaldoContaAte(contaId,mes,ano){
       r.parcelas.forEach(p=>{ if(p.recebida && mesKey(p.mes,p.ano)<=limite) saldo+=(p.valor||0); });
     } else if(r.certeza!==undefined){
       // GATE 2 — mesmo corte temporal do modelo legado, mas usando a data
-      // real de recebimento (ou o mês da ocorrência recorrente) em vez de
-      // recebidaMeses.
+      // real de recebimento em vez de recebidaMeses.
+      // GATE 2.1 (seção 2/3/7) — CORREÇÃO: a auditoria externa encontrou que
+      // esta comparação usava `mk` (a chave de COMPETÊNCIA da ocorrência em
+      // recebidoPorMes) como se fosse o mês do IMPACTO DE CAIXA. São coisas
+      // diferentes — uma competência de setembro pode ter dataRecebimento
+      // em outubro (recebimento atrasado) ou até em agosto (recebimento
+      // antecipado). O corte temporal tem que usar o mês da dataRecebimento
+      // real, nunca a chave de competência. getRecurringRevenueCashDate
+      // também garante que uma ocorrência sem dataRecebimento válida nunca
+      // entra (nenhuma data é inventada — SALARY_CASH_INV_01).
       if(r.recorrencia){
-        Object.keys(r.recebidoPorMes||{}).forEach(mk=>{ const sub=r.recebidoPorMes[mk]; if(sub&&sub.estado==='recebido'&&mk<=limite) saldo+=(r.valor||0); });
+        Object.keys(r.recebidoPorMes||{}).forEach(mk=>{
+          const cashDate=getRecurringRevenueCashDate(r,mk);
+          if(cashDate && cashDate.slice(0,7)<=limite) saldo+=(r.valor||0);
+        });
       } else if(r.estado==='recebido'){
         const dataCaixa=getRevenueCashDate(r);
         const mk=dataCaixa?dataCaixa.slice(0,7):null;
