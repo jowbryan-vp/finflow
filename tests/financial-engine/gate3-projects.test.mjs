@@ -9,6 +9,9 @@ await loadState(baseSyntheticState());
 await page.evaluate(() => {
   state.office.contas.push({ id: 'oc1', name: 'Conta Escritório', color: '#ff9900', saldoInicial: 0 });
   // Regra de repasse_pessoal configurada (20%) — necessária pra PJ04 exercitar de fato a geração.
+  // Gate 3.1: os 3 destinos precisam estar preenchidos e somar 100.
+  state.office.regrasDistribuicao.find((r) => r.destino === 'reserva').percentual = 40;
+  state.office.regrasDistribuicao.find((r) => r.destino === 'impostos').percentual = 40;
   state.office.regrasDistribuicao.find((r) => r.destino === 'repasse_pessoal').percentual = 20;
 });
 

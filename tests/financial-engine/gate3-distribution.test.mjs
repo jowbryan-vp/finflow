@@ -26,6 +26,11 @@ await check('OP01-bloqueado-sem-regra', async () => {
 // Agora configura a regra e recalcula.
 await check('OP01', async () => {
   const r = await page.evaluate(() => {
+    // Gate 3.1: a distribuição só fica "configured" quando os 3 destinos
+    // estão preenchidos e a soma é exatamente 100 — reserva e impostos
+    // também precisam ser preenchidos aqui, não só repasse_pessoal.
+    state.office.regrasDistribuicao.find((x) => x.destino === 'reserva').percentual = 40;
+    state.office.regrasDistribuicao.find((x) => x.destino === 'impostos').percentual = 30;
     state.office.regrasDistribuicao.find((x) => x.destino === 'repasse_pessoal').percentual = 30;
     syncDerivedPersonalTransfer('rec1');
     const repasse = state.office.repasses.find((rp) => rp.recebivelId === 'rec1');

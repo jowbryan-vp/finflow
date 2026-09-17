@@ -23,6 +23,11 @@ const FILES = [
   'gate3-separation.test.mjs', 'gate3-reserves.test.mjs', 'gate3-projects.test.mjs',
   'gate3-distribution.test.mjs', 'gate3-extraordinary.test.mjs', 'gate3-invariants.test.mjs',
   'gate3-import-export.test.mjs', 'gate3-real-patterns.test.mjs',
+  // Gate 3.1 — patch: reserva empresarial nova nunca nasce com saldo != 0
+  // (evita criar patrimônio do nada), e a soma das regras de distribuição
+  // precisa ser exatamente 100% quando totalmente preenchida (nunca
+  // normalizada, nunca inventada)
+  'gate3-1-reserve-integrity.test.mjs', 'gate3-1-distribution-validation.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

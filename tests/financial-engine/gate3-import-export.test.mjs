@@ -16,6 +16,9 @@ await page.evaluate(() => {
   state.office.movimentacoesReservas.push({ id: 'movR1', reservaId: 'or1', valor: 300, mes: 9, ano: 2026, tipo: 'aplicacao', createdAt: 'movR1' });
   state.office.projetos.push({ id: 'p1', nome: 'Residência Export', cliente: 'Cliente Export', valorContrato: 12000, status: 'contratado', dataContrato: '2026-09-01', observacao: 'obs export', createdAt: 'p1' });
   state.office.despesas.push({ id: 'od1', descricao: 'Software', categoria: 'Software', valor: 150, data: '2026-09-10', conta: 'oc1', projetoId: 'p1', status: 'pago', createdAt: 'od1' });
+  // Gate 3.1: os 3 destinos precisam estar preenchidos e somar 100.
+  state.office.regrasDistribuicao.find((x) => x.destino === 'reserva').percentual = 35;
+  state.office.regrasDistribuicao.find((x) => x.destino === 'impostos').percentual = 50;
   state.office.regrasDistribuicao.find((x) => x.destino === 'repasse_pessoal').percentual = 15;
   state.office.recebiveis.push({ id: 'rec1', projetoId: 'p1', descricao: 'Entrada', valor: 4000, estado: 'recebido', dataPrevista: '2026-09-20', dataRecebimento: '2026-09-22', contaDestino: 'oc1', createdAt: 'rec1' });
   syncDerivedPersonalTransfer('rec1');

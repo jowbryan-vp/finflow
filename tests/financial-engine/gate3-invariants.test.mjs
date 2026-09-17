@@ -87,6 +87,9 @@ await check('INV-O08', async () => {
   const r = await page.evaluate(() => {
     state.office.contas.push({ id: 'oc1', name: 'OC1', color: '#111', saldoInicial: 0 });
     state.office.projetos.push({ id: 'p1', nome: 'P1', cliente: 'C', valorContrato: 5000, status: 'contratado', dataContrato: '2026-09-01', observacao: '', createdAt: 'p1' });
+    // Gate 3.1: os 3 destinos precisam estar preenchidos e somar 100.
+    state.office.regrasDistribuicao.find((x) => x.destino === 'reserva').percentual = 35;
+    state.office.regrasDistribuicao.find((x) => x.destino === 'impostos').percentual = 40;
     state.office.regrasDistribuicao.find((x) => x.destino === 'repasse_pessoal').percentual = 25;
     state.office.recebiveis.push({ id: 'rec1', projetoId: 'p1', descricao: 'Entrada', valor: 4000, estado: 'previsto', dataPrevista: '2026-10-01', dataRecebimento: null, contaDestino: 'oc1', createdAt: 'rec1' });
     syncDerivedPersonalTransfer('rec1');

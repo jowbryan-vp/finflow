@@ -17,11 +17,12 @@ await check('padrao-projeto-com-distribuicao-completa', async () => {
     state.office.reservas.push({ id: 'orCapGiro', nome: 'Capital de Giro', finalidade: 'capital_de_giro', color: '#38e2b4', saldoInicial: 0 });
 
     // Regra de distribuição configurada pelo usuário (nunca inventada):
-    // 10% reserva, 15% impostos, 25% repasse pessoal — o restante (50%)
-    // fica no caixa operacional do escritório como capital de giro.
+    // 10% reserva, 65% impostos, 25% repasse pessoal — soma exatamente 100%
+    // (Gate 3.1: uma configuração completa precisa alocar 100% do recebível
+    // entre os 3 destinos, sem sobra implícita).
     state.office.regrasDistribuicao = [
       { destino: 'reserva', percentual: 10 },
-      { destino: 'impostos', percentual: 15 },
+      { destino: 'impostos', percentual: 65 },
       { destino: 'repasse_pessoal', percentual: 25 },
     ];
 

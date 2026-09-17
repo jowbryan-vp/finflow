@@ -38,6 +38,9 @@ await check('OX03', async () => {
   const r = await page.evaluate(() => {
     // Repasse planejado normal (via distribuição) e retirada extraordinária DEVEM coexistir sem se misturar.
     state.office.projetos.push({ id: 'p1', nome: 'Projeto A', cliente: 'Cliente A', valorContrato: 5000, status: 'contratado', dataContrato: '2026-09-01', observacao: '', createdAt: 'p1' });
+    // Gate 3.1: os 3 destinos precisam estar preenchidos e somar 100.
+    state.office.regrasDistribuicao.find((x) => x.destino === 'reserva').percentual = 50;
+    state.office.regrasDistribuicao.find((x) => x.destino === 'impostos').percentual = 30;
     state.office.regrasDistribuicao.find((x) => x.destino === 'repasse_pessoal').percentual = 20;
     state.office.recebiveis.push({ id: 'rec1', projetoId: 'p1', descricao: 'Entrada', valor: 5000, estado: 'previsto', dataPrevista: '2026-10-01', dataRecebimento: null, contaDestino: 'oc1', createdAt: 'rec1' });
     syncDerivedPersonalTransfer('rec1');
