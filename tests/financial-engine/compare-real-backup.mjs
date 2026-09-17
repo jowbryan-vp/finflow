@@ -74,7 +74,8 @@ function serve(rootDir) {
 async function computeSnapshot(rootDir) {
   const server = await serve(rootDir);
   const { port } = server.address();
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch(process.env.FINFLOW_CHROMIUM_PATH
+    ? { executablePath: process.env.FINFLOW_CHROMIUM_PATH } : {});
   const page = await browser.newPage({ viewport: { width: 1440, height: 1600 } });
   await page.route('**/cdn.jsdelivr.net/npm/chart.js@**', (route) => route.fulfill({ path: CHART_STUB_PATH, contentType: 'application/javascript' }));
   await page.route('**/cdnjs.cloudflare.com/**/pdf.min.js', (route) => route.abort());

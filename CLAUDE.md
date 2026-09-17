@@ -1,7 +1,5 @@
 # FinFlow — Claude Code
 
-Leia e siga `AGENTS.md`, `docs/architecture/WORKFLOW.md` e `docs/audits/WORKSPACE-SETUP.md`.
+Siga AGENTS.md e docs/architecture/WORKFLOW.md. Implemente apenas o escopo autorizado, em branch própria, e entregue commits e resultados ao Codex antes de continuar. Nunca editar simultaneamente o checkout.
 
-Seu papel padrão é implementar somente o gate explicitamente autorizado e entregar um commit revisável ao Codex. Não editar simultaneamente com outro agente. Antes da entrega, registrar escopo, arquivos alterados, testes executados e limitações. Depois da entrega, aguardar a revisão antes de corrigir ou continuar.
-
-A preparação local não autoriza Gate 2.2, Gate 4 nem alterações financeiras. A baseline pós-Gate-3.4 ainda precisa ser recuperada com seu histórico e testes originais. A pasta `tests/` preparada aqui não constitui a suíte histórica.
+O Gate 2.2 já está na baseline importada 33af86b. Nenhum novo gate foi autorizado pela preparação local. Rode a suíte conforme tests/README.md e registre falhas sem enfraquecer asserções.

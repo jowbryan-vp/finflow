@@ -1,7 +1,14 @@
-# Testes
+# Testes locais
 
-Pasta preparada para a suíte original; ela ainda não foi recuperada.
+A suíte original foi recuperada em financial-engine/. No terminal do VS Code:
 
-O relatório do Gate 3.4 referencia `tests/financial-engine/run-all.mjs` e `gate3-4-expense-delete-integrity.test.mjs`, com 227 testes. Esses arquivos não existem no histórico GitHub disponível. Não criar testes substitutos e chamá-los de suíte histórica.
+```powershell
+cd C:\Dev\FinFlow\tests\financial-engine
+npm ci --ignore-scripts
+npx playwright install chromium
+npm test
+```
 
-Após recuperar a origem, inspecionar o runner e as dependências antes de executar `node tests/financial-engine/run-all.mjs`. Registrar separadamente testes reproduzidos e resultados apenas citados em relatórios. Não usar backup financeiro real como fixture versionada.
+Por padrão usa o Chromium gerenciado pelo Playwright. Para um executável específico, definir FINFLOW_CHROMIUM_PATH no ambiente. A adaptação é restrita ao lançamento do navegador em harness.mjs e compare-real-backup.mjs; asserções e código financeiro foram preservados.
+
+A comparação com backup real é separada e não foi executada nesta recuperação. Não versionar backups pessoais.

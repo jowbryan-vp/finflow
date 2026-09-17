@@ -40,17 +40,14 @@ produção.
 
 ```bash
 cd tests/financial-engine
-npm install          # instala o playwright (única dependência)
-npm test             # roda os quatro arquivos .test.mjs e imprime o resumo
+npm ci --ignore-scripts # instala as dependências do lockfile
+npx playwright install chromium # instala o navegador gerenciado
+npm test             # roda a suíte completa de run-all.mjs
 ```
 
 Cada arquivo também roda isoladamente, por exemplo `node temporal.test.mjs`.
 
-Pré-requisito de ambiente: um Chromium acessível ao Playwright. Se
-`chromium.launch()` falhar por não achar o executável, ajuste o
-`executablePath` no topo de `harness.mjs` (ou rode `npx playwright install
-chromium` e remova o `executablePath` para usar o Chromium baixado pelo
-Playwright).
+Pré-requisito: Chromium gerenciado instalado pelo comando acima. Para usar um executável específico, defina FINFLOW_CHROMIUM_PATH no ambiente. Não é necessário editar os scripts para alternar Windows/Linux.
 
 ### Comparação com o backup real
 

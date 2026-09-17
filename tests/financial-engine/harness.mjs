@@ -85,7 +85,8 @@ export async function openHarness() {
   const { port } = server.address();
   const baseUrl = `http://127.0.0.1:${port}`;
 
-  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  const browser = await chromium.launch(process.env.FINFLOW_CHROMIUM_PATH
+    ? { executablePath: process.env.FINFLOW_CHROMIUM_PATH } : {});
   const page = await browser.newPage({ viewport: { width: 1440, height: 1600 } });
 
   const consoleErrors = [];

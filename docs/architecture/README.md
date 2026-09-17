@@ -1,9 +1,5 @@
 # Arquitetura observada
 
-O repositório `jowbryan-vp/finflow` recebido contém um único `index.html`, com aplicação e JavaScript no mesmo arquivo, persistência via localStorage e dependências carregadas por CDN. Não foi refatorado.
+A aplicação recuperada permanece em index.html, com HTML e JavaScript no mesmo arquivo. A suíte original está em tests/financial-engine/ e usa Playwright com dados sintéticos. Relatórios históricos foram preservados na raiz; delivery/ e mockup-*/ foram mantidos como exportados.
 
-`finflowV2` é outro repositório, com estrutura React/TypeScript; não foi misturado com este projeto.
-
-O arquivo pós-Gate-3.4 localizado em Downloads contém `canDeleteOfficeExpense`, ausente no HEAD importado. Portanto, esta descrição não certifica a arquitetura da baseline pós-Gate-3.4.
-
-Documente decisões futuras aqui, mantendo os relatórios históricos nos locais originais até verificar referências e comandos que dependam deles.
+O código atual veio da sessão remota do Claude (33af86b), incluindo Gate 2.2. Não foi substituído pelo GitHub antigo nem misturado com finflowV2. A preparação local altera documentação e a seleção do Chromium nos testes; não altera regras financeiras ou index.html.

@@ -16,3 +16,6 @@
 Preparação do editor e estrutura documental disponível. Baseline pós-Gate-3.4 NÃO estabelecida: falta a origem Git usada pelo Claude e seus testes. Não substituir silenciosamente o histórico por um novo repositório ou considerar um arquivo avulso equivalente ao histórico completo.
 
 Nenhuma lógica financeira foi alterada. Os arquivos em Downloads foram preservados. Nenhum dado financeiro real foi importado ou versionado. Sem certificação funcional ou execução da suíte histórica ausente.
+
+## Atualização posterior
+As pendências descritas acima são históricas e foram resolvidas pela exportação remota. Consulte LOCAL-RECOVERY.md para o estado atual.
