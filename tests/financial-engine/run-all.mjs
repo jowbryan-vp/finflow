@@ -47,6 +47,22 @@ const FILES = [
   // consolida também a matriz final de exclusões de todas as entidades do
   // Office (conta/reserva/recebível/despesa/projeto)
   'gate3-4-expense-delete-integrity.test.mjs',
+  // Gate 2.2 — patch de consolidação temporal decorrente de auditoria
+  // externa dos Gates 2/2.1/3.x: getReceitasEfetivasForMonth confundia
+  // COMPETÊNCIA (o mês a que uma ocorrência recorrente "pertence",
+  // recebidoPorMes) com CAIXA (o mês em que o dinheiro realmente entrou,
+  // dataRecebimento) — uma competência atrasada/antecipada aparecia como
+  // "entrada real" no mês errado, ou nunca aparecia no mês certo.
+  // getCashRevenuesForMonth é a nova visão de caixa canônica (varre TODAS as
+  // competências via getRecurringRevenueCashDate, motor do Gate 2.1, nunca
+  // duplicado); getReceitasEfetivasForMonth passa a ser um wrapper fino
+  // sobre ela (seus dois únicos callers eram perguntas de caixa). A UI de
+  // confirmação de salário (toggleReceitaRecebida) deixa de forçar a data de
+  // hoje e agora abre um modal com a data real editável. getReceivedSalaryEvents
+  // + getCurrentFinancialCycle são os adapters novos entre state.receitas e
+  // getFinancialCycle (motor puro do Gate 2, nunca reescrito) — o ciclo
+  // continua uma visão derivada, sem persistir cycleId em nada.
+  'gate2-2-cash-view.test.mjs', 'gate2-2-salary-ui.test.mjs', 'gate2-2-cycle-adapter.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
