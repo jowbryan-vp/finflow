@@ -462,6 +462,10 @@ select option{background:var(--card)}
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Repasses / Pessoas
       </div>
+      <div class="nav-item" data-page="escritorio" onclick="navigate('escritorio')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
+        Caixa do Escritório
+      </div>
       <div class="nav-section-label" style="margin-top:8px">Lançamentos</div>
       <div class="nav-item" data-page="receitas" onclick="navigate('receitas')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -1103,6 +1107,23 @@ select option{background:var(--card)}
         </div>
       </div>
 
+      <!-- GATE 3 — CAIXA DO ESCRITÓRIO -->
+      <div id="page-escritorio" class="page">
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header"><div class="card-title">Resumo do Escritório</div></div>
+          <div id="escritorioResumo"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="escritorioSubnav">
+          <button class="btn btn-ghost btn-sm" data-officetab="projetos" onclick="switchOfficeTab('projetos')">Projetos</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="recebiveis" onclick="switchOfficeTab('recebiveis')">Recebíveis</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="despesas" onclick="switchOfficeTab('despesas')">Despesas</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="reservas" onclick="switchOfficeTab('reservas')">Reservas</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="repasses" onclick="switchOfficeTab('repasses')">Repasses</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="config" onclick="switchOfficeTab('config')">Contas &amp; Regras</button>
+        </div>
+        <div id="escritorioSubContent"></div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -1435,7 +1456,7 @@ const DEFAULT_CARDS = [
   {id:'dinheiro', name:'Dinheiro/PIX', color:'#38e2b4', fecha:null, paga:null},
 ];
 
-let state = { categories:[], cards:[], contas:[], movimentacoesContas:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
+let state = { categories:[], cards:[], contas:[], movimentacoesContas:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{}, office:null };
 // ── Perfis (multi-usuário) ──
 // perfis = { id: { id, name, color, data:{...campos do state...} } }
 // state SEMPRE aponta para perfis[perfilAtivo].data — um objeto por perfil.
@@ -1626,6 +1647,43 @@ function migrateState() {
   // Compatibilidade com dados antigos que ainda usavam o id "dizimo" (nome anterior de Contribuição)
   const di=state.categories.findIndex(c=>c.id==='dizimo');
   if(di>=0){state.categories[di].id='contribuicao';state.categories[di].name='Contribuição';state.categories[di].subs=['Contribuição'];}
+
+  // ── GATE 3 — CAIXA DO ESCRITÓRIO ──
+  // Estrutura sempre vazia/default na primeira vez (seção 51 do Gate 3): NUNCA
+  // infere que uma conta/receita/projeto histórico é do escritório. Contas,
+  // projetos, recebíveis, despesas, reservas e repasses do escritório vivem
+  // inteiramente separados de state.contas/receitas/despesas/cofrinhos — nunca
+  // no mesmo array — justamente para impedir que qualquer um dos ~15 pontos
+  // do app que já somam `state.contas`/`calcSaldoConta` pra exibir saldo
+  // PESSOAL passe a incluir, sem querer, dinheiro do escritório (INV-O01/O02).
+  if(!state.office) state.office = {};
+  const off=state.office;
+  if(off.ativo===undefined) off.ativo=false; // usuário ainda não "ativou" o Caixa do Escritório
+  if(!off.nome) off.nome='Escritório'; // configurável — nunca hard-code de um nome de escritório específico
+  if(!off.contas) off.contas=[]; // {id,name,color,saldoInicial} — mesma forma de state.contas, array totalmente separado
+  off.contas.forEach(c=>{ if(c.saldoInicial===undefined) c.saldoInicial=0; });
+  if(!off.movimentacoesContas) off.movimentacoesContas=[]; // ajustes/transferências/repasses/retiradas: {id,contaId,valor,data,obs,transferId?,officeTransferId?}
+  if(!off.projetos) off.projetos=[]; // {id,nome,cliente,valorContrato,status,dataContrato,observacao,createdAt}
+  off.projetos.forEach(p=>{ if(!p.createdAt) p.createdAt=p.id; });
+  if(!off.recebiveis) off.recebiveis=[]; // {id,projetoId,descricao,valor,estado,dataPrevista,dataRecebimento,contaDestino,createdAt}
+  off.recebiveis.forEach(r=>{ if(!r.createdAt) r.createdAt=r.id; if(r.dataRecebimento===undefined) r.dataRecebimento=null; });
+  if(!off.despesas) off.despesas=[]; // {id,descricao,categoria,valor,data,conta,projetoId,status,createdAt}
+  off.despesas.forEach(d=>{ if(!d.createdAt) d.createdAt=d.id; if(d.projetoId===undefined) d.projetoId=null; });
+  if(!off.reservas) off.reservas=[]; // {id,nome,finalidade,color,saldoInicial} — mesma filosofia dos cofrinhos pessoais (patrimônio reservado ≠ caixa operacional)
+  off.reservas.forEach(r=>{ if(r.saldoInicial===undefined) r.saldoInicial=0; });
+  if(!off.movimentacoesReservas) off.movimentacoesReservas=[]; // {id,reservaId,valor,mes,ano,tipo:'aplicacao'|'resgate',motivoResgate?,createdAt}
+  off.movimentacoesReservas.forEach(m=>{ if(m.tipo==='resgate'&&m.motivoResgate===undefined) m.motivoResgate=null; });
+  if(!off.repasses) off.repasses=[]; // {id,tipo:'planejado'|'extraordinario',recebivelId,valor,estado:'previsto'|'recebido'|'cancelado',dataPrevista,dataRecebimento,officeTransferId,createdAt}
+  // regrasDistribuicao: percentual SEMPRE null até o usuário configurar
+  // explicitamente (seção 17 do Gate 3) — nunca inventar 10%/20%/30% etc.
+  if(!off.regrasDistribuicao || !off.regrasDistribuicao.length) off.regrasDistribuicao=[
+    {destino:'reserva', percentual:null},
+    {destino:'impostos', percentual:null},
+    {destino:'repasse_pessoal', percentual:null},
+  ];
+  // receitas pessoais derivadas do escritório (tipo repasse_escritorio/retirada_escritorio):
+  // nunca precisam de inferência aqui — já nascem com todos os campos do
+  // novo modelo (certeza/estado/datas/officeTransferId) no momento da criação.
 }
 
 // ════════════════════════════════════════════════
@@ -1873,7 +1931,7 @@ function importData(e) {
 // ════════════════════════════════════════════════
 // NAVIGATION
 // ════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas'};
+const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas',escritorio:'Caixa do Escritório'};
 function toggleMobileMenu(){
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebarOverlay').classList.toggle('open');
@@ -1921,7 +1979,7 @@ function updatePeriodLabel(){
 function renderAll(){ renderPage(document.querySelector('.nav-item.active')?.dataset?.page||'dashboard'); }
 function renderPage(page){
   updatePeriodLabel();
-  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,contas:renderContas,pessoas:renderPessoas}[page]||renderDashboard)();
+  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,contas:renderContas,pessoas:renderPessoas,escritorio:renderEscritorio}[page]||renderDashboard)();
 }
 
 // ════════════════════════════════════════════════
@@ -2146,6 +2204,137 @@ function getFinancialCycle(referenceDate, salaryEvents, expectedNextDate){
   if(proximoRecebido) return {startDate,endDate:addDaysISO(proximoRecebido,-1),startSource:'received_salary',endSource:'received_salary'};
   if(expectedNextDate) return {startDate,endDate:addDaysISO(expectedNextDate,-1),startSource:'received_salary',endSource:'expected_salary'};
   return {startDate,endDate:null,startSource:'received_salary',endSource:null};
+}
+
+// ════════════════════════════════════════════════
+// GATE 3 — CAIXA DO ESCRITÓRIO: fundação da separação patrimonial entre
+// PESSOA FÍSICA e ESCRITÓRIO (ver FINFLOW_IMPLEMENTATION_GATE_3_REPORT.md).
+// Todas as funções abaixo são puras (não lêem/escrevem DOM, só state.office
+// e o subconjunto de state.receitas que elas mesmas criam) e testáveis
+// isoladamente — ver tests/financial-engine/gate3-*.test.mjs.
+//
+// Princípio estrutural (seção 3/10 do Gate 3): contas/recebíveis/despesas do
+// escritório NUNCA compartilham array com contas/receitas/despesas pessoais
+// — vivem inteiramente em state.office.*. Isso torna INV-O01/O02 verdade por
+// CONSTRUÇÃO: nenhum dos ~15 pontos do app que somam state.contas pra saldo
+// pessoal (calcSaldoConta, o total de "Saldo por Conta", etc.) consegue
+// incluir dinheiro do escritório sem que alguém explicitamente some
+// state.office.contas também — o que nenhuma função pessoal existente faz.
+// ════════════════════════════════════════════════
+
+function isOfficeAccount(contaId){ return !!((state.office&&state.office.contas)||[]).some(c=>c.id===contaId); }
+function isOfficeReserveMovement(mov){ return !!(mov&&mov.reservaId); }
+function isOfficeToPersonalTransfer(mov){ return !!(mov&&mov.officeTransferId); }
+
+// Regra absoluta de caixa (mesma do Gate 2/2.1, seção 8/9 do Gate 3): um
+// recebível só é caixa real do escritório quando está 'recebido' E possui
+// dataRecebimento válida — nunca por dataPrevista, nunca inventando uma data.
+function isOfficeRecebivelRealizado(recebivel){
+  return !!(recebivel && recebivel.estado==='recebido' && recebivel.dataRecebimento);
+}
+// Data que rege o impacto de caixa de um recebível: a data real, nunca a
+// prevista (a prevista só serve pra exibição/previsão, nunca pra caixa).
+function getOfficeRecebivelCashDate(recebivel){
+  return isOfficeRecebivelRealizado(recebivel) ? recebivel.dataRecebimento : null;
+}
+
+// Saldo real de UMA conta do escritório: saldoInicial + ajustes/transferências/
+// repasses/retiradas (movimentacoesContas) + recebíveis efetivamente recebidos
+// nela − despesas empresariais debitadas dela. Nunca inclui recebível previsto,
+// projeto potencial, ou reserva empresarial (seção 11 do Gate 3).
+function calcSaldoOfficeConta(contaId){
+  const c=((state.office&&state.office.contas)||[]).find(x=>x.id===contaId);
+  if(!c) return 0;
+  let saldo=c.saldoInicial||0;
+  ((state.office&&state.office.movimentacoesContas)||[]).forEach(m=>{ if(m.contaId===contaId) saldo+=(m.valor||0); });
+  ((state.office&&state.office.recebiveis)||[]).forEach(r=>{
+    if(r.contaDestino!==contaId) return;
+    if(isOfficeRecebivelRealizado(r)) saldo+=(r.valor||0);
+  });
+  ((state.office&&state.office.despesas)||[]).forEach(d=>{ if(d.conta===contaId) saldo-=(d.valor||0); });
+  return saldo;
+}
+// Mesmo cálculo, com corte temporal (mesma filosofia de calcSaldoContaAte,
+// incluindo a correção do Gate 2.1: usa a data REAL de cada evento, nunca uma
+// chave de competência/agrupamento).
+function calcSaldoOfficeContaAte(contaId, mes, ano){
+  const c=((state.office&&state.office.contas)||[]).find(x=>x.id===contaId);
+  if(!c) return 0;
+  const limite=mesKey(mes,ano);
+  let saldo=c.saldoInicial||0;
+  ((state.office&&state.office.movimentacoesContas)||[]).forEach(m=>{
+    if(m.contaId!==contaId) return;
+    const mk=(m.data||'').slice(0,7);
+    if(mk && mk>limite) return;
+    saldo+=(m.valor||0);
+  });
+  ((state.office&&state.office.recebiveis)||[]).forEach(r=>{
+    if(r.contaDestino!==contaId) return;
+    const cashDate=getOfficeRecebivelCashDate(r);
+    if(cashDate && cashDate.slice(0,7)<=limite) saldo+=(r.valor||0);
+  });
+  ((state.office&&state.office.despesas)||[]).forEach(d=>{
+    if(d.conta!==contaId) return;
+    const dk=(d.data||'').slice(0,7);
+    if(dk && dk<=limite) saldo-=(d.valor||0);
+  });
+  return saldo;
+}
+// Saldo operacional total do escritório = soma dos saldos reais de TODAS as
+// contas do escritório. Nunca inclui recebível previsto, reserva empresarial
+// ou qualquer saldo pessoal (INV-O01/O02/O05).
+function getOfficeOperationalBalance(){
+  return ((state.office&&state.office.contas)||[]).reduce((s,c)=>s+calcSaldoOfficeConta(c.id),0);
+}
+function getOfficeOperationalBalanceAte(mes,ano){
+  return ((state.office&&state.office.contas)||[]).reduce((s,c)=>s+calcSaldoOfficeContaAte(c.id,mes,ano),0);
+}
+
+// Recebíveis cujo evento de referência (data real de recebimento se já
+// recebido, senão a data prevista) cai no mês/ano informado — mesma
+// filosofia de getReceitasForMonth (evento único), sem recorrência.
+function getOfficeReceivables(mes,ano){
+  return ((state.office&&state.office.recebiveis)||[]).filter(r=>{
+    const ref = isOfficeRecebivelRealizado(r) ? r.dataRecebimento : r.dataPrevista;
+    if(!ref) return false;
+    const [y,m]=ref.split('-').map(Number);
+    return y===ano && m===mes;
+  });
+}
+function getOfficeReceivedCash(mes,ano){
+  return getOfficeReceivables(mes,ano).filter(isOfficeRecebivelRealizado).reduce((s,r)=>s+(r.valor||0),0);
+}
+function getOfficeReceivablesPrevistoTotal(mes,ano){
+  return getOfficeReceivables(mes,ano).filter(r=>!isOfficeRecebivelRealizado(r)&&r.estado!=='cancelado').reduce((s,r)=>s+(r.valor||0),0);
+}
+
+// Reservas empresariais — mesma filosofia dos cofrinhos pessoais (seção 14 do
+// Gate 3): patrimônio reservado, nunca caixa operacional disponível.
+function getSaldoOfficeReserva(reservaId){
+  const r=((state.office&&state.office.reservas)||[]).find(x=>x.id===reservaId);
+  const saldoInicial=(r&&r.saldoInicial)||0;
+  const movs=((state.office&&state.office.movimentacoesReservas)||[]).filter(m=>m.reservaId===reservaId);
+  const aplicacoes=movs.filter(m=>m.tipo!=='resgate').reduce((s,m)=>s+(m.valor||0),0);
+  const resgates=movs.filter(m=>m.tipo==='resgate').reduce((s,m)=>s+(m.valor||0),0);
+  return saldoInicial+aplicacoes-resgates;
+}
+function getOfficeReservedBalance(){
+  return ((state.office&&state.office.reservas)||[]).reduce((s,r)=>s+getSaldoOfficeReserva(r.id),0);
+}
+
+// Distribuição de um recebível pelas regras configuradas (seção 17/18/63 do
+// Gate 3). NUNCA inventa percentuais: quando regrasDistribuicao ainda não foi
+// preenchida pelo usuário pra um destino, esse destino volta com valor=null e
+// configured=false — quem chama decide o que fazer (ex.: não gerar repasse).
+function calculateOfficeDistribution(recebivel){
+  const regras=(state.office&&state.office.regrasDistribuicao)||[];
+  const porDestino={};
+  let configured=regras.length>0;
+  regras.forEach(rule=>{
+    if(rule.percentual===null||rule.percentual===undefined){ configured=false; porDestino[rule.destino]=null; }
+    else porDestino[rule.destino]=(recebivel.valor||0)*(rule.percentual/100);
+  });
+  return { valor:recebivel.valor||0, configured, porDestino };
 }
 
 // Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
@@ -3205,7 +3394,7 @@ function renderRelatorio(){
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
-    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
     recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
@@ -3412,7 +3601,7 @@ function renderReceitas(){
     bannerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:12px;gap:10px"><span>✓ Mostrando só as receitas <strong>já recebidas</strong></span><button class="btn btn-ghost btn-sm" onclick="window._recFiltro='todas';renderReceitas()">✕ Ver todas</button></div>`;
   }
 
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
   let html=bannerHTML;
 
   // ── Seção de Repasses agrupada por pessoa ──
@@ -3499,6 +3688,19 @@ function renderReceitas(){
 
 function toggleReceitaRecebida(recId){
   const r=state.receitas.find(x=>x.id===recId);if(!r)return;
+  // GATE 3 (seção 22/37) — receita derivada do escritório (repasse/retirada):
+  // é o MESMO evento lógico que existe do lado do escritório (state.office.
+  // repasses) — nunca alterna só o lado pessoal isoladamente, senão os dois
+  // lados divergem silenciosamente. Realizar o repasse é uma ação explícita
+  // na aba Caixa do Escritório (realizeOfficeTransfer), não aqui.
+  if(r.origem==='office_distribution'){
+    toast('Este repasse vem do Caixa do Escritório — realize-o lá (aba Repasses) para manter os dois lados sincronizados');
+    return;
+  }
+  if(r.origem==='office_extraordinary_withdrawal'){
+    toast('Esta retirada extraordinária já foi registrada como recebida no momento em que ocorreu');
+    return;
+  }
   if(r.certeza!==undefined){
     // GATE 2 — novo modelo: atualiza o MESMO evento lógico (nunca cria uma
     // segunda receita, seção 24). recorrente (salário): estado por mês em
@@ -3536,10 +3738,34 @@ function toggleParcelaReceita(recId, parcelaIdx){
   scheduleSave();renderReceitas();renderDashboard();
   toast(r.parcelas[parcelaIdx].recebida?'Parcela marcada como recebida — entra no caixa!':'Parcela voltou para prevista');
 }
-function delReceita(id){state.receitas=state.receitas.filter(r=>r.id!==id);scheduleSave();renderReceitas();toast('Receita removida');}
+function delReceita(id){
+  const r=state.receitas.find(x=>x.id===id);
+  // GATE 3 (seção 38) — nunca apaga silenciosamente uma receita derivada do
+  // escritório: ela representa histórico financeiro (um repasse já
+  // realizado, ou um previsto vinculado a um recebível ainda existente).
+  if(r && r.origem && r.origem.startsWith('office_')){
+    toast('Esta receita vem do Caixa do Escritório — exclua/cancele o recebível ou repasse de origem na aba Escritório');
+    return;
+  }
+  state.receitas=state.receitas.filter(r=>r.id!==id);scheduleSave();renderReceitas();toast('Receita removida');
+}
 
 function openEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  // GATE 3 (seção 37) — receita derivada do escritório: editar livremente
+  // aqui faria divergir do evento de origem sem aviso. Mostra um aviso
+  // explícito em vez de construir permissões complexas.
+  if(r.origem && r.origem.startsWith('office_')){
+    document.getElementById('modalTitle').textContent='Receita derivada do Caixa do Escritório';
+    document.getElementById('modalBody').innerHTML=`
+      <div class="info-box">Esta receita (<strong>${esc(r.nome||'')}</strong>, ${fmtBRL(r.valor||0)}) foi gerada automaticamente a partir do Caixa do Escritório e está vinculada a um evento lá (<code>${esc(r.officeTransferId||'')}</code>). Edite o recebível/repasse de origem na aba <strong>Caixa do Escritório</strong> para alterar valor ou data — editar só o lado pessoal faria os dois lados divergirem silenciosamente.</div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-primary" onclick="closeModal();navigate('escritorio')">Ir para o Caixa do Escritório</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+      </div>`;
+    document.getElementById('modalOverlay').classList.add('open');
+    return;
+  }
   if(r.certeza!==undefined) return openEditReceitaNovoModelo(id);
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
@@ -6696,7 +6922,7 @@ function exportarRepassePessoaPDF(personId){
 // Relatório de caixa (balanço consolidado do mês)
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
   let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
   if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
@@ -6745,6 +6971,758 @@ function exportarAnalisePDF(){
       <tbody>${rows}</tbody>
     </table>`;
   exportarRelatorioPDF('Análise por Categoria', html);
+}
+
+// ════════════════════════════════════════════════
+// GATE 3 — CAIXA DO ESCRITÓRIO (ações que gravam state + UI)
+// As funções puras (calcSaldoOfficeConta, isOfficeRecebivelRealizado,
+// calculateOfficeDistribution, getFinancialCycle etc.) vivem perto do topo
+// do arquivo, junto das funções puras do Gate 2 — aqui só o que lê/escreve
+// DOM e as duas funções que criam o vínculo escritório↔pessoal.
+// ════════════════════════════════════════════════
+
+// Sincroniza (cria/atualiza/cancela) a receita pessoal + o repasse do
+// escritório derivados de UM recebível — idempotente por construção: usa um
+// id determinístico (officeTransferId='off_'+recebivelId), então rodar isso
+// de novo pro MESMO recebível nunca cria um segundo repasse/receita (seção
+// 36/48 do Gate 3, INV-O14/OP03/PJ). Só age em projetos 'contratado'
+// (PJ02/PJ05) e nunca inventa um percentual de repasse não configurado
+// (seção 17/18, OP01/OP04).
+function syncDerivedPersonalTransfer(recebivelId){
+  const recebivel=(state.office.recebiveis||[]).find(r=>r.id===recebivelId);
+  if(!recebivel) return;
+  const projeto=(state.office.projetos||[]).find(p=>p.id===recebivel.projetoId);
+  const officeTransferId='off_'+recebivelId;
+  const repasseExistente=(state.office.repasses||[]).find(rp=>rp.officeTransferId===officeTransferId);
+  const receitaExistente=state.receitas.find(r=>r.officeTransferId===officeTransferId);
+
+  // Recebível cancelado: invalida a previsão derivada, mas NUNCA cancela
+  // retroativamente um repasse/receita já efetivamente recebido (seção 34).
+  if(recebivel.estado==='cancelado'){
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+    return;
+  }
+  // Projeto ausente, potencial ou cancelado: nunca gera repasse automático
+  // (PJ02/PJ05) — só projeto 'contratado' pode.
+  if(!projeto || projeto.status!=='contratado'){
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+    return;
+  }
+
+  const distribuicao=calculateOfficeDistribution(recebivel);
+  const valorRepasse=distribuicao.porDestino.repasse_pessoal;
+  // Regra de repasse_pessoal ainda não configurada — NUNCA inventa um
+  // percentual (BLOCKED_DISTRIBUTION_RULE / DISTRIBUTION_RULES_CONFIGURATION_REQUIRED).
+  if(valorRepasse===null||valorRepasse===undefined||valorRepasse<=0){
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+    return;
+  }
+
+  const dataPrevista=recebivel.dataPrevista||recebivel.dataRecebimento||null;
+  if(repasseExistente){
+    if(repasseExistente.estado==='previsto'){
+      // Recebível mudou de valor/data: o repasse previsto acompanha a regra
+      // (OP04) — nunca sobrescreve um repasse já efetivamente realizado.
+      repasseExistente.estado='previsto';
+      repasseExistente.valor=valorRepasse;
+      repasseExistente.dataPrevista=dataPrevista;
+      if(receitaExistente && receitaExistente.estado==='previsto'){
+        receitaExistente.valor=valorRepasse;
+        receitaExistente.dataPrevista=dataPrevista;
+        const [ano,mes]=(dataPrevista||'').split('-').map(Number);
+        receitaExistente.competenciaMes=mes||receitaExistente.competenciaMes;
+        receitaExistente.competenciaAno=ano||receitaExistente.competenciaAno;
+        receitaExistente.mes=receitaExistente.competenciaMes; receitaExistente.ano=receitaExistente.competenciaAno;
+      }
+    }
+    // Se já 'recebido' (repasse efetivamente realizado), nunca é
+    // sobrescrito por um recálculo (seção 37 — editar na origem só antes
+    // de realizar; depois de realizado, é histórico).
+    return;
+  }
+  // Primeira vez: cria o repasse do lado do escritório e a receita
+  // correspondente do lado pessoal, já vinculados pelo mesmo officeTransferId.
+  const [ano,mes]=(dataPrevista||'').split('-').map(Number);
+  state.office.repasses.push({
+    id:uid(), tipo:'planejado', recebivelId, valor:valorRepasse, estado:'previsto',
+    dataPrevista, dataRecebimento:null, officeTransferId, createdAt:uid(),
+  });
+  state.receitas.push({
+    id:uid(), tipo:'repasse_escritorio', nome:'Repasse do Escritório'+(projeto?(' — '+projeto.nome):''),
+    valor:valorRepasse, certeza:'contratado', estado:'previsto', dataPrevista, dataRecebimento:null,
+    competenciaMes:mes||null, competenciaAno:ano||null, mes:mes||null, ano:ano||null, conta:null,
+    origem:'office_distribution', officeTransferId, createdAt:uid(),
+  });
+}
+
+// Efetiva um repasse previsto: Escritório -valor / Pessoal +valor, no MESMO
+// evento lógico dos dois lados (nunca cria uma segunda receita — seção
+// 22/OP09). Idempotente: chamar de novo sobre um repasse já 'recebido' não
+// faz nada (retorna false).
+function realizeOfficeTransfer(repasseId, dataReal, officeContaId, personalContaId){
+  const rep=(state.office.repasses||[]).find(r=>r.id===repasseId);
+  if(!rep || rep.estado==='recebido') return false;
+  rep.estado='recebido';
+  rep.dataRecebimento=dataReal;
+  state.office.movimentacoesContas.push({id:uid(),contaId:officeContaId,valor:-rep.valor,data:dataReal,obs:'Repasse ao financeiro pessoal',officeTransferId:rep.officeTransferId});
+  const receita=state.receitas.find(r=>r.officeTransferId===rep.officeTransferId);
+  if(receita){
+    receita.estado='recebido';
+    receita.dataRecebimento=dataReal;
+    receita.conta=personalContaId;
+  }
+  return true;
+}
+
+// Retirada extraordinária (seção 24-26 do Gate 3): escritório -valor /
+// pessoal +valor, IMEDIATA (não passa por um estado "previsto" — o usuário
+// só registra depois que já precisou do dinheiro) e SEMPRE identificável
+// separadamente de repasse planejado ou salário (nunca mascarada).
+function createExtraordinaryWithdrawal(valor, dataReal, officeContaId, personalContaId, obs){
+  if(!valor||valor<=0) return null;
+  const transferId=uid();
+  state.office.movimentacoesContas.push({id:uid(),contaId:officeContaId,valor:-valor,data:dataReal,obs:'Retirada extraordinária'+(obs?': '+obs:''),officeTransferId:transferId,tipoRetirada:'extraordinaria'});
+  const [ano,mes]=(dataReal||'').split('-').map(Number);
+  state.receitas.push({
+    id:uid(), tipo:'retirada_escritorio', nome:'Retirada Extraordinária do Escritório'+(obs?' — '+obs:''),
+    valor, certeza:'contratado', estado:'recebido', dataPrevista:dataReal, dataRecebimento:dataReal,
+    competenciaMes:mes||null, competenciaAno:ano||null, mes:mes||null, ano:ano||null, conta:personalContaId,
+    origem:'office_extraordinary_withdrawal', officeTransferId:transferId, createdAt:uid(),
+  });
+  return transferId;
+}
+
+let officeSubTab='projetos';
+function switchOfficeTab(tab){
+  officeSubTab=tab;
+  document.querySelectorAll('#escritorioSubnav [data-officetab]').forEach(b=>{
+    b.classList.toggle('btn-primary', b.dataset.officetab===tab);
+    b.classList.toggle('btn-ghost', b.dataset.officetab!==tab);
+  });
+  renderOfficeSubContent();
+}
+function renderOfficeSubContent(){
+  const fns={projetos:renderOfficeProjetosTab, recebiveis:renderOfficeRecebiveisTab, despesas:renderOfficeDespesasTab, reservas:renderOfficeReservasTab, repasses:renderOfficeRepassesTab, config:renderOfficeConfigTab};
+  (fns[officeSubTab]||renderOfficeProjetosTab)();
+}
+function renderEscritorio(){
+  renderEscritorioResumo();
+  document.querySelectorAll('#escritorioSubnav [data-officetab]').forEach(b=>{
+    b.classList.toggle('btn-primary', b.dataset.officetab===officeSubTab);
+    b.classList.toggle('btn-ghost', b.dataset.officetab!==officeSubTab);
+  });
+  renderOfficeSubContent();
+}
+
+function renderEscritorioResumo(){
+  const el=document.getElementById('escritorioResumo'); if(!el) return;
+  const off=state.office||{};
+  if(!off.contas.length && !off.projetos.length){
+    el.innerHTML=`<div class="info-box">Nenhuma conta ou projeto do escritório cadastrado ainda. Cadastre uma conta empresarial em "Contas &amp; Regras" e um projeto em "Projetos" para começar. O saldo do escritório nunca é somado ao seu caixa pessoal.</div>`;
+    return;
+  }
+  const saldoOperacional=getOfficeOperationalBalance();
+  const recebidoMes=getOfficeReceivedCash(currentMonth,currentYear);
+  const previstoMes=getOfficeReceivablesPrevistoTotal(currentMonth,currentYear);
+  const despesasMes=(off.despesas||[]).filter(d=>(d.data||'').slice(0,7)===mesKey(currentMonth,currentYear)).reduce((s,d)=>s+(d.valor||0),0);
+  const reservado=getOfficeReservedBalance();
+  const repassesPrevistoTotal=(off.repasses||[]).filter(r=>r.estado==='previsto').reduce((s,r)=>s+(r.valor||0),0);
+  const repassesRealizadoMes=(off.repasses||[]).filter(r=>r.estado==='recebido'&&(r.dataRecebimento||'').slice(0,7)===mesKey(currentMonth,currentYear)).reduce((s,r)=>s+(r.valor||0),0);
+  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Saldo operacional</div><div class="item-row-meta">Contas do escritório</div></div><div class="item-row-val ${saldoOperacional>=0?'pos':'neg'}">${fmtBRL(saldoOperacional)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Recebíveis previstos</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val muted">${fmtBRL(previstoMes)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Recebido no período</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val pos">${fmtBRL(recebidoMes)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Despesas do escritório</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val neg">${fmtBRL(despesasMes)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Reservas empresariais</div><div class="item-row-meta">Fora do caixa operacional</div></div><div class="item-row-val muted">${fmtBRL(reservado)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Previsto p/ repasse</div><div class="item-row-meta">Ainda não transferido</div></div><div class="item-row-val muted">${fmtBRL(repassesPrevistoTotal)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Repassado no período</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val pos">${fmtBRL(repassesRealizadoMes)}</div></div>
+  </div>`;
+}
+
+// ── Projetos ──
+function renderOfficeProjetosTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const statusLabel={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
+  const statusBadge={potencial:'badge-yellow',contratado:'badge-blue',concluido:'badge-ok',cancelado:'badge-red'};
+  const projetos=(state.office.projetos||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const rows=projetos.map(p=>{
+    const recebiveisDoProjeto=(state.office.recebiveis||[]).filter(r=>r.projetoId===p.id);
+    const totalRecebido=recebiveisDoProjeto.filter(isOfficeRecebivelRealizado).reduce((s,r)=>s+(r.valor||0),0);
+    return `<div class="item-row">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(p.nome)} <span class="badge ${statusBadge[p.status]||'badge-blue'}">${statusLabel[p.status]||p.status}</span></div>
+        <div class="item-row-meta">${esc(p.cliente||'—')} · Contrato: ${fmtBRL(p.valorContrato||0)} · Recebido: ${fmtBRL(totalRecebido)} · ${recebiveisDoProjeto.length} recebível(is)</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeProjeto('${p.id}')">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeProjeto('${p.id}')">🗑</button>
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhum projeto cadastrado ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Novo Projeto</div></div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Nome do projeto</label><input type="text" id="newProjNome" placeholder="Ex: Residência Silva"></div>
+          <div class="form-group full"><label>Cliente</label><input type="text" id="newProjCliente" placeholder="Ex: João Silva"></div>
+          <div class="form-group"><label>Valor do contrato (R$)</label><input type="number" id="newProjValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Status</label>
+            <select id="newProjStatus">
+              <option value="potencial">Potencial</option>
+              <option value="contratado">Contratado</option>
+              <option value="concluido">Concluído</option>
+              <option value="cancelado">Cancelado</option>
+            </select>
+          </div>
+          <div class="form-group full"><label>Data do contrato</label><input type="date" id="newProjData"></div>
+          <div class="form-group full"><label>Observações</label><input type="text" id="newProjObs" placeholder="opcional"></div>
+        </div>
+        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>.</div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeProjeto()">Adicionar Projeto</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Projetos Cadastrados</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeProjeto(){
+  const nome=document.getElementById('newProjNome').value.trim();
+  if(!nome){toast('Informe o nome do projeto');return;}
+  const cliente=document.getElementById('newProjCliente').value.trim();
+  const valorContrato=parseFloat(document.getElementById('newProjValor').value)||0;
+  const status=document.getElementById('newProjStatus').value;
+  const dataContrato=document.getElementById('newProjData').value||null;
+  const observacao=document.getElementById('newProjObs').value.trim();
+  state.office.projetos.push({id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid()});
+  scheduleSave();renderOfficeProjetosTab();renderEscritorioResumo();
+  toast('Projeto adicionado!');
+}
+function openEditOfficeProjeto(id){
+  const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
+  const statusLabel={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
+  document.getElementById('modalTitle').textContent='Editar Projeto';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Nome</label><input type="text" id="eProjNome" value="${esc(p.nome)}"></div>
+      <div class="form-group full"><label>Cliente</label><input type="text" id="eProjCliente" value="${esc(p.cliente||'')}"></div>
+      <div class="form-group"><label>Valor do contrato</label><input type="number" id="eProjValor" value="${p.valorContrato||0}" min="0" step="0.01"></div>
+      <div class="form-group"><label>Status</label>
+        <select id="eProjStatus">
+          ${['potencial','contratado','concluido','cancelado'].map(s=>`<option value="${s}" ${p.status===s?'selected':''}>${statusLabel[s]}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group full"><label>Data do contrato</label><input type="date" id="eProjData" value="${p.dataContrato||''}"></div>
+      <div class="form-group full"><label>Observações</label><input type="text" id="eProjObs" value="${esc(p.observacao||'')}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditOfficeProjeto('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function saveEditOfficeProjeto(id){
+  const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
+  const statusAntigo=p.status;
+  p.nome=document.getElementById('eProjNome').value.trim()||p.nome;
+  p.cliente=document.getElementById('eProjCliente').value.trim();
+  p.valorContrato=parseFloat(document.getElementById('eProjValor').value)||0;
+  p.status=document.getElementById('eProjStatus').value;
+  p.dataContrato=document.getElementById('eProjData').value||null;
+  p.observacao=document.getElementById('eProjObs').value.trim();
+  // Mudou de/para 'contratado': os repasses derivados dos recebíveis deste
+  // projeto precisam ser recalculados (podem passar a existir ou a ser
+  // cancelados, conforme PJ02/PJ05).
+  if(statusAntigo!==p.status){
+    (state.office.recebiveis||[]).filter(r=>r.projetoId===id).forEach(r=>syncDerivedPersonalTransfer(r.id));
+  }
+  scheduleSave();closeModal();renderOfficeProjetosTab();renderEscritorioResumo();toast('Projeto atualizado!');
+}
+function delOfficeProjeto(id){
+  const recebiveis=(state.office.recebiveis||[]).filter(r=>r.projetoId===id);
+  const temRealizado = recebiveis.some(isOfficeRecebivelRealizado) || (state.office.repasses||[]).some(rp=>recebiveis.some(r=>r.id===rp.recebivelId) && rp.estado==='recebido');
+  if(temRealizado){ toast('Este projeto tem recebíveis ou repasses já efetivamente recebidos e não pode ser excluído'); return; }
+  const idsRecebiveis=recebiveis.map(r=>r.id);
+  const transferIds=idsRecebiveis.map(rid=>'off_'+rid);
+  state.office.repasses=(state.office.repasses||[]).filter(rp=>!transferIds.includes(rp.officeTransferId));
+  state.receitas=state.receitas.filter(r=>!transferIds.includes(r.officeTransferId));
+  state.office.recebiveis=(state.office.recebiveis||[]).filter(r=>r.projetoId!==id);
+  state.office.projetos=(state.office.projetos||[]).filter(p=>p.id!==id);
+  scheduleSave();renderOfficeProjetosTab();renderEscritorioResumo();toast('Projeto removido');
+}
+
+// ── Recebíveis ──
+function renderOfficeRecebiveisTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const statusLabelProj={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
+  const projetoOpts = (state.office.projetos||[]).length
+    ? state.office.projetos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${statusLabelProj[p.status]||p.status})</option>`).join('')
+    : `<option value="">— Cadastre um projeto primeiro —</option>`;
+  const contaOpts = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const estadoLabel={previsto:'Previsto',recebido:'Recebido',cancelado:'Cancelado'};
+  const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
+  const recebiveis=(state.office.recebiveis||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const rows=recebiveis.map(r=>{
+    const projeto=(state.office.projetos||[]).find(p=>p.id===r.projetoId);
+    return `<div class="item-row ${r.estado==='recebido'?'pago':r.estado==='previsto'?'previsto':''}">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(r.descricao||'Recebível')} <span class="badge ${estadoBadge[r.estado]||'badge-blue'}">${estadoLabel[r.estado]||r.estado}</span></div>
+        <div class="item-row-meta">${esc(projeto?projeto.nome:'—')} · Previsto: ${r.dataPrevista||'—'}${r.dataRecebimento?' · Recebido: '+r.dataRecebimento:''}</div>
+      </div>
+      <div class="item-row-val ${r.estado==='recebido'?'pos':'muted'}">${fmtBRL(r.valor||0)}</div>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeRecebivel('${r.id}')">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeRecebivel('${r.id}')">🗑</button>
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhum recebível cadastrado ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Novo Recebível</div></div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Projeto</label><select id="newRecebProjeto">${projetoOpts}</select></div>
+          <div class="form-group full"><label>Descrição / parcela</label><input type="text" id="newRecebDesc" placeholder="Ex: Entrada, Parcela 2/3"></div>
+          <div class="form-group"><label>Valor (R$)</label><input type="number" id="newRecebValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Data prevista</label><input type="date" id="newRecebDataPrevista"></div>
+          <div class="form-group full"><label>Conta empresarial de destino</label><select id="newRecebConta">${contaOpts}</select></div>
+        </div>
+        <div class="info-box" style="margin-top:10px">Nasce como <strong>previsto</strong> — recebível previsto nunca entra no caixa real. Marque como recebido depois, com a data real.</div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeRecebivel()">Adicionar Recebível</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Recebíveis</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeRecebivel(){
+  const projetoId=document.getElementById('newRecebProjeto').value;
+  const descricao=document.getElementById('newRecebDesc').value.trim();
+  const valor=parseFloat(document.getElementById('newRecebValor').value);
+  const dataPrevista=document.getElementById('newRecebDataPrevista').value||null;
+  const contaDestino=document.getElementById('newRecebConta').value||null;
+  if(!projetoId){toast('Cadastre e selecione um projeto');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  const id=uid();
+  state.office.recebiveis.push({id,projetoId,descricao,valor,estado:'previsto',dataPrevista,dataRecebimento:null,contaDestino,createdAt:uid()});
+  syncDerivedPersonalTransfer(id);
+  scheduleSave();renderOfficeRecebiveisTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Recebível adicionado!');
+}
+function openEditOfficeRecebivel(id){
+  const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
+  const contaOpts = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}" ${r.contaDestino===c.id?'selected':''}>${esc(c.name)}</option>`).join('')
+    : `<option value="">— Nenhuma conta cadastrada —</option>`;
+  document.getElementById('modalTitle').textContent='Editar Recebível';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Descrição</label><input type="text" id="eRecebDesc" value="${esc(r.descricao||'')}"></div>
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecebValor" value="${r.valor}" min="0" step="0.01"></div>
+      <div class="form-group"><label>Estado</label>
+        <select id="eRecebEstado" onchange="onERecebEstadoChange()">
+          <option value="previsto" ${r.estado==='previsto'?'selected':''}>Previsto</option>
+          <option value="recebido" ${r.estado==='recebido'?'selected':''}>Recebido</option>
+          <option value="cancelado" ${r.estado==='cancelado'?'selected':''}>Cancelado</option>
+        </select>
+      </div>
+      <div class="form-group full"><label>Data prevista</label><input type="date" id="eRecebDataPrevista" value="${r.dataPrevista||''}"></div>
+      <div class="form-group full" id="eRecebDataRecebimentoGroup" style="${r.estado==='recebido'?'':'display:none'}"><label>Data em que caiu na conta</label><input type="date" id="eRecebDataRecebimento" value="${r.dataRecebimento||''}"></div>
+      <div class="form-group full"><label>Conta empresarial de destino</label><select id="eRecebConta">${contaOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditOfficeRecebivel('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function onERecebEstadoChange(){
+  const estado=document.getElementById('eRecebEstado')?.value;
+  const grp=document.getElementById('eRecebDataRecebimentoGroup');
+  if(grp) grp.style.display=(estado==='recebido')?'block':'none';
+}
+function saveEditOfficeRecebivel(id){
+  const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
+  r.descricao=document.getElementById('eRecebDesc').value.trim();
+  r.valor=parseFloat(document.getElementById('eRecebValor').value)||0;
+  r.estado=document.getElementById('eRecebEstado').value;
+  r.dataPrevista=document.getElementById('eRecebDataPrevista').value||null;
+  r.dataRecebimento=r.estado==='recebido'?(document.getElementById('eRecebDataRecebimento').value||r.dataRecebimento||null):null;
+  r.contaDestino=document.getElementById('eRecebConta').value||null;
+  syncDerivedPersonalTransfer(id);
+  scheduleSave();closeModal();renderOfficeRecebiveisTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Recebível atualizado!');
+}
+function delOfficeRecebivel(id){
+  const r=(state.office.recebiveis||[]).find(x=>x.id===id);
+  if(r && isOfficeRecebivelRealizado(r)){ toast('Este recebível já foi efetivamente recebido e não pode ser excluído — cancele-o se necessário, o histórico é preservado'); return; }
+  const officeTransferId='off_'+id;
+  const repasseVinculado=(state.office.repasses||[]).find(rp=>rp.officeTransferId===officeTransferId);
+  if(repasseVinculado && repasseVinculado.estado==='recebido'){ toast('Este recebível já gerou um repasse efetivamente realizado e não pode ser excluído'); return; }
+  state.office.repasses=(state.office.repasses||[]).filter(rp=>rp.officeTransferId!==officeTransferId);
+  state.receitas=state.receitas.filter(x=>x.officeTransferId!==officeTransferId);
+  state.office.recebiveis=(state.office.recebiveis||[]).filter(x=>x.id!==id);
+  scheduleSave();renderOfficeRecebiveisTab();renderEscritorioResumo();toast('Recebível removido');
+}
+
+// ── Despesas do escritório ──
+function renderOfficeDespesasTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const contaOpts = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const projetoOpts = `<option value="">— Sem projeto vinculado —</option>` + (state.office.projetos||[]).map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+  const despesas=(state.office.despesas||[]).slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const rows=despesas.map(d=>{
+    const projeto=(state.office.projetos||[]).find(p=>p.id===d.projetoId);
+    const conta=(state.office.contas||[]).find(c=>c.id===d.conta);
+    return `<div class="item-row">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(d.descricao)}</div>
+        <div class="item-row-meta">${esc(d.categoria||'—')} · ${conta?esc(conta.name):'—'} · ${d.data||'—'}${projeto?' · '+esc(projeto.nome):''}</div>
+      </div>
+      <div class="item-row-val neg">${fmtBRL(d.valor||0)}</div>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeDespesa('${d.id}')">🗑</button>
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhuma despesa empresarial cadastrada ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Nova Despesa do Escritório</div></div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Descrição</label><input type="text" id="newODespDesc" placeholder="Ex: Impressão de projeto, software, renderização"></div>
+          <div class="form-group"><label>Categoria</label><input type="text" id="newODespCat" placeholder="Ex: Material, Software"></div>
+          <div class="form-group"><label>Valor (R$)</label><input type="number" id="newODespValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Data</label><input type="date" id="newODespData" value="${new Date().toISOString().slice(0,10)}"></div>
+          <div class="form-group full"><label>Conta empresarial de origem</label><select id="newODespConta">${contaOpts}</select></div>
+          <div class="form-group full"><label>Projeto (opcional)</label><select id="newODespProjeto">${projetoOpts}</select></div>
+        </div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeDespesa()">Adicionar Despesa</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Despesas do Escritório</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeDespesa(){
+  const descricao=document.getElementById('newODespDesc').value.trim();
+  const categoria=document.getElementById('newODespCat').value.trim();
+  const valor=parseFloat(document.getElementById('newODespValor').value);
+  const data=document.getElementById('newODespData').value||null;
+  const conta=document.getElementById('newODespConta').value||null;
+  const projetoId=document.getElementById('newODespProjeto').value||null;
+  if(!descricao){toast('Informe a descrição');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!conta){toast('Cadastre e selecione a conta empresarial de origem');return;}
+  state.office.despesas.push({id:uid(),descricao,categoria,valor,data,conta,projetoId,status:'pago',createdAt:uid()});
+  scheduleSave();renderOfficeDespesasTab();renderEscritorioResumo();toast('Despesa registrada!');
+}
+function delOfficeDespesa(id){
+  state.office.despesas=(state.office.despesas||[]).filter(d=>d.id!==id);
+  scheduleSave();renderOfficeDespesasTab();renderEscritorioResumo();toast('Despesa removida');
+}
+
+// ── Reservas empresariais ──
+function renderOfficeReservasTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const finalidadeLabel={impostos:'Impostos',equipamentos:'Equipamentos',software:'Software',marketing:'Marketing',capital_giro:'Capital de giro',investimento:'Investimento',emergencia:'Emergência',outro:'Outro'};
+  const reservas=(state.office.reservas||[]);
+  const rows=reservas.map(r=>`<div class="item-row">
+      <div style="width:12px;height:12px;border-radius:50%;background:${r.color||'#5b7fff'};flex-shrink:0"></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(r.nome)}</div><div class="item-row-meta">${finalidadeLabel[r.finalidade]||r.finalidade||'—'}</div></div>
+      <div class="item-row-val muted">${fmtBRL(getSaldoOfficeReserva(r.id))}</div>
+      <button class="btn btn-ghost btn-sm" onclick="openAplicarOfficeReserva('${r.id}')">+ Aplicar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openResgatarOfficeReserva('${r.id}')">Resgatar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeReserva('${r.id}')">🗑</button>
+    </div>`).join('') || '<div class="info-box">Nenhuma reserva empresarial cadastrada ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Nova Reserva Empresarial</div></div>
+        <div class="info-box" style="margin-bottom:10px">Patrimônio reservado do escritório — nunca compõe o caixa operacional disponível (mesma filosofia dos cofrinhos pessoais).</div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Nome</label><input type="text" id="newOReservaNome" placeholder="Ex: Reserva de Impostos"></div>
+          <div class="form-group"><label>Finalidade</label>
+            <select id="newOReservaFinalidade">
+              ${Object.entries(finalidadeLabel).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>Cor</label><input type="color" id="newOReservaColor" value="#5b7fff" style="height:38px;padding:4px"></div>
+          <div class="form-group full"><label>Saldo inicial (R$)</label><input type="number" id="newOReservaSaldoInicial" placeholder="0,00" min="0" step="0.01"></div>
+        </div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeReserva()">Adicionar Reserva</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Reservas Empresariais</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeReserva(){
+  const nome=document.getElementById('newOReservaNome').value.trim();
+  if(!nome){toast('Informe o nome');return;}
+  const finalidade=document.getElementById('newOReservaFinalidade').value;
+  const color=document.getElementById('newOReservaColor').value;
+  const saldoInicial=parseFloat(document.getElementById('newOReservaSaldoInicial').value)||0;
+  state.office.reservas.push({id:'oreserva_'+uid(),nome,finalidade,color,saldoInicial});
+  scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva adicionada!');
+}
+function delOfficeReserva(id){
+  state.office.reservas=(state.office.reservas||[]).filter(r=>r.id!==id);
+  state.office.movimentacoesReservas=(state.office.movimentacoesReservas||[]).filter(m=>m.reservaId!==id);
+  scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva removida');
+}
+function openAplicarOfficeReserva(reservaId){
+  const contaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Aplicar na Reserva';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">O valor sai do caixa operacional e vai para a reserva — não é despesa (receita=0, despesa=0, só muda a composição do patrimônio).</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="aplicOReservaValor" placeholder="0,00" min="0" step="0.01"></div>
+      <div class="form-group full"><label>Conta empresarial de origem</label><select id="aplicOReservaConta">${contaOpts}</select></div>
+      <div class="form-group full"><label>Observação (opcional)</label><input type="text" id="aplicOReservaObs" placeholder="opcional"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarAplicarOfficeReserva('${reservaId}')">Aplicar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarAplicarOfficeReserva(reservaId){
+  const valor=parseFloat(document.getElementById('aplicOReservaValor').value);
+  const contaId=document.getElementById('aplicOReservaConta')?.value;
+  const obs=document.getElementById('aplicOReservaObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!contaId){toast('Cadastre e selecione a conta de origem');return;}
+  const movId=uid();
+  const hoje=new Date();
+  state.office.movimentacoesReservas.push({id:movId,reservaId,valor,mes:hoje.getMonth()+1,ano:hoje.getFullYear(),tipo:'aplicacao',obs,createdAt:uid()});
+  state.office.movimentacoesContas.push({id:movId,contaId,valor:-valor,data:hoje.toISOString(),obs:'Aplicação em reserva'+(obs?': '+obs:'')});
+  scheduleSave();closeModal();renderOfficeReservasTab();renderEscritorioResumo();toast('Aplicado na reserva!');
+}
+function openResgatarOfficeReserva(reservaId){
+  const r=(state.office.reservas||[]).find(x=>x.id===reservaId); if(!r) return;
+  const saldo=getSaldoOfficeReserva(reservaId);
+  const contaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Resgatar da Reserva — '+r.nome;
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Saldo disponível: <strong>${fmtBRL(saldo)}</strong>. Não é receita — é o mesmo dinheiro que já era do escritório voltando pro caixa operacional.</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="resgOReservaValor" placeholder="0,00" min="0" max="${saldo}" step="0.01"></div>
+      <div class="form-group full"><label>Conta empresarial de destino</label><select id="resgOReservaConta">${contaOpts}</select></div>
+      <div class="form-group full"><label>Observação (opcional)</label><input type="text" id="resgOReservaObs" placeholder="opcional"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarResgatarOfficeReserva('${reservaId}')">Resgatar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarResgatarOfficeReserva(reservaId){
+  const valor=parseFloat(document.getElementById('resgOReservaValor').value);
+  const contaId=document.getElementById('resgOReservaConta')?.value;
+  const obs=document.getElementById('resgOReservaObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!contaId){toast('Cadastre e selecione a conta de destino');return;}
+  const movId=uid();
+  const hoje=new Date();
+  state.office.movimentacoesReservas.push({id:movId,reservaId,valor,mes:hoje.getMonth()+1,ano:hoje.getFullYear(),tipo:'resgate',obs,createdAt:uid()});
+  state.office.movimentacoesContas.push({id:movId,contaId,valor,data:hoje.toISOString(),obs:'Resgate da reserva'+(obs?': '+obs:'')});
+  scheduleSave();closeModal();renderOfficeReservasTab();renderEscritorioResumo();toast('Resgatado da reserva! Já creditado na conta.');
+}
+
+// ── Repasses / retiradas ──
+function renderOfficeRepassesTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const officeContaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const personalContaOpts=(state.contas||[]).length
+    ? state.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
+  const estadoLabel={previsto:'Previsto',recebido:'Realizado',cancelado:'Cancelado'};
+  const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
+  const repasses=(state.office.repasses||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const rows=repasses.map(rp=>{
+    const recebivel=(state.office.recebiveis||[]).find(r=>r.id===rp.recebivelId);
+    return `<div class="item-row ${rp.estado==='recebido'?'pago':rp.estado==='previsto'?'previsto':''}">
+      <div class="item-row-info">
+        <div class="item-row-name">Repasse Planejado <span class="badge ${estadoBadge[rp.estado]}">${estadoLabel[rp.estado]}</span></div>
+        <div class="item-row-meta">${recebivel?esc(recebivel.descricao||''):'—'} · Previsto: ${rp.dataPrevista||'—'}${rp.dataRecebimento?' · Realizado: '+rp.dataRecebimento:''}</div>
+      </div>
+      <div class="item-row-val ${rp.estado==='recebido'?'pos':'muted'}">${fmtBRL(rp.valor||0)}</div>
+      ${rp.estado==='previsto'?`<button class="btn btn-primary btn-sm" onclick="openRealizarOfficeRepasse('${rp.id}')">Realizar</button>`:''}
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhum repasse planejado ainda — cadastre um recebível de um projeto contratado e configure a regra de distribuição em "Contas &amp; Regras".</div>';
+  const retiradasExtraord=(state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const rowsRetiradas=retiradasExtraord.map(m=>`<div class="item-row">
+      <div class="item-row-info"><div class="item-row-name">Retirada Extraordinária</div><div class="item-row-meta">${esc(m.obs||'')} · ${(m.data||'').slice(0,10)}</div></div>
+      <div class="item-row-val neg">${fmtBRL(Math.abs(m.valor||0))}</div>
+    </div>`).join('') || '<div class="info-box">Nenhuma retirada extraordinária registrada.</div>';
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Retirada Extraordinária</div></div>
+      <div class="info-box" style="margin-bottom:10px">Para quando você precisa tirar dinheiro do escritório além do repasse planejado — fica identificada separadamente, nunca como salário ou repasse normal.</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="retiradaValor" placeholder="0,00" min="0" step="0.01"></div>
+        <div class="form-group"><label>Data</label><input type="date" id="retiradaData" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="form-group full"><label>Conta empresarial de origem</label><select id="retiradaContaOrigem">${officeContaOpts}</select></div>
+        <div class="form-group full"><label>Conta pessoal de destino</label><select id="retiradaContaDestino">${personalContaOpts}</select></div>
+        <div class="form-group full"><label>Motivo (opcional)</label><input type="text" id="retiradaObs" placeholder="Ex: cobrir despesas pessoais do mês"></div>
+      </div>
+      <button class="btn btn-primary mt-16" onclick="registrarRetiradaExtraordinaria()">Registrar Retirada</button>
+    </div>
+    <div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Repasses Planejados</div></div><div class="item-list">${rows}</div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Retiradas Extraordinárias</div></div><div class="item-list">${rowsRetiradas}</div></div>`;
+}
+function openRealizarOfficeRepasse(repasseId){
+  const rp=(state.office.repasses||[]).find(x=>x.id===repasseId); if(!rp) return;
+  const officeContaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const personalContaOpts=(state.contas||[]).length
+    ? state.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Realizar Repasse';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Valor: <strong>${fmtBRL(rp.valor||0)}</strong>. Ao confirmar, sai do caixa do escritório e entra no caixa pessoal na data informada — a receita pessoal prevista correspondente passa a recebida (nenhuma segunda receita é criada).</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Data real</label><input type="date" id="realizRepasseData" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group full"><label>Conta empresarial de origem</label><select id="realizRepasseContaOrigem">${officeContaOpts}</select></div>
+      <div class="form-group full"><label>Conta pessoal de destino</label><select id="realizRepasseContaDestino">${personalContaOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarRealizarOfficeRepasse('${repasseId}')">Confirmar Repasse</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarRealizarOfficeRepasse(repasseId){
+  const dataReal=document.getElementById('realizRepasseData').value;
+  const officeContaId=document.getElementById('realizRepasseContaOrigem')?.value;
+  const personalContaId=document.getElementById('realizRepasseContaDestino')?.value;
+  if(!dataReal){toast('Informe a data');return;}
+  if(!officeContaId){toast('Cadastre e selecione a conta empresarial de origem');return;}
+  if(!personalContaId){toast('Cadastre e selecione a conta pessoal de destino');return;}
+  const ok=realizeOfficeTransfer(repasseId,dataReal,officeContaId,personalContaId);
+  if(!ok){toast('Este repasse já havia sido realizado');closeModal();return;}
+  scheduleSave();closeModal();renderOfficeRepassesTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='dashboard') renderDashboard();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Repasse realizado! Já creditado no caixa pessoal.');
+}
+function registrarRetiradaExtraordinaria(){
+  const valor=parseFloat(document.getElementById('retiradaValor').value);
+  const data=document.getElementById('retiradaData').value;
+  const officeContaId=document.getElementById('retiradaContaOrigem')?.value;
+  const personalContaId=document.getElementById('retiradaContaDestino')?.value;
+  const obs=document.getElementById('retiradaObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!data){toast('Informe a data');return;}
+  if(!officeContaId){toast('Cadastre e selecione a conta empresarial de origem');return;}
+  if(!personalContaId){toast('Cadastre e selecione a conta pessoal de destino');return;}
+  createExtraordinaryWithdrawal(valor,data,officeContaId,personalContaId,obs);
+  scheduleSave();renderOfficeRepassesTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='dashboard') renderDashboard();
+  document.getElementById('retiradaValor').value=''; document.getElementById('retiradaObs').value='';
+  toast('Retirada extraordinária registrada!');
+}
+
+// ── Contas & Regras de Distribuição ──
+function renderOfficeConfigTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const contas=(state.office.contas||[]);
+  const rowsContas=contas.map(c=>`<div class="item-row">
+      <div style="width:12px;height:12px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(c.name)}</div></div>
+      <div class="item-row-val muted">${fmtBRL(calcSaldoOfficeConta(c.id))}</div>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeConta('${c.id}')">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeConta('${c.id}')">🗑</button>
+    </div>`).join('') || '<div class="info-box">Nenhuma conta empresarial cadastrada ainda.</div>';
+  const destinoLabel={reserva:'Reserva empresarial',impostos:'Impostos',repasse_pessoal:'Repasse ao Jow'};
+  const regras=(state.office.regrasDistribuicao||[]);
+  const todasConfiguradas=regras.length>0 && regras.every(r=>r.percentual!==null&&r.percentual!==undefined);
+  const rowsRegras=regras.map((r,i)=>`
+    <div class="form-group"><label>${destinoLabel[r.destino]||r.destino} (%)</label><input type="number" id="regraPercentual_${i}" value="${r.percentual===null||r.percentual===undefined?'':r.percentual}" min="0" max="100" step="0.1" placeholder="não configurado"></div>`).join('');
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Nova Conta Empresarial</div></div>
+        <div class="info-box" style="margin-bottom:10px">Contas do escritório são separadas das suas contas pessoais — nunca somadas ao saldo pessoal.</div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Nome</label><input type="text" id="newOContaName" placeholder="Ex: Conta PJ, Caixa do Escritório"></div>
+          <div class="form-group"><label>Cor</label><input type="color" id="newOContaColor" value="#ff9900" style="height:38px;padding:4px"></div>
+          <div class="form-group"><label>Saldo inicial</label><input type="number" id="newOContaSaldoInicial" placeholder="0,00" step="0.01"></div>
+        </div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeConta()">Adicionar Conta</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Contas Empresariais</div></div><div class="item-list">${rowsContas}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Regras de Distribuição</div></div>
+      ${todasConfiguradas
+        ? `<div class="info-box" style="margin-bottom:10px">Configuradas — usadas para sugerir o repasse previsto sempre que um recebível de um projeto contratado é cadastrado ou alterado.</div>`
+        : `<div class="info-box" style="margin-bottom:10px;border-color:var(--warn)">⚠ Nenhuma regra de distribuição foi encontrada configurada ou documentada no app até agora — não vamos inventar um percentual. Enquanto ficar em branco, nenhum repasse previsto é gerado automaticamente (DISTRIBUTION_RULES_CONFIGURATION_REQUIRED). Preencha abaixo quando quiser ativar a geração automática.</div>`}
+      <div class="form-grid">${rowsRegras}</div>
+      <button class="btn btn-primary mt-16" onclick="saveOfficeRegrasDistribuicao()">Salvar Regras</button>
+    </div>`;
+}
+function addOfficeConta(){
+  const name=document.getElementById('newOContaName').value.trim();
+  if(!name){toast('Informe o nome');return;}
+  const color=document.getElementById('newOContaColor').value;
+  const saldoInicial=parseFloat(document.getElementById('newOContaSaldoInicial').value)||0;
+  const id='oconta_'+name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'')+'_'+uid().slice(-4);
+  state.office.contas.push({id,name,color,saldoInicial});
+  scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();
+  document.getElementById('newOContaName').value=''; document.getElementById('newOContaSaldoInicial').value='';
+  toast('Conta empresarial adicionada!');
+}
+function delOfficeConta(id){
+  const emUso=(state.office.recebiveis||[]).some(r=>r.contaDestino===id) || (state.office.despesas||[]).some(d=>d.conta===id);
+  if(emUso){ toast('Esta conta tem lançamentos vinculados e não pode ser removida'); return; }
+  state.office.contas=(state.office.contas||[]).filter(c=>c.id!==id);
+  state.office.movimentacoesContas=(state.office.movimentacoesContas||[]).filter(m=>m.contaId!==id);
+  scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta removida');
+}
+function openEditOfficeConta(id){
+  const c=(state.office.contas||[]).find(x=>x.id===id);if(!c)return;
+  document.getElementById('modalTitle').textContent='Editar Conta Empresarial';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Nome</label><input type="text" id="eOContaName" value="${esc(c.name)}"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="eOContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Saldo inicial</label><input type="number" id="eOContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditOfficeConta('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function saveEditOfficeConta(id){
+  const c=(state.office.contas||[]).find(x=>x.id===id);if(!c)return;
+  c.name=document.getElementById('eOContaName').value.trim()||c.name;
+  c.color=document.getElementById('eOContaColor').value;
+  c.saldoInicial=parseFloat(document.getElementById('eOContaSaldoInicial').value)||0;
+  scheduleSave();closeModal();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta atualizada!');
+}
+function saveOfficeRegrasDistribuicao(){
+  const regras=(state.office.regrasDistribuicao||[]);
+  regras.forEach((r,i)=>{
+    const val=document.getElementById('regraPercentual_'+i)?.value;
+    r.percentual=(val===''||val===undefined||val===null)?null:parseFloat(val);
+  });
+  // Recalcula todos os repasses previstos derivados (nunca duplica — mesma
+  // chave officeTransferId — e nunca sobrescreve repasse já realizado).
+  (state.office.recebiveis||[]).forEach(r=>syncDerivedPersonalTransfer(r.id));
+  scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Regras de distribuição salvas!');
 }
 </script>
 <div id="printReportArea"></div>
