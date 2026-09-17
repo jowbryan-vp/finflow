@@ -2341,6 +2341,38 @@ function getOfficeFinancialPatrimony(){
   return getOfficeOperationalBalance()+getOfficeReservedBalance();
 }
 
+// Gate 3.2 — seção 4-9: um registro financeiro do escritório com histórico
+// REALIZADO nunca pode ser apagado destrutivamente (isso faria dinheiro que
+// já existiu desaparecer contabilmente, quebrando PATRIMÔNIO = CAIXA +
+// RESERVAS). Puros — nunca alteram state/DOM, nunca chamam toast/scheduleSave
+// — só respondem se a exclusão é permitida e, se não, por quê. Quem chama
+// (delOfficeReserva/delOfficeConta) decide o que fazer com a resposta.
+//
+// Mapa real de referências a uma conta empresarial, levantado por busca no
+// código (documentado no relatório do Gate 3.2 — nenhum campo foi presumido):
+//   state.office.recebiveis        → contaDestino
+//   state.office.despesas          → conta
+//   state.office.movimentacoesContas → contaId (cobre aplicação/resgate de
+//     reserva, repasse realizado via realizeOfficeTransfer e retirada
+//     extraordinária via createExtraordinaryWithdrawal — nenhum dos dois
+//     grava a conta em outro lugar além de movimentacoesContas)
+//   state.office.projetos          → nenhuma referência a conta
+//   state.office.repasses          → nenhuma referência a conta diretamente
+//     (o vínculo com a conta empresarial de origem só existe através do
+//     lançamento em movimentacoesContas que realizeOfficeTransfer cria)
+function canDeleteOfficeReserve(reservaId){
+  const temMovimentacao=((state.office&&state.office.movimentacoesReservas)||[]).some(m=>m.reservaId===reservaId);
+  if(temMovimentacao) return {allowed:false, reason:'has_financial_history'};
+  return {allowed:true, reason:null};
+}
+function canDeleteOfficeAccount(contaId){
+  const off=state.office||{};
+  if((off.recebiveis||[]).some(r=>r.contaDestino===contaId)) return {allowed:false, reason:'has_recebivel'};
+  if((off.despesas||[]).some(d=>d.conta===contaId)) return {allowed:false, reason:'has_despesa'};
+  if((off.movimentacoesContas||[]).some(m=>m.contaId===contaId)) return {allowed:false, reason:'has_movimentacao'};
+  return {allowed:true, reason:null};
+}
+
 // Valida a SOMA e os valores individuais das regras de distribuição (seção
 // 9-12 do Gate 3.1). NUNCA inventa nem normaliza percentuais — só diz se o
 // que já está configurado é matematicamente válido.
@@ -7525,8 +7557,16 @@ function addOfficeReserva(){
   scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva adicionada!');
 }
 function delOfficeReserva(id){
+  // Gate 3.2 (seção 5): uma reserva com QUALQUER movimentação (aplicação ou
+  // resgate) tem histórico financeiro realizado — bloqueia a exclusão, sem
+  // tocar em nada (nem a reserva, nem movimentacoesReservas, nem
+  // movimentacoesContas). Nenhuma "exclusão inteligente"/compensação
+  // automática (seção 6) — o passado nunca é reescrito silenciosamente.
+  const check=canDeleteOfficeReserve(id);
+  if(!check.allowed){ toast('Esta reserva possui movimentações financeiras e não pode ser excluída.'); return; }
+  // Sem movimentação vinculada (garantido pelo guard acima) — só o registro
+  // da reserva em si é removido.
   state.office.reservas=(state.office.reservas||[]).filter(r=>r.id!==id);
-  state.office.movimentacoesReservas=(state.office.movimentacoesReservas||[]).filter(m=>m.reservaId!==id);
   scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva removida');
 }
 function openAplicarOfficeReserva(reservaId){
@@ -7743,10 +7783,19 @@ function addOfficeConta(){
   toast('Conta empresarial adicionada!');
 }
 function delOfficeConta(id){
-  const emUso=(state.office.recebiveis||[]).some(r=>r.contaDestino===id) || (state.office.despesas||[]).some(d=>d.conta===id);
-  if(emUso){ toast('Esta conta tem lançamentos vinculados e não pode ser removida'); return; }
+  // Gate 3.2 (seção 7-9): a checagem original só olhava recebíveis/despesas
+  // — uma conta com movimentacoesContas (aplicação/resgate de reserva,
+  // repasse realizado, retirada extraordinária, ajustes) passava batido e
+  // suas movimentações eram apagadas junto, destruindo rastreabilidade e
+  // alterando o patrimônio calculado. canDeleteOfficeAccount cobre as 3
+  // estruturas reais que guardam conta empresarial (ver mapa de referências
+  // no comentário de canDeleteOfficeAccount) — bloqueia sem tocar em nada.
+  const check=canDeleteOfficeAccount(id);
+  if(!check.allowed){ toast('Esta conta possui lançamentos ou movimentações vinculadas e não pode ser excluída.'); return; }
+  // Sem nenhuma referência (garantido pelo guard acima) — só o registro da
+  // conta em si é removido; NUNCA apagar movimentacoesContas como forma de
+  // "liberar" a exclusão (isso apagaria histórico financeiro realizado).
   state.office.contas=(state.office.contas||[]).filter(c=>c.id!==id);
-  state.office.movimentacoesContas=(state.office.movimentacoesContas||[]).filter(m=>m.contaId!==id);
   scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta removida');
 }
 function openEditOfficeConta(id){
