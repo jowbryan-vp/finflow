@@ -1,0 +1,13 @@
+{
+  "folders": [{ "name": "FinFlow", "path": "." }],
+  "settings": {
+    "editor.formatOnSave": false,
+    "files.trimTrailingWhitespace": false,
+    "files.insertFinalNewline": false,
+    "git.autofetch": false,
+    "git.enableSmartCommit": false
+  },
+  "extensions": {
+    "recommendations": ["anthropic.claude-code", "openai.chatgpt"]
+  }
+}

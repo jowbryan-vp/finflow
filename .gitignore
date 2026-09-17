@@ -1,0 +1,9 @@
+# Dados privados e arquivos locais
+.env
+.env.*
+!.env.example
+backups/
+finflow_backup_*.json
+*.bundle
+node_modules/
+.claude/settings.local.json
