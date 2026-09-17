@@ -40,6 +40,13 @@ const FILES = [
   // tendo precedência sobre a checagem de saldo; ID inexistente nunca é
   // allowed:true
   'gate3-3-balance-protection.test.mjs',
+  // Gate 3.4 — patch decorrente da auditoria patrimonial final do Gate 3.3:
+  // toda despesa empresarial cadastrada é financeiramente realizada no
+  // modelo atual (sem estado "previsto") — canDeleteOfficeExpense/
+  // delOfficeDespesa bloqueiam qualquer exclusão destrutiva, zero mutation;
+  // consolida também a matriz final de exclusões de todas as entidades do
+  // Office (conta/reserva/recebível/despesa/projeto)
+  'gate3-4-expense-delete-integrity.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
