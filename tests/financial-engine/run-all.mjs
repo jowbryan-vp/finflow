@@ -17,6 +17,12 @@ const FILES = [
   // Gate 2.1 — patch: caixa de salário recorrente usa a data real de
   // recebimento, nunca a chave de competência (correção pós-auditoria)
   'gate2-1-salary-cash.test.mjs',
+  // Gate 3 — caixa do escritório, projetos, recebíveis e repasse ao
+  // financeiro pessoal (separação patrimonial total, distribuição
+  // configurável, retirada extraordinária, proveniência e idempotência)
+  'gate3-separation.test.mjs', 'gate3-reserves.test.mjs', 'gate3-projects.test.mjs',
+  'gate3-distribution.test.mjs', 'gate3-extraordinary.test.mjs', 'gate3-invariants.test.mjs',
+  'gate3-import-export.test.mjs', 'gate3-real-patterns.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
