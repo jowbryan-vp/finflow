@@ -1440,14 +1440,54 @@ async function sincronizarAgora(){
   sincronizando=false;
 }
 
+// Corpo efetivamente enviado — o mesmo que updateDataFile()/createDataFile()
+// mandam de fato (incluindo o envelope multipart na criação), medido em bytes
+// UTF-8 (não em caracteres — acentos/emoji ocupam mais de 1 byte cada e o
+// limite do navegador é sobre bytes da rede).
+function utf8ByteLength(str) {
+  return new TextEncoder().encode(str).length;
+}
+function estimateSaveBodyBytes(saveObj) {
+  const bodyStr = driveFileId ? JSON.stringify(saveObj) : buildMultipartCreateBody(saveObj);
+  return utf8ByteLength(bodyStr);
+}
+// Margem segura abaixo do limite de ~64 KiB (65536 bytes) que o navegador
+// impõe ao corpo de QUALQUER requisição com keepalive:true (mesma regra do
+// navigator.sendBeacon) — ver comentário em driveRequest().
+const KEEPALIVE_SAFE_BYTES = 60 * 1024;
+
 async function saveToDrive(useKeepalive) {
   // Geração capturada ANTES de construir/enviar o corpo — se scheduleSave()
   // rodar de novo (nova edição) enquanto este envio ainda está em voo, a
   // geração global avança e diverge da capturada aqui.
   const startGeneration = saveGeneration;
+  const saveObj = buildSaveObject();
+  // Persistir o snapshot atual e a pendência ANTES de qualquer tentativa de
+  // rede — inclusive envio manual (forceSave/sincronizarAgora chamam esta
+  // função, não só o timer automático). Sem isso, uma falha de rede logo na
+  // primeira tentativa (sem nenhum scheduleSave() anterior — ex.: estado
+  // mudou e o usuário clicou direto em "Forçar salvamento") deixava
+  // finflow_local_cache/finflow_unsynced vazios, perdendo o registro de que
+  // existe uma edição não confirmada no Drive.
+  localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
+  localStorage.setItem('finflow_unsynced', '1');
+
+  // Medido e limitado AQUI (ponto real do envio), não só em quem chama —
+  // uma chamada direta a saveToDrive(true) com corpo grande nunca deve
+  // escapar essa checagem, mesmo vindo de um caminho diferente de
+  // flushPendingSave(). Não é uma falha de rede (nenhuma tentativa chegou a
+  // ser feita) e não é "offline" (a rede pode estar disponível — é só o
+  // tamanho que impede o uso de keepalive agora), então tem rótulo próprio,
+  // sem status de erro e sem o toast de falha de conexão.
+  if (useKeepalive && estimateSaveBodyBytes(saveObj) > KEEPALIVE_SAFE_BYTES) {
+    setDriveStatus('saving', 'Aguardando envio (arquivo grande)…');
+    const e = new Error('Corpo maior que a margem segura de keepalive — envio adiado, sem tentativa de rede.');
+    e.finflowKeepaliveTooLarge = true;
+    throw e;
+  }
+
   setDriveStatus('saving', 'Salvando…');
   try {
-    const saveObj = buildSaveObject();
     if (driveFileId) {
       await updateDataFile(driveFileId, saveObj, useKeepalive);
     } else {
@@ -1455,17 +1495,17 @@ async function saveToDrive(useKeepalive) {
     }
     if (saveGeneration === startGeneration) {
       // Nenhuma edição nova aconteceu durante o envio — este é o snapshot
-      // mais atual, seguro pra virar o cache confirmado e limpar a pendência.
-      localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
+      // mais atual, o Drive já confirmou recebê-lo, a pendência acabou.
       localStorage.removeItem('finflow_unsynced');
       setDriveStatus('synced', 'Sincronizado ✓');
     } else {
       // Uma edição nova aconteceu enquanto este envio estava em voo: o que
       // acabou de ser confirmado no Drive já está desatualizado. Não limpa
       // finflow_unsynced (existe uma versão mais nova ainda não confirmada)
-      // nem regrava finflow_local_cache com este snapshot antigo — scheduleSave()
-      // já gravou lá o snapshot mais novo. saveDrivePending() encadeia outro
-      // envio pra mandar essa versão mais nova.
+      // — o cache local já reflete essa versão mais nova (gravada pelo
+      // scheduleSave()/saveToDrive() da edição nova, não por este envio
+      // antigo). saveDrivePending() encadeia outro envio pra mandar essa
+      // versão mais nova.
       setDriveStatus('saving', 'Aguardando…');
     }
   } catch(e) {
@@ -1515,48 +1555,40 @@ function scheduleSave() {
   saveTimer = setTimeout(() => { saveTimer = null; saveDrivePending(false).catch(()=>{}); }, 2500);
 }
 
-// Corpo efetivamente enviado — o mesmo que updateDataFile()/createDataFile()
-// mandam de fato (incluindo o envelope multipart na criação), medido em bytes
-// UTF-8 (não em caracteres — acentos/emoji ocupam mais de 1 byte cada e o
-// limite do navegador é sobre bytes da rede).
-function utf8ByteLength(str) {
-  return new TextEncoder().encode(str).length;
-}
-function estimateSaveBodyBytes(saveObj) {
-  const bodyStr = driveFileId ? JSON.stringify(saveObj) : buildMultipartCreateBody(saveObj);
-  return utf8ByteLength(bodyStr);
-}
-// Margem segura abaixo do limite de ~64 KiB (65536 bytes) que o navegador
-// impõe ao corpo de QUALQUER requisição com keepalive:true (mesma regra do
-// navigator.sendBeacon) — ver comentário em driveRequest().
-const KEEPALIVE_SAFE_BYTES = 60 * 1024;
-
 // Se a aba for fechada/minimizada antes do debounce de 2.5s do scheduleSave()
 // disparar, a edição ficaria só no cache local e nunca iria pro Drive — na
 // próxima sincronização ela seria silenciosamente sobrescrita pela versão
 // antiga do Drive. Isso força o envio imediato assim que a aba fica oculta,
-// usando keepalive pra sobreviver ao fechamento — MAS só quando o corpo cabe
-// na margem segura de keepalive. Um backup grande (histórico de vários
-// meses/perfis facilmente passa de 64 KiB) nunca é mandado com keepalive:true:
-// sem keepalive, o navegador pode simplesmente abortar a requisição no meio
-// do fechamento, deixando o app sem saber se o Drive recebeu ou não — pior
-// que não tentar. Nesse caso a pendência fica só local (cache e
-// finflow_unsynced já gravados por scheduleSave()); o próximo envio com a
-// página viva, ou a recuperação em initApp() na próxima abertura, cuidam
-// de mandar essa versão pro Drive.
+// usando keepalive pra sobreviver ao fechamento — o próprio saveToDrive()
+// mede o corpo e recusa usar keepalive acima da margem segura (ver
+// KEEPALIVE_SAFE_BYTES ali); aqui não precisa medir de novo, só disparar.
 function flushPendingSave() {
   if (!saveTimer) return;
   clearTimeout(saveTimer);
   saveTimer = null;
-  const saveObj = buildSaveObject();
-  if (estimateSaveBodyBytes(saveObj) > KEEPALIVE_SAFE_BYTES) {
-    setDriveStatus('saving', 'Aguardando (offline)…');
-    return;
-  }
   saveDrivePending(true).catch(()=>{});
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSave(); });
+// Se um envio ficou pendente (finflow_unsynced==='1') porque a aba fechou/
+// ficou oculta com um corpo grande demais pra keepalive (ver saveToDrive()),
+// ele não se resolve sozinho — sem isso, ficaria pendente indefinidamente
+// até a próxima edição, clique manual ou reload. Quando a página volta a
+// ficar visível (troca de aba, restaurar minimizado) ou é retomada do cache do
+// navegador (bfcache — 'pageshow'), tenta reenviar automaticamente: SEM
+// keepalive (página viva, sem limite de 64 KiB) e SEM baixar a versão remota
+// por cima (nunca chama syncFromDrive() aqui — mesma regra de segurança de
+// initApp()/sincronizarAgora()). saveDrivePending() garante que isso nunca
+// abre uma segunda requisição concorrente com um envio já em voo.
+function retryPendingSaveOnResume() {
+  if (localStorage.getItem('finflow_unsynced') === '1') {
+    saveDrivePending(false).catch(()=>{});
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPendingSave();
+  else if (document.visibilityState === 'visible') retryPendingSaveOnResume();
+});
 window.addEventListener('pagehide', flushPendingSave);
+window.addEventListener('pageshow', retryPendingSaveOnResume);
 
 async function forceSave() {
   clearTimeout(saveTimer);

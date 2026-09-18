@@ -75,20 +75,35 @@ await check('D01', async () => {
   return { ok, detail: JSON.stringify(r) };
 }, "fetch rejeitando com TypeError('Failed to fetch') propaga através de saveToDrive()");
 
-// D02/D03: falha no upload mantém finflow_unsynced e o cache local intactos.
+// D02/D03: falha no upload mantém finflow_unsynced='1' e o cache local
+// reflete o snapshot ATUAL do app (não um cache antigo/obsoleto, nem
+// ausente). Reprodução do Codex (docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md,
+// achado 2): saveToDrive() precisa persistir o snapshot atual e a pendência
+// ANTES de tentar a rede — não só depois do sucesso — pra que uma falha logo
+// na primeira tentativa (sem nenhum cache/pendência pré-existente) não deixe
+// o cache vazio/desatualizado. Este teste remove qualquer cache/pendência
+// prévios (em vez de pré-semear um cache artificial obsoleto, que a correção
+// agora sobrescreve de propósito) e confirma que o snapshot REAL corrente é
+// persistido mesmo com a rede falhando.
 await check('D02_D03', async () => {
   const r = await withFailingFetch(() => page.evaluate(async () => {
-    localStorage.setItem('finflow_local_cache', JSON.stringify({ marker: 'local-before-failure' }));
-    localStorage.setItem('finflow_unsynced', '1');
+    localStorage.removeItem('finflow_local_cache');
+    localStorage.removeItem('finflow_unsynced');
+    state.despesas.push({ id: 'D02_marker', desc: 'snapshot atual no momento da falha', cat: 'geral', subcat: 'Geral',
+      cartao: 'dinheiro', conta: 'c1', valor: 55, parcelas: 1, mesInicio: 9, anoInicio: 2026,
+      dataCompra: '2026-09-01', fixa: false, diaVencimento: null, debitoAutomatico: false,
+      pagoMeses: {}, split: [], repasses: {}, createdAt: 'D02_marker' });
     try { await saveToDrive(); } catch (e) { /* esperado */ }
+    const cache = JSON.parse(localStorage.getItem('finflow_local_cache'));
     return {
       unsynced: localStorage.getItem('finflow_unsynced'),
-      cache: localStorage.getItem('finflow_local_cache'),
+      cacheExiste: !!cache,
+      cacheTemMarcadorAtual: !!cache && cache.perfis[cache.perfilAtivo].data.despesas.some((d) => d.id === 'D02_marker'),
     };
   }));
-  const ok = r.unsynced === '1' && JSON.parse(r.cache).marker === 'local-before-failure';
-  return { ok, detail: `finflow_unsynced=${r.unsynced} cache=${r.cache}` };
-}, 'falha no upload mantém finflow_unsynced=1 e não sobrescreve o cache local');
+  const ok = r.unsynced === '1' && r.cacheExiste && r.cacheTemMarcadorAtual;
+  return { ok, detail: JSON.stringify(r) };
+}, 'falha no upload persiste o snapshot ATUAL (não um cache obsoleto ou ausente) e mantém finflow_unsynced=1 — persistência acontece antes da tentativa de rede');
 
 // D04/D06: falha no upload (via sincronizarAgora, com finflow_unsynced='1')
 // nunca chama syncFromDrive() nem migrateAppData() com dados remotos.
@@ -593,6 +608,224 @@ await check('D27', async () => {
   const ok = during.unsynced === '1' && during.despesasNoCache === 120 && after.unsynced === null;
   return { ok, detail: `durante=${JSON.stringify(during)} depois=${JSON.stringify(after)}` };
 }, 'recuperação: payload grande deixado pendente localmente é enviado normalmente (sem keepalive) quando a página está viva de novo, limpando a pendência');
+
+// ── Correções pós-auditoria intermediária Codex (docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md, FAIL em 1f48b19) ──
+// Achado 1: uma pendência deixada por flushPendingSave() (corpo grande demais
+// pra keepalive) nunca se resolvia sozinha ao voltar pra aba — ficava presa
+// até a próxima edição/clique manual/reload. D27 testava a recuperação
+// chamando saveDrivePending() diretamente, o que não prova que o evento real
+// do navegador (visibilitychange→visible, pageshow) de fato dispara alguma
+// coisa. D29-D31 abaixo disparam os eventos REAIS (document.dispatchEvent /
+// window.dispatchEvent) e confirmam que os listeners registrados em
+// index.html (retryPendingSaveOnResume) reagem a eles.
+// Achado 2: saveToDrive() só persistia cache/pendência DEPOIS do sucesso —
+// uma falha na primeira tentativa (sem scheduleSave() anterior, ex. clique
+// direto em "Forçar salvamento") perdia cache e marcador. D02_D03 (acima) já
+// cobre isso na função crua; D28 abaixo reproduz literalmente o cenário do
+// Codex usando forceSave(), o botão real.
+// Achado adicional: medir/limitar keepalive precisa valer no PONTO do envio
+// (dentro de saveToDrive()), não só em quem chama — D32 chama saveToDrive(true)
+// diretamente (sem passar por flushPendingSave()) com corpo grande e confirma
+// que a checagem ainda vale. D33 prova criação concorrente de verdade (sem
+// nenhum driveFileId pré-existente, duas chamadas “simultâneas”), diferente
+// de D26 (que usa um ID já existente e por isso nunca testava criação).
+
+function withVisibilityOverride(fn) {
+  return (async () => {
+    await page.evaluate(() => {
+      window.__visibilityValue = 'visible';
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.__visibilityValue });
+    });
+    try { return await fn(); }
+    finally {
+      await page.evaluate(() => { delete document.visibilityState; delete window.__visibilityValue; });
+    }
+  })();
+}
+function dispatchVisibility(value) {
+  return page.evaluate((v) => {
+    window.__visibilityValue = v;
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, value);
+}
+
+// D28: reprodução literal do achado 2 — cache e pendência removidos, estado
+// em memória alterado (sem passar por scheduleSave()), forceSave() (o botão
+// real, não saveToDrive() cru) com fetch rejeitando. O snapshot atual e a
+// pendência precisam existir depois, mesmo com a rede falhando.
+await check('D28', async () => {
+  await loadState(baseSyntheticState());
+  const r = await withFailingFetch(() => page.evaluate(async () => {
+    localStorage.removeItem('finflow_local_cache');
+    localStorage.removeItem('finflow_unsynced');
+    // Deliberadamente explícito (não depende de estado deixado por um teste
+    // anterior no mesmo arquivo/página): caminho de atualização.
+    localStorage.setItem('finflow_drive_file_id', 'D28-existing-file-id');
+    driveFileId = 'D28-existing-file-id';
+    state.despesas.push({ id: 'D28_marker', desc: 'alterado direto no estado, sem scheduleSave', cat: 'geral', subcat: 'Geral',
+      cartao: 'dinheiro', conta: 'c1', valor: 77, parcelas: 1, mesInicio: 9, anoInicio: 2026,
+      dataCompra: '2026-09-01', fixa: false, diaVencimento: null, debitoAutomatico: false,
+      pagoMeses: {}, split: [], repasses: {}, createdAt: 'D28_marker' });
+    let threw = null;
+    try { await forceSave(); } catch (e) { threw = e.message; }
+    const cache = JSON.parse(localStorage.getItem('finflow_local_cache'));
+    return {
+      threw,
+      unsynced: localStorage.getItem('finflow_unsynced'),
+      cacheExiste: !!cache,
+      cacheTemMarcador: !!cache && cache.perfis[cache.perfilAtivo].data.despesas.some((d) => d.id === 'D28_marker'),
+    };
+  }));
+  const ok = r.threw !== null && r.unsynced === '1' && r.cacheExiste && r.cacheTemMarcador;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado 2 (reprodução literal): forceSave() com fetch falhando, sem cache/pendência prévios, ainda persiste o snapshot atual e a pendência antes de tentar a rede');
+
+// D29: evento REAL de visibilitychange→hidden (não chamada direta a
+// flushPendingSave()) com payload grande — nenhum fetch é disparado, fica
+// pendente. Prova que o listener registrado em index.html realmente reage ao
+// evento do navegador, exatamente como a reprodução do Codex (scheduleSave +
+// visibilitychange hidden).
+await check('D29', async () => {
+  await loadState(baseSyntheticState());
+  await pushPaddedDespesas(120, 700, 'D29_');
+  const r = await withVisibilityOverride(async () => {
+    const captured = await withCapturingFetch(async () => {
+      await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; scheduleSave(); });
+      await dispatchVisibility('hidden');
+      return page.evaluate(() => {
+        const c = JSON.parse(localStorage.getItem('finflow_local_cache'));
+        return {
+          calls: window.__fetchCalls,
+          unsynced: localStorage.getItem('finflow_unsynced'),
+          saveTimerNull: saveTimer === null,
+          despesasNoCache: c.perfis[c.perfilAtivo].data.despesas.length,
+        };
+      });
+    });
+    return captured;
+  });
+  const ok = r.calls.length === 0 && r.unsynced === '1' && r.saveTimerNull && r.despesasNoCache === 120;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado 1 (evento real): scheduleSave() + visibilitychange→hidden real com payload grande — nenhum fetch, fica pendente (sem perder dado)');
+
+// D30: continuando do mesmo cenário (payload grande, já oculto e pendente),
+// um evento REAL de visibilitychange→visible dispara o retry automático
+// (retryPendingSaveOnResume, via o listener real) — sem keepalive (sem
+// limite de tamanho), sem baixar a versão remota por cima (syncFromDrive()/
+// migrateAppData() nunca chamados), e resolve a pendência.
+await check('D30', async () => {
+  await loadState(baseSyntheticState());
+  await pushPaddedDespesas(120, 700, 'D30_');
+  await installSpies();
+  const r = await withVisibilityOverride(async () => {
+    await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; scheduleSave(); });
+    await dispatchVisibility('hidden'); // fica pendente (corpo grande demais pra keepalive)
+    const antes = await page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
+    const depois = await withSucceedingFetch(async () => {
+      await dispatchVisibility('visible'); // dispara o listener real — SEM await no lado do teste, é o app que reage
+      // dá tempo pro retryPendingSaveOnResume() (disparado pelo listener, não
+      // aguardado por este teste) completar o ciclo de envio.
+      await page.waitForFunction(() => localStorage.getItem('finflow_unsynced') === null, { timeout: 5000 });
+      return page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
+    });
+    return { antes, depois };
+  });
+  const spy = await readSpy();
+  await restoreSpies();
+  const ok = r.antes.unsynced === '1' && r.depois.unsynced === null &&
+    spy.syncFromDriveCalls === 0 && spy.migrateAppDataCalls === 0;
+  return { ok, detail: `${JSON.stringify(r)} syncFromDriveCalls=${spy.syncFromDriveCalls} migrateAppDataCalls=${spy.migrateAppDataCalls}` };
+}, 'achado 1 (evento real): visibilitychange→visible real retoma o envio pendente (sem keepalive, sem baixar do Drive) e limpa a pendência');
+
+// D31: mesmo cenário de D29 (payload grande, oculto, pendente), mas a
+// retomada vem de 'pageshow' (bfcache) em vez de visibilitychange→visible —
+// os dois gatilhos de retomada precisam funcionar independentemente.
+await check('D31', async () => {
+  await loadState(baseSyntheticState());
+  await pushPaddedDespesas(120, 700, 'D31_');
+  const r = await withVisibilityOverride(async () => {
+    await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; scheduleSave(); });
+    await dispatchVisibility('hidden');
+    const antes = await page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
+    const depois = await withSucceedingFetch(async () => {
+      await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+      await page.waitForFunction(() => localStorage.getItem('finflow_unsynced') === null, { timeout: 5000 });
+      return page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
+    });
+    return { antes, depois };
+  });
+  const ok = r.antes.unsynced === '1' && r.depois.unsynced === null;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado 1 (evento real), gatilho alternativo: evento pageshow (retomada do bfcache) também retoma o envio pendente e limpa a pendência');
+
+// D32: chamada DIRETA a saveToDrive(true) com corpo grande — sem passar por
+// flushPendingSave() — ainda é recusada (checagem vive no ponto do envio,
+// dentro de saveToDrive(), não só em quem chama). Confirma também que o
+// rótulo não é "offline" (a rede pode estar disponível — é só o tamanho).
+await check('D32', async () => {
+  await loadState(baseSyntheticState());
+  await pushPaddedDespesas(120, 700, 'D32_');
+  const r = await withCapturingFetch(() => page.evaluate(async () => {
+    localStorage.setItem('finflow_drive_file_id', 'existing-file-id');
+    driveFileId = 'existing-file-id';
+    let threw = null, keepaliveTooLarge = false;
+    try { await saveToDrive(true); } catch (e) { threw = e.message; keepaliveTooLarge = !!e.finflowKeepaliveTooLarge; }
+    return {
+      calls: window.__fetchCalls,
+      threw, keepaliveTooLarge,
+      unsynced: localStorage.getItem('finflow_unsynced'),
+    };
+  }));
+  const semRotuloOffline = !(r.threw || '').toLowerCase().includes('offline');
+  const ok = r.calls.length === 0 && r.keepaliveTooLarge && semRotuloOffline && r.unsynced === '1';
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado adicional: chamada direta a saveToDrive(true) com corpo grande (sem passar por flushPendingSave()) também é recusada, sem tentar a rede e sem rótulo de "offline"');
+
+// D33: criação concorrente DE VERDADE — sem nenhum driveFileId pré-existente
+// (diferente de D26, que usa um ID já existente e por isso nunca exercita o
+// caminho de criação). Duas chamadas "simultâneas" a saveDrivePending()
+// (antes de qualquer uma delas resolver) devem resultar em exatamente 1
+// requisição de criação (uploadType=multipart/POST) — a segunda chamada
+// reaproveita a mesma promise em voo, nunca abre uma segunda criação.
+await check('D33', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate(async () => {
+    localStorage.removeItem('finflow_drive_file_id');
+    driveFileId = null;
+    const calls = [];
+    let releaseFirst;
+    const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+    let callCount = 0;
+    window.__origFetch = window.fetch;
+    window.fetch = async (url, opts) => {
+      callCount++;
+      calls.push({ url: String(url), method: (opts && opts.method) || 'GET' });
+      if (callCount === 1) { await firstGate; }
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ id: 'created-file-id' }), clone() { return this; } };
+    };
+
+    scheduleSave();
+    const p1 = saveDrivePending(false); // dispara a criação de verdade — fica presa em firstGate
+    const p2 = saveDrivePending(false); // "concorrente": chamada antes de p1 resolver
+    const samePromise = p1 === p2;
+
+    releaseFirst();
+    await p1; await p2;
+
+    window.fetch = window.__origFetch; delete window.__origFetch;
+    const createCalls = calls.filter((c) => c.url.includes('uploadType=multipart'));
+    return {
+      samePromise,
+      totalCalls: calls.length,
+      createCallsCount: createCalls.length,
+      driveFileIdAfter: localStorage.getItem('finflow_drive_file_id'),
+      unsynced: localStorage.getItem('finflow_unsynced'),
+    };
+  });
+  const ok = r.samePromise && r.totalCalls === 1 && r.createCallsCount === 1 &&
+    r.driveFileIdAfter === 'created-file-id' && r.unsynced === null;
+  return { ok, detail: JSON.stringify(r) };
+}, 'criação concorrente de verdade (sem ID pré-existente): duas chamadas simultâneas resultam em exatamente 1 criação, nunca duas');
 
 await close();
 
