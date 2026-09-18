@@ -35,3 +35,7 @@ Para execução coordenada: fornecer o escopo em arquivo, verificar checkout lim
 A automação anterior permanece pausada. Sua reativação deve obedecer a estes papéis e não iniciar Gate 5 sem escopo novo.
 
 Histórico: Gates 4.1–4.3 foram implementados e autorrevisados pelo Codex. Isso continua registrado; não existe auditoria independente retroativa desses commits.
+
+## Entrega autorizada em 18/09/2026
+
+Última base aprovada: fix/post-audit-4.3 em 5d76935, com auditoria independente Codex (305/305). Publicação autorizada pelo usuário em release/uat-2026-09-18 para retomada no trabalho. Preservar main e históricos separados. Novos trabalhos partem da entrega aprovada, com novo escopo. Coordenador decide → Claude implementa → Codex audita → coordenador decide. Sem Gate 5 nesta entrega. A referência anterior a ausência de auditoria independente descreve apenas o estado histórico anterior ao relatório Claude 2f89004.

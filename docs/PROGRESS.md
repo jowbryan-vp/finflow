@@ -23,3 +23,9 @@ A automação deve ser pausada ao concluir esta entrega, conforme instrução re
 Por nova solicitação do usuário: Claude Code implementa/corrige; Codex coordena e audita. Não executar novos gates com autorrevisão substituindo essa separação. Histórico e resultados anteriores permanecem atribuídos ao Codex. Automação continua pausada; nenhum gate novo autorizado por esta alteração.
 
 Verificação do Claude Code: execução real de leitura concluída sem permissões negadas; sessão 8da144b2-09db-4a4c-8a40-60e2e41fe1e1. Claude leu as instruções e confirmou papel de implementador, sem editar código.
+
+## Atualização 18/09/2026 — revisão independente e entrega
+
+Claude auditou Gates 2.2–4.3 em 2f89004: PASS com dois achados. Claude corrigiu em 0e40dd0 e 5d76935; Codex revisou separadamente e executou 305 testes, todos aprovados. Evidência: docs/audits/POST-AUDIT-4.3-CODEX.md.
+
+Usuário autorizou publicação para retomar com Git/VS Code no trabalho. Entrega em release/uat-2026-09-18, preservando main antigo e tags. Guia: docs/RETOMADA-2026-09-18.md. A publicação do código não transfere dados financeiros nem autenticação. Gate 5 continua sem autorização; automação deve permanecer pausada após entrega.
