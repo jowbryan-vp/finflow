@@ -246,6 +246,52 @@ await check('CYCLE_ADAPTER_INTEGRATED_29', async () => {
   return { ok, detail: `getCurrentFinancialCycle('2026-09-15')=${JSON.stringify(r)} (esp. startDate=2026-08-28, endDate=2026-10-01 — o ciclo fecha na véspera do próximo salário EFETIVAMENTE recebido, 02/10, nunca antecipado pela competência de setembro)` };
 }, 'teste integrado obrigatório (seção 29): a competência de setembro nunca antecipa a fronteira do ciclo — só o recebimento real de 02/10 fecha o ciclo que contém 15/09');
 
+// CYCLE_ADAPTER_ISOLATION_01 — achado 2 da auditoria independente
+// (2f89004): com um salário principal selecionado e um secundário
+// existente, a data de recebimento real do secundário NUNCA pode
+// antecipar o fim (real ou previsto) do ciclo do principal. Aqui o
+// principal ('a') só tem um recebimento real (agosto) e nenhum próximo
+// real, então o fim cai para expected_salary — deve continuar assim
+// mesmo com 'b' recebido em 05/09 (que, se vazasse, fecharia o ciclo em
+// 04/09, um resultado bem diferente e errado).
+await check('CYCLE_ADAPTER_ISOLATION_01', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate(() => {
+    state.receitas.push(salario('a', 8, 2026, { '2026-08': { estado: 'recebido', dataRecebimento: '2026-08-28' } }));
+    state.receitas.push(salario('b', 9, 2026, { '2026-09': { estado: 'recebido', dataRecebimento: '2026-09-05' } }));
+    function salario(id, cm, ca, rpm) {
+      return { id, tipo: 'salario', nome: 'Salário', valor: 5000, mes: cm, ano: ca, competenciaMes: cm, competenciaAno: ca, conta: 'c1', certeza: 'recorrente', recorrencia: { type: 'last_weekday_of_month', weekday: 5 }, recebidoPorMes: rpm, createdAt: id };
+    }
+    state.financialPreferences = { primarySalaryId: 'a' };
+    return getCurrentFinancialCycle('2026-09-15');
+  });
+  const ok = r.startDate === '2026-08-28' && r.endDate === '2026-09-24' && r.endSource === 'expected_salary';
+  return { ok, detail: `ciclo=${JSON.stringify(r)} (esp. startDate=2026-08-28, endDate=2026-09-24, endSource=expected_salary — o recebimento real do secundário 'b' em 05/09 NUNCA pode antecipar o fim previsto do ciclo do principal 'a', que não tem próximo recebimento real)` };
+}, "secundário não antecipa o fim PREVISTO do ciclo do principal quando o principal não tem próximo recebimento real");
+
+// CYCLE_ADAPTER_ISOLATION_02 — mesmo cenário, mas agora o principal
+// também tem um próximo recebimento REAL (02/10), posterior ao do
+// secundário (05/09). O fim do ciclo deve usar a data real do PRÓPRIO
+// principal (véspera de 02/10), nunca a do secundário (que fecharia
+// erradamente em 04/09).
+await check('CYCLE_ADAPTER_ISOLATION_02', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate(() => {
+    state.receitas.push(salario('a', 8, 2026, {
+      '2026-08': { estado: 'recebido', dataRecebimento: '2026-08-28' },
+      '2026-09b': { estado: 'recebido', dataRecebimento: '2026-10-02' },
+    }));
+    state.receitas.push(salario('b', 9, 2026, { '2026-09': { estado: 'recebido', dataRecebimento: '2026-09-05' } }));
+    function salario(id, cm, ca, rpm) {
+      return { id, tipo: 'salario', nome: 'Salário', valor: 5000, mes: cm, ano: ca, competenciaMes: cm, competenciaAno: ca, conta: 'c1', certeza: 'recorrente', recorrencia: { type: 'last_weekday_of_month', weekday: 5 }, recebidoPorMes: rpm, createdAt: id };
+    }
+    state.financialPreferences = { primarySalaryId: 'a' };
+    return getCurrentFinancialCycle('2026-09-15');
+  });
+  const ok = r.startDate === '2026-08-28' && r.endDate === '2026-10-01' && r.endSource === 'received_salary';
+  return { ok, detail: `ciclo=${JSON.stringify(r)} (esp. startDate=2026-08-28, endDate=2026-10-01, endSource=received_salary — usa o próximo recebimento REAL do próprio principal (02/10), nunca o recebimento real do secundário em 05/09, que fecharia erradamente em 04/09)` };
+}, 'secundário não antecipa o fim REAL do ciclo quando o principal tem seu próprio próximo recebimento real posterior');
+
 await close();
 
 const fails = results.filter((r) => r.status === 'FAIL').length;

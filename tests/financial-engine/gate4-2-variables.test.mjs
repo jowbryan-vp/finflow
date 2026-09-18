@@ -38,5 +38,36 @@ await check('P42_CARD_RECONCILE',async()=>{await setup();return page.evaluate(()
 await check('P42_OUTLOOK',async()=>{await setup();return page.evaluate(()=>{
   const p=getFinancialOutlook('2026-09-01','2026-09-30');return p.available===400&&p.committed===400&&p.knownProjected===400&&Math.abs(p.projected-166.67)<0.001;
 });},'estimativa só reduz projetado, preserva disponível e comprometido');
+await check('P42_HISTORY_ONLY_FIXED',async()=>{await loadState(baseSyntheticState());return page.evaluate(()=>{
+  // Achado 1 da auditoria: agosto só tem despesa FIXA — não comprova histórico de variáveis.
+  state.despesas=[
+    {id:'fixed6',valor:100,cat:'food',cartao:'dinheiro',mesInicio:6,anoInicio:2026,fixa:true,pagoMeses:{}},
+    {id:'fixed7',valor:100,cat:'food',cartao:'dinheiro',mesInicio:7,anoInicio:2026,fixa:true,pagoMeses:{}},
+    {id:'fixed8',valor:100,cat:'food',cartao:'dinheiro',mesInicio:8,anoInicio:2026,fixa:true,pagoMeses:{}},
+  ];
+  const r=getVariableExpenseEstimate('2026-09-01','2026-09-30');
+  return r.unavailable===true&&r.reason==='insufficient_history'&&r.total===0;
+});},'mês só com despesa fixa não comprova histórico variável');
+await check('P42_HISTORY_ONLY_INSTALLMENT',async()=>{await loadState(baseSyntheticState());return page.evaluate(()=>{
+  // agosto só tem uma PARCELA (excluída do cálculo de variáveis) — não comprova histórico.
+  state.despesas=[
+    {id:'inst6',valor:600,cat:'food',cartao:'dinheiro',mesInicio:6,anoInicio:2026,parcelas:3,pagoMeses:{}},
+    {id:'inst7',valor:600,cat:'food',cartao:'dinheiro',mesInicio:6,anoInicio:2026,parcelas:3,pagoMeses:{}},
+    {id:'var8',valor:100,cat:'food',cartao:'dinheiro',mesInicio:8,anoInicio:2026,pagoMeses:{}},
+  ];
+  const r=getVariableExpenseEstimate('2026-09-01','2026-09-30');
+  return r.unavailable===true&&r.reason==='insufficient_history'&&r.total===0;
+});},'mês só com parcela não comprova histórico variável');
+await check('P42_HISTORY_MIXED_NO_VARIABLE',async()=>{await loadState(baseSyntheticState());return page.evaluate(()=>{
+  // junho mistura fixa+parcela mas sem NENHUM lançamento variável — ainda insuficiente.
+  state.despesas=[
+    {id:'fixed6',valor:100,cat:'food',cartao:'dinheiro',mesInicio:6,anoInicio:2026,fixa:true,pagoMeses:{}},
+    {id:'inst6',valor:300,cat:'food',cartao:'dinheiro',mesInicio:6,anoInicio:2026,parcelas:3,pagoMeses:{}},
+    {id:'var7',valor:100,cat:'food',cartao:'dinheiro',mesInicio:7,anoInicio:2026,pagoMeses:{}},
+    {id:'var8',valor:100,cat:'food',cartao:'dinheiro',mesInicio:8,anoInicio:2026,pagoMeses:{}},
+  ];
+  const r=getVariableExpenseEstimate('2026-09-01','2026-09-30');
+  return r.unavailable===true&&r.reason==='insufficient_history'&&r.total===0;
+});},'mês com fixa+parcela mas sem variável nenhum não comprova histórico');
 }finally{await close();}
 const fail=results.filter(r=>r.status==='FAIL').length;console.log(`gate4-2-variables: TOTAL=${results.length} PASS=${results.length-fail} FAIL=${fail}`);process.exitCode=fail?1:0;
