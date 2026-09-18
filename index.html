@@ -1157,6 +1157,18 @@ let accessToken  = null;
 let driveFileId  = null;
 let saveTimer    = null;
 let CLIENT_ID    = localStorage.getItem('finflow_client_id') || '';
+// Geração incrementada a cada edição local (scheduleSave). Um envio em
+// andamento captura a geração vigente no início; se ela mudar antes do envio
+// terminar, uma edição nova aconteceu no meio do caminho — nesse caso o envio
+// que acabou de terminar NÃO pode limpar finflow_unsynced nem regravar
+// finflow_local_cache com o snapshot antigo que ele mandou, porque isso
+// apagaria a marca de que existe uma versão mais nova ainda não confirmada.
+let saveGeneration = 0;
+// Garante no máximo um envio ao Drive em voo por vez (scheduleSave, o botão
+// manual e o flush de fechar/ocultar a aba podem disparar quase juntos). Todo
+// disparo passa por saveDrivePending(), que devolve a mesma promise em voo em
+// vez de abrir uma segunda requisição concorrente.
+let inFlightSavePromise = null;
 
 // Restore saved client id on load
 window.addEventListener('DOMContentLoaded', () => {
@@ -1320,14 +1332,22 @@ async function readDataFile(fileId) {
   return await res.json();
 }
 
-async function createDataFile(content, useKeepalive) {
+const DRIVE_MULTIPART_BOUNDARY = '-------FinFlowBoundary';
+// Envelope multipart exatamente como vai pro Drive na criação — extraído pra
+// função própria pra que o cálculo de tamanho do corpo (KEEPALIVE_SAFE_BYTES)
+// meça o mesmo envelope que createDataFile() de fato envia, sem duplicar a
+// lógica de montagem em dois lugares.
+function buildMultipartCreateBody(content) {
   const meta = JSON.stringify({ name: DATA_FILENAME, mimeType: 'application/json' });
-  const body_str = JSON.stringify(content);
-  const boundary = '-------FinFlowBoundary';
-  const body = `--${boundary}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body_str}\r\n--${boundary}--`;
+  const bodyStr = JSON.stringify(content);
+  return `--${DRIVE_MULTIPART_BOUNDARY}\r\nContent-Type: application/json\r\n\r\n${meta}\r\n--${DRIVE_MULTIPART_BOUNDARY}\r\nContent-Type: application/json\r\n\r\n${bodyStr}\r\n--${DRIVE_MULTIPART_BOUNDARY}--`;
+}
+
+async function createDataFile(content, useKeepalive) {
+  const body = buildMultipartCreateBody(content);
   const res = await driveRequest('POST',
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
-    body, `multipart/related; boundary="${boundary}"`, useKeepalive
+    body, `multipart/related; boundary="${DRIVE_MULTIPART_BOUNDARY}"`, useKeepalive
   );
   const data = await res.json();
   driveFileId = data.id;
@@ -1392,7 +1412,7 @@ async function sincronizarAgora(){
   if(btn){ btn.disabled=true; btn.classList.add('spinning'); }
   if(localStorage.getItem('finflow_unsynced')==='1'){
     try{
-      await saveToDrive();
+      await saveDrivePending();
       toast('Alterações locais enviadas ao Google Drive!');
     }catch(e){
       console.error(e);
@@ -1421,6 +1441,10 @@ async function sincronizarAgora(){
 }
 
 async function saveToDrive(useKeepalive) {
+  // Geração capturada ANTES de construir/enviar o corpo — se scheduleSave()
+  // rodar de novo (nova edição) enquanto este envio ainda está em voo, a
+  // geração global avança e diverge da capturada aqui.
+  const startGeneration = saveGeneration;
   setDriveStatus('saving', 'Salvando…');
   try {
     const saveObj = buildSaveObject();
@@ -1429,16 +1453,45 @@ async function saveToDrive(useKeepalive) {
     } else {
       await createDataFile(saveObj, useKeepalive);
     }
-    localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
-    // Só agora que o Drive confirmou ter recebido essa versão é que ela deixa
-    // de ser "não sincronizada" — ver comentário em scheduleSave().
-    localStorage.removeItem('finflow_unsynced');
-    setDriveStatus('synced', 'Sincronizado ✓');
+    if (saveGeneration === startGeneration) {
+      // Nenhuma edição nova aconteceu durante o envio — este é o snapshot
+      // mais atual, seguro pra virar o cache confirmado e limpar a pendência.
+      localStorage.setItem('finflow_local_cache', JSON.stringify(saveObj));
+      localStorage.removeItem('finflow_unsynced');
+      setDriveStatus('synced', 'Sincronizado ✓');
+    } else {
+      // Uma edição nova aconteceu enquanto este envio estava em voo: o que
+      // acabou de ser confirmado no Drive já está desatualizado. Não limpa
+      // finflow_unsynced (existe uma versão mais nova ainda não confirmada)
+      // nem regrava finflow_local_cache com este snapshot antigo — scheduleSave()
+      // já gravou lá o snapshot mais novo. saveDrivePending() encadeia outro
+      // envio pra mandar essa versão mais nova.
+      setDriveStatus('saving', 'Aguardando…');
+    }
   } catch(e) {
     console.error(e);
     setDriveStatus('error', 'Erro ao salvar', e && e.message);
     toast(friendlyDriveErrorMessage(e), 6000);
     throw e;
+  }
+}
+
+// Ponto único de disparo de envio ao Drive — garante no máximo uma
+// requisição em voo por vez. Se já existe um envio rodando, devolve a mesma
+// promise em vez de abrir uma segunda requisição concorrente; quando esse
+// envio termina, se a geração mudou (edição nova durante o envio), encadeia
+// automaticamente outro envio (sem keepalive — a página está viva, já que
+// uma edição acabou de acontecer nela) antes de resolver.
+function saveDrivePending(useKeepalive) {
+  if (inFlightSavePromise) return inFlightSavePromise;
+  inFlightSavePromise = runSaveCycle(useKeepalive).finally(() => { inFlightSavePromise = null; });
+  return inFlightSavePromise;
+}
+async function runSaveCycle(useKeepalive) {
+  const startGeneration = saveGeneration;
+  await saveToDrive(useKeepalive);
+  if (saveGeneration !== startGeneration) {
+    await runSaveCycle(false);
   }
 }
 
@@ -1452,32 +1505,66 @@ function scheduleSave() {
   // a versão antiga do Drive e sobrescrever silenciosamente esses lançamentos
   // que nunca chegaram a ser salvos (ver initApp()).
   localStorage.setItem('finflow_unsynced', '1');
+  saveGeneration++;
   setDriveStatus('saving', 'Aguardando…');
   clearTimeout(saveTimer);
   // saveToDrive() agora propaga falha (ver comentário nela); aqui é um
   // envio automático em segundo plano sem chamador esperando — o próprio
   // saveToDrive() já cuida do indicador/toast/finflow_unsynced, então só
   // evita um unhandled rejection no console.
-  saveTimer = setTimeout(() => { saveToDrive().catch(()=>{}); }, 2500);
+  saveTimer = setTimeout(() => { saveTimer = null; saveDrivePending(false).catch(()=>{}); }, 2500);
 }
+
+// Corpo efetivamente enviado — o mesmo que updateDataFile()/createDataFile()
+// mandam de fato (incluindo o envelope multipart na criação), medido em bytes
+// UTF-8 (não em caracteres — acentos/emoji ocupam mais de 1 byte cada e o
+// limite do navegador é sobre bytes da rede).
+function utf8ByteLength(str) {
+  return new TextEncoder().encode(str).length;
+}
+function estimateSaveBodyBytes(saveObj) {
+  const bodyStr = driveFileId ? JSON.stringify(saveObj) : buildMultipartCreateBody(saveObj);
+  return utf8ByteLength(bodyStr);
+}
+// Margem segura abaixo do limite de ~64 KiB (65536 bytes) que o navegador
+// impõe ao corpo de QUALQUER requisição com keepalive:true (mesma regra do
+// navigator.sendBeacon) — ver comentário em driveRequest().
+const KEEPALIVE_SAFE_BYTES = 60 * 1024;
 
 // Se a aba for fechada/minimizada antes do debounce de 2.5s do scheduleSave()
 // disparar, a edição ficaria só no cache local e nunca iria pro Drive — na
 // próxima sincronização ela seria silenciosamente sobrescrita pela versão
 // antiga do Drive. Isso força o envio imediato assim que a aba fica oculta,
-// e o `keepalive` do driveRequest garante que a requisição sobrevive ao fechamento.
+// usando keepalive pra sobreviver ao fechamento — MAS só quando o corpo cabe
+// na margem segura de keepalive. Um backup grande (histórico de vários
+// meses/perfis facilmente passa de 64 KiB) nunca é mandado com keepalive:true:
+// sem keepalive, o navegador pode simplesmente abortar a requisição no meio
+// do fechamento, deixando o app sem saber se o Drive recebeu ou não — pior
+// que não tentar. Nesse caso a pendência fica só local (cache e
+// finflow_unsynced já gravados por scheduleSave()); o próximo envio com a
+// página viva, ou a recuperação em initApp() na próxima abertura, cuidam
+// de mandar essa versão pro Drive.
 function flushPendingSave() {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveToDrive(true).catch(()=>{}); }
+  if (!saveTimer) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const saveObj = buildSaveObject();
+  if (estimateSaveBodyBytes(saveObj) > KEEPALIVE_SAFE_BYTES) {
+    setDriveStatus('saving', 'Aguardando (offline)…');
+    return;
+  }
+  saveDrivePending(true).catch(()=>{});
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSave(); });
 window.addEventListener('pagehide', flushPendingSave);
 
 async function forceSave() {
   clearTimeout(saveTimer);
+  saveTimer = null;
   // Só mostra "Salvo no Google Drive!" quando saveToDrive() realmente
   // confirmou — antes desta correção o erro era engolido e essa mensagem de
   // sucesso aparecia mesmo depois de uma falha real de rede.
-  await saveToDrive();
+  await saveDrivePending();
   toast('Salvo no Google Drive!');
 }
 
@@ -1961,7 +2048,7 @@ async function initApp() {
     // mensagem amigável (ela já propaga e trata isso). Mantida por ora:
     // removê-la reabriria o risco de arquivo duplicado no Drive.
     try { await findDataFile(); } catch(e) {}
-    try { await saveToDrive(); } catch(e) {}
+    try { await saveDrivePending(); } catch(e) {}
   } else {
     // Sem alterações pendentes: seguro sincronizar a partir do Drive
     try { await syncFromDrive(); } catch(e) {}
