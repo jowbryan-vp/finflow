@@ -4332,7 +4332,8 @@ function openEditReceita(id){
       </div>
       <div class="form-group"><label>Ano</label><input type="number" id="eRecAno" value="${r.ano}" min="2020" max="2040"></div>
       <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta">${contaOpts}</select></div>
-      <div class="checkbox-row form-group full"><input type="checkbox" id="eRecFixo" style="width:auto" ${r.recorrente?'checked':''}><label for="eRecFixo">Recorrente (mensal)</label></div>
+      <div class="checkbox-row form-group full"><input type="checkbox" id="eRecFixo" style="width:auto" ${r.recorrente?'checked':''} onchange="onERecFixoChange()"><label for="eRecFixo">Recorrente (mensal)</label></div>
+      ${legacySalaryConversionHTML(r)}
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="saveEditReceita('${id}')">Salvar</button>
@@ -4340,17 +4341,64 @@ function openEditReceita(id){
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
 }
+// Conversão de salário legado -> modelo recorrente atual, no MESMO registro.
+// Só se aplica a receita legada (certeza===undefined) cujo tipo era e continua
+// sendo 'salario'. Meses que o modelo antigo marcou como recebidos
+// (recebidaMeses) não têm data real; o modelo atual só conta caixa com data
+// real, então cada um exige uma data informada pelo usuário — nunca hoje,
+// fim de mês ou outra estimativa.
+function legacySalaryReceivedMonths(r){
+  return Object.keys(r.recebidaMeses||{}).filter(k=>r.recebidaMeses[k]).sort();
+}
+function legacySalaryConversionHTML(r){
+  if(r.certeza!==undefined||r.tipo!=='salario') return '';
+  const months=legacySalaryReceivedMonths(r);
+  const dates=months.map(k=>`<div class="form-group full"><label>Data real de recebimento — competência ${esc(k.split('-').reverse().join('/'))}</label><input type="date" class="eRecLegacyData" data-mk="${esc(k)}"></div>`).join('');
+  return `<div id="eRecConversaoBox" class="form-group full" style="display:${r.recorrente?'block':'none'}">
+    <div class="info-box">Este salário será atualizado para o modelo recorrente atual no mesmo lançamento, sem criar uma receita duplicada.${months.length?' Este salário já tem competências marcadas como recebidas sem data real: informe a data em que o dinheiro entrou em cada uma (nenhuma data é estimada). O saldo não muda.':' Nenhuma competência será marcada como recebida; confirme o recebimento depois na lista de Receitas, com a data real.'}</div>
+    <div class="form-grid" style="margin-top:10px">${dates}</div></div>`;
+}
+function onERecFixoChange(){
+  const box=document.getElementById('eRecConversaoBox');
+  if(box) box.style.display=document.getElementById('eRecFixo').checked?'block':'none';
+}
 function saveEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
-  r.tipo=document.getElementById('eRecTipo').value;
+  const novoTipo=document.getElementById('eRecTipo').value;
+  const novoRecorrente=document.getElementById('eRecFixo').checked;
+  const converter=r.certeza===undefined&&r.tipo==='salario'&&novoTipo==='salario'&&novoRecorrente;
+  const novoMes=parseInt(document.getElementById('eRecMes').value);
+  const novoAno=parseInt(document.getElementById('eRecAno').value);
+  const recebidoPorMes={};
+  if(converter){
+    // Toda validação antes de qualquer mutação.
+    if(!(parseFloat(document.getElementById('eRecValor').value)>0)){toast('Informe um valor válido para atualizar o salário');return;}
+    if(!Number.isInteger(novoMes)||novoMes<1||novoMes>12||!Number.isInteger(novoAno)){toast('Informe uma competência válida');return;}
+    const inputs=[...document.querySelectorAll('.eRecLegacyData')];
+    for(const k of legacySalaryReceivedMonths(r)){
+      const el=inputs.find(i=>i.dataset.mk===k);
+      if(!el||!isValidISODateString(el.value)){toast('Informe a data real de recebimento de cada competência já recebida');return;}
+      recebidoPorMes[k]={estado:'recebido',dataRecebimento:el.value};
+    }
+  }
+  r.tipo=novoTipo;
   r.nome=document.getElementById('eRecNome').value.trim();
   r.valor=parseFloat(document.getElementById('eRecValor').value)||0;
-  r.mes=parseInt(document.getElementById('eRecMes').value);
-  r.ano=parseInt(document.getElementById('eRecAno').value);
+  r.mes=novoMes;
+  r.ano=novoAno;
   const contaSelecionada=document.getElementById('eRecConta')?.value;
   r.conta=contaSelecionada!==undefined?(contaSelecionada||null):(r.conta||null);
-  r.recorrente=document.getElementById('eRecFixo').checked;
+  r.recorrente=novoRecorrente;
   r.isRepasse=r.tipo==='repasse';
+  if(converter){
+    r.competenciaMes=r.mes; r.competenciaAno=r.ano;
+    r.certeza='recorrente';
+    r.recorrencia={type:'last_weekday_of_month',weekday:5};
+    r.recebidoPorMes=recebidoPorMes;
+    scheduleSave();closeModal();renderReceitas();renderDashboard();
+    toast('Salário atualizado para o modelo recorrente!');
+    return;
+  }
   scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
 }
 
