@@ -75,6 +75,10 @@ const FILES = [
   'gate5-reembolso-nomenclatura.test.mjs',
   'gate5-office-contrato.test.mjs',
   'gate5-drive-sync-safety.test.mjs',
+  // Gate 5 (UAT) — salário legado editado como recorrente é convertido no
+  // mesmo registro (sem duplicar, sem inventar datas) e vira elegível ao
+  // seletor de salário principal.
+  'gate5-salario-legacy-conversion.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
