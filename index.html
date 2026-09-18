@@ -460,7 +460,7 @@ select option{background:var(--card)}
       </div>
       <div class="nav-item" data-page="relatorioPessoas" onclick="navigate('relatorioPessoas')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        Repasses / Pessoas
+        Reembolsos / Pessoas
       </div>
       <div class="nav-item" data-page="escritorio" onclick="navigate('escritorio')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
@@ -610,7 +610,7 @@ select option{background:var(--card)}
                     <option value="projeto">Projeto (previsto/recebido)</option>
                     <option value="rendimento">Rendimento</option>
                     <option value="outro">Outro</option>
-                    <option value="repasse">Presente / Repasse</option>
+                    <option value="repasse">Reembolso de compra no cartão</option>
                   </select>
                 </div>
                 <div class="form-group" id="recNomeGroup" style="display:none">
@@ -674,7 +674,7 @@ select option{background:var(--card)}
                   <div class="info-box">💡 Mês/Ano acima passam a ser só a <strong>competência</strong> (referência de relatório) — o dinheiro entra no caixa na data prevista/recebida informada acima, não na competência. Ex: previsto pra outubro mas recebido em setembro conta como caixa de setembro.</div>
                 </div>
                 <div class="form-group full" id="repasseInfo" style="display:none">
-                  <div class="info-box">💡 Presente/Repasse <strong>não entra no cálculo de contribuição</strong> — é contabilizado separadamente.</div>
+                  <div class="info-box">💡 Reembolso de compra no cartão <strong>não entra no cálculo de contribuição</strong> — é contabilizado separadamente.</div>
                 </div>
                 <!-- Parcelamento de projeto extra -->
                 <div class="checkbox-row form-group full" id="recParceladoRow" style="display:none">
@@ -788,7 +788,7 @@ select option{background:var(--card)}
       <!-- PARCELAMENTOS -->
       <div id="page-parcelamentos" class="page">
         <div class="card">
-          <div class="card-header"><div class="card-title">Todos os Parcelamentos Ativos</div><span class="badge badge-blue" id="parcelPeriod">—</span></div>
+          <div class="card-header"><div class="card-title">Parcelamentos Ativos no Período</div><span class="badge badge-blue" id="parcelPeriod">—</span></div>
           <div id="parcelamentosList"></div>
         </div>
       </div>
@@ -1019,7 +1019,7 @@ select option{background:var(--card)}
       <div id="page-relatorioPessoas" class="page">
         <div class="card">
           <div class="card-header">
-            <div class="card-title">Repasses e Divisão por Pessoa</div>
+            <div class="card-title">Reembolsos e Divisão por Pessoa</div>
             <div style="display:flex;gap:8px;align-items:center">
               <span class="badge badge-blue" id="relPessoasPeriod">—</span>
               <button class="btn btn-ghost btn-sm" onclick="exportRepassesCSV()">⬇ Exportar CSV Detalhado</button>
@@ -1343,6 +1343,23 @@ async function updateDataFile(fileId, content, useKeepalive) {
   return await res.json();
 }
 
+// 'Failed to fetch' é uma falha de TRANSPORTE do navegador — o fetch() foi
+// rejeitado antes de qualquer resposta HTTP do Google chegar (sem internet,
+// www.googleapis.com bloqueado, proxy/firewall, extensão do navegador,
+// origem não autorizada no cliente OAuth, ou app aberto via file://). Nunca
+// reclassificar isso como token expirado/permissão/401/403 — não há resposta
+// HTTP nenhuma pra basear esse diagnóstico. O detalhe técnico original
+// continua no title do indicador (ver setDriveStatus); aqui só a mensagem
+// amigável exibida ao usuário, sem token/Client ID/dado financeiro.
+function friendlyDriveErrorMessage(e){
+  if(e && e.name==='TypeError' && e.message==='Failed to fetch'){
+    return 'Não foi possível conectar ao Google Drive. Seus dados continuam salvos neste navegador. Verifique a internet, o acesso a www.googleapis.com e a configuração da origem local.';
+  }
+  return 'Erro ao sincronizar com o Google Drive: ' + ((e && e.message) || 'motivo desconhecido') + '. Dados salvos localmente.';
+}
+// Propaga a falha (nunca engole) — quem chama precisa distinguir sucesso de
+// falha pra decidir se é seguro seguir (ex.: nunca baixar por cima de
+// alteração local pendente). O indicador visual já é atualizado aqui.
 async function syncFromDrive(forceRefresh) {
   setDriveStatus('saving', 'Carregando…');
   try {
@@ -1358,31 +1375,46 @@ async function syncFromDrive(forceRefresh) {
   } catch(e) {
     console.error(e);
     setDriveStatus('error', 'Erro Drive', e && e.message);
+    throw e;
   }
 }
 
-// Botão "Sincronizar agora": ignora o cache local de qual arquivo usar,
-// busca de novo no Drive (sempre pegando o mais recente) e recarrega a tela
-// sem precisar dar F5. Útil quando um outro aparelho salvou algo novo.
+// Botão "Sincronizar agora". Regra de segurança: se existir alteração local
+// ainda não confirmada no Drive (finflow_unsynced==='1'), NUNCA baixa a
+// versão remota por cima dela — tenta reenviar o local primeiro, exatamente
+// como initApp() já faz no carregamento. Só busca do Drive quando não há
+// pendência local. Sem repetição automática: uma tentativa por clique.
 let sincronizando=false;
 async function sincronizarAgora(){
   if(sincronizando) return;
   sincronizando=true;
   const btn=document.getElementById('syncNowBtn');
   if(btn){ btn.disabled=true; btn.classList.add('spinning'); }
-  try{
-    await syncFromDrive(true);
-    // Limpa os contextos do Chart.js antes de re-renderizar — sem isso, o
-    // Chart.js pode desenhar o gráfico novo por cima do antigo no mesmo
-    // <canvas>, gerando sobreposição visual depois de sincronizar.
-    if(typeof chartBar!=='undefined' && chartBar){ chartBar.destroy(); chartBar=null; }
-    if(typeof chartDonut!=='undefined' && chartDonut){ chartDonut.destroy(); chartDonut=null; }
-    if(typeof chartProjecao!=='undefined' && chartProjecao){ chartProjecao.destroy(); chartProjecao=null; }
-    renderAll();
-    toast('Dados atualizados a partir do Drive!');
-  }catch(e){
-    console.error(e);
-    toast('Não foi possível sincronizar agora: ' + ((e && e.message) || 'motivo desconhecido'), 6000);
+  if(localStorage.getItem('finflow_unsynced')==='1'){
+    try{
+      await saveToDrive();
+      toast('Alterações locais enviadas ao Google Drive!');
+    }catch(e){
+      console.error(e);
+      // saveToDrive() já atualizou o indicador e avisou o usuário; aqui só
+      // garante que o fluxo pare sem mensagem de sucesso, sem chamar
+      // syncFromDrive() e sem tocar no cache local nem no estado em memória.
+    }
+  } else {
+    try{
+      await syncFromDrive(true);
+      // Limpa os contextos do Chart.js antes de re-renderizar — sem isso, o
+      // Chart.js pode desenhar o gráfico novo por cima do antigo no mesmo
+      // <canvas>, gerando sobreposição visual depois de sincronizar.
+      if(typeof chartBar!=='undefined' && chartBar){ chartBar.destroy(); chartBar=null; }
+      if(typeof chartDonut!=='undefined' && chartDonut){ chartDonut.destroy(); chartDonut=null; }
+      if(typeof chartProjecao!=='undefined' && chartProjecao){ chartProjecao.destroy(); chartProjecao=null; }
+      renderAll();
+      toast('Dados atualizados a partir do Drive!');
+    }catch(e){
+      console.error(e);
+      toast(friendlyDriveErrorMessage(e), 6000);
+    }
   }
   if(btn){ btn.disabled=false; btn.classList.remove('spinning'); }
   sincronizando=false;
@@ -1405,7 +1437,8 @@ async function saveToDrive(useKeepalive) {
   } catch(e) {
     console.error(e);
     setDriveStatus('error', 'Erro ao salvar', e && e.message);
-    toast('Erro ao salvar no Drive: ' + ((e && e.message) || 'motivo desconhecido') + '. Dados salvos localmente.', 6000);
+    toast(friendlyDriveErrorMessage(e), 6000);
+    throw e;
   }
 }
 
@@ -1421,7 +1454,11 @@ function scheduleSave() {
   localStorage.setItem('finflow_unsynced', '1');
   setDriveStatus('saving', 'Aguardando…');
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => saveToDrive(), 2500);
+  // saveToDrive() agora propaga falha (ver comentário nela); aqui é um
+  // envio automático em segundo plano sem chamador esperando — o próprio
+  // saveToDrive() já cuida do indicador/toast/finflow_unsynced, então só
+  // evita um unhandled rejection no console.
+  saveTimer = setTimeout(() => { saveToDrive().catch(()=>{}); }, 2500);
 }
 
 // Se a aba for fechada/minimizada antes do debounce de 2.5s do scheduleSave()
@@ -1430,13 +1467,16 @@ function scheduleSave() {
 // antiga do Drive. Isso força o envio imediato assim que a aba fica oculta,
 // e o `keepalive` do driveRequest garante que a requisição sobrevive ao fechamento.
 function flushPendingSave() {
-  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveToDrive(true); }
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; saveToDrive(true).catch(()=>{}); }
 }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSave(); });
 window.addEventListener('pagehide', flushPendingSave);
 
 async function forceSave() {
   clearTimeout(saveTimer);
+  // Só mostra "Salvo no Google Drive!" quando saveToDrive() realmente
+  // confirmou — antes desta correção o erro era engolido e essa mensagem de
+  // sucesso aparecia mesmo depois de uma falha real de rede.
   await saveToDrive();
   toast('Salvo no Google Drive!');
 }
@@ -1903,12 +1943,17 @@ async function initApp() {
   // etc.), NÃO deixa o syncFromDrive() baixar a versão antiga do Drive por
   // cima — isso apagaria da tela (e do cache local) o que ainda não tinha
   // sido salvo. Em vez disso, tenta reenviar a versão local primeiro.
+  // saveToDrive()/syncFromDrive() agora propagam falha (o chamador precisa
+  // poder distinguir sucesso de falha — ver comentários nelas). Aqui, no
+  // carregamento inicial, uma falha de rede não pode travar o app: o
+  // indicador já foi atualizado dentro delas, e o que já está em memória
+  // (cache local) continua sendo renderizado normalmente.
   if (localStorage.getItem('finflow_unsynced') === '1') {
     await findDataFile(); // só lê o id do arquivo do cache local, sem ir à rede
-    await saveToDrive();
+    try { await saveToDrive(); } catch(e) {}
   } else {
     // Sem alterações pendentes: seguro sincronizar a partir do Drive
-    await syncFromDrive();
+    try { await syncFromDrive(); } catch(e) {}
   }
   renderAll();
 }
@@ -1932,7 +1977,7 @@ function importData(e) {
 // ════════════════════════════════════════════════
 // NAVIGATION
 // ════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas',escritorio:'Caixa do Escritório'};
+const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Reembolsos / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas',escritorio:'Caixa do Escritório'};
 function toggleMobileMenu(){
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebarOverlay').classList.toggle('open');
@@ -3832,7 +3877,7 @@ function renderRelatorio(){
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
-    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
+    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
     recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
@@ -3960,7 +4005,7 @@ function renderParcelasReceita(){
 }
 function addReceita(){
   const tipo=document.getElementById('recTipo').value;
-  const nome=document.getElementById('recNome').value.trim()||(tipo==='repasse'?'Presente/Repasse':tipo);
+  const nome=document.getElementById('recNome').value.trim()||(tipo==='repasse'?'Reembolso de compra no cartão':tipo);
   const valor=parseFloat(document.getElementById('recValor').value);
   const mes=parseInt(document.getElementById('recMes').value);
   const ano=parseInt(document.getElementById('recAno').value);
@@ -4039,7 +4084,7 @@ function renderReceitas(){
     bannerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:12px;gap:10px"><span>✓ Mostrando só as receitas <strong>já recebidas</strong></span><button class="btn btn-ghost btn-sm" onclick="window._recFiltro='todas';renderReceitas()">✕ Ver todas</button></div>`;
   }
 
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
   let html=bannerHTML;
 
   // ── Seção de Repasses agrupada por pessoa ──
@@ -4055,7 +4100,7 @@ function renderReceitas(){
     const pessoas=Object.values(byPessoa);
     if(pessoas.length>0){
       html+=`<div style="margin-bottom:14px">
-        <div style="font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Repasses por Pessoa</div>
+        <div style="font-size:10px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Reembolsos por Pessoa</div>
         <div class="item-list">`;
       pessoas.forEach(p=>{
         const pendente=p.totalDevido-p.totalRecebido;
@@ -4258,7 +4303,7 @@ function openEditReceita(id){
     return;
   }
   if(r.certeza!==undefined) return openEditReceitaNovoModelo(id);
-  const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
       state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
@@ -5009,12 +5054,37 @@ function saveEditDespesa(id){
 // ════════════════════════════════════════════════
 // PARCELAMENTOS
 // ════════════════════════════════════════════════
+// Calcula o mês/ano de início e término (inclusive) da competência de uma
+// despesa parcelada, com a mesma regra usada no resto do app (cartão de
+// crédito rola pra fatura via getCompetenciaFatura; dinheiro/PIX usa
+// mesInicio/anoInicio direto, sem rolagem — "nunca rola").
+function getParcelamentoPeriodo(d){
+  const card=state.cards.find(c=>c.id===d.cartao);
+  let mIni,yIni;
+  if(isCartaoDeCredito(d.cartao)){
+    ({mes:mIni,ano:yIni}=getCompetenciaFatura(d.dataCompra,card,d.mesInicio,d.anoInicio));
+  } else {
+    mIni=d.mesInicio; yIni=d.anoInicio;
+  }
+  const {mes:mFim,ano:yFim}=addMonths(mIni,yIni,d.parcelas-1);
+  return {mIni,yIni,mFim,yFim};
+}
 function renderParcelamentos(){
   document.getElementById('parcelPeriod').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
-  const parceled=state.despesas.filter(d=>d.parcelas>1);
-  if(!parceled.length){document.getElementById('parcelamentosList').innerHTML='<div class="empty-state">Nenhum parcelamento cadastrado</div>';return;}
+  // Só exibe parcelamentos cuja competência do mês selecionado esteja entre a
+  // primeira e a última parcela (inclusive) — parcelamentos já concluídos ou
+  // ainda não iniciados não aparecem fora do próprio período. Filtragem e
+  // apresentação apenas: nenhum dado de state.despesas é alterado ou excluído.
+  const ativos=state.despesas.filter(d=>{
+    if(d.parcelas<=1) return false;
+    const {mIni,yIni,mFim,yFim}=getParcelamentoPeriodo(d);
+    const apartirDoInicio = yIni<currentYear || (yIni===currentYear && mIni<=currentMonth);
+    const antesDoFim = yFim>currentYear || (yFim===currentYear && mFim>=currentMonth);
+    return apartirDoInicio && antesDoFim;
+  });
+  if(!ativos.length){document.getElementById('parcelamentosList').innerHTML='<div class="empty-state">Nenhum parcelamento ativo neste período</div>';return;}
   let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Total</th><th>Parcela</th><th>Início</th><th>Progresso</th><th>Valor/x</th><th></th></tr></thead><tbody>';
-  parceled.forEach(d=>{
+  ativos.forEach(d=>{
     // Progresso usa a mesma competência de fatura que o resto do app (ver
     // getCompetenciaFatura) — pra bater com o Dashboard e com Faturas dos Cartões.
     const card=state.cards.find(c=>c.id===d.cartao);
@@ -6067,7 +6137,7 @@ function toggleRepasse(despesaId,personId,mes,ano,comoReceita){
       const valorParcela=d.valor/(d.parcelas||1);
       const valorPessoa=valorParcela*(split.percent/100);
       const person=state.pessoas.find(p=>p.id===personId);
-      const rec={id:uid(),tipo:'repasse',nome:`Repasse: ${d.desc} (${person?.name||''})`,valor:valorPessoa,mes,ano,recorrente:false,isRepasse:true,createdAt:uid(),fromDespesaId:d.id};
+      const rec={id:uid(),tipo:'repasse',nome:`Reembolso: ${d.desc} (${person?.name||''})`,valor:valorPessoa,mes,ano,recorrente:false,isRepasse:true,createdAt:uid(),fromDespesaId:d.id};
       state.receitas.push(rec);
       receitaId=rec.id;
     }
@@ -6082,7 +6152,7 @@ function toggleRepasse(despesaId,personId,mes,ano,comoReceita){
   scheduleSave();
   renderRelatorioPessoas();
   if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
-  toast(novoRecebido?'Repasse marcado como recebido':'Repasse desmarcado');
+  toast(novoRecebido?'Reembolso marcado como recebido':'Reembolso desmarcado');
 }
 
 function renderRelatorioPessoas(){
@@ -6156,7 +6226,7 @@ function openRegistrarRepasse(personId, mes, ano, pendente){
   document.getElementById('modalBody').innerHTML=`
     <div class="info-box" style="margin-bottom:14px">
       Total pendente desta pessoa: <strong style="color:var(--warn)">${fmtBRL(pendente)}</strong><br>
-      O valor digitado entrará automaticamente como receita do tipo Repasse.
+      O valor digitado entrará automaticamente como receita do tipo Reembolso.
     </div>
     <div class="form-grid">
       <div class="form-group full">
@@ -6184,7 +6254,7 @@ function confirmarRegistroRepasse(personId, mes, ano){
   // Cria receita do tipo repasse automaticamente
   const rec={
     id:uid(), tipo:'repasse',
-    nome:`Repasse: ${person?.name||''}${obs?' — '+obs:''}`,
+    nome:`Reembolso: ${person?.name||''}${obs?' — '+obs:''}`,
     valor, mes, ano, recorrente:false, isRepasse:true,
     createdAt:uid(), fromPersonId:personId
   };
@@ -6206,13 +6276,13 @@ function confirmarRegistroRepasse(personId, mes, ano){
 
   scheduleSave(); closeModal(); renderRelatorioPessoas();
   if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
-  toast(`✓ R$ ${fmtBRL(valor)} registrado como receita de repasse!`);
+  toast(`✓ R$ ${fmtBRL(valor)} registrado como receita de reembolso!`);
 }
 
 function openRepasseChoice(despesaId,personId,mes,ano){
-  document.getElementById('modalTitle').textContent='Marcar repasse como recebido';
+  document.getElementById('modalTitle').textContent='Marcar reembolso como recebido';
   document.getElementById('modalBody').innerHTML=`
-    <div class="info-box" style="margin-bottom:16px">Como você quer registrar esse repasse recebido?</div>
+    <div class="info-box" style="margin-bottom:16px">Como você quer registrar esse reembolso recebido?</div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <button class="btn btn-success" onclick="toggleRepasse('${despesaId}','${personId}',${mes},${ano},true);closeModal()">
         💰 Lançar como Receita (entra no saldo do mês)
@@ -7406,18 +7476,18 @@ function exportarRepassePessoaPDF(personId){
   });
   const pendente=totalDevido-totalRecebido;
   rows+=`<tr class="print-total-row"><td colspan="5">Total</td><td>${fmtBRL(totalDevido)}</td><td>Pendente: ${fmtBRL(pendente)}</td></tr>`;
-  const html=`<h2>Repasses de ${esc(person.name)} — ${MONTHS[currentMonth-1]} ${currentYear}</h2>
+  const html=`<h2>Reembolsos de ${esc(person.name)} — ${MONTHS[currentMonth-1]} ${currentYear}</h2>
     <table>
       <thead><tr><th>Despesa</th><th>Categoria</th><th>Parcela</th><th>%</th><th>Valor Total</th><th>Valor Devido</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
-  exportarRelatorioPDF('Relatório de Repasses — '+esc(person.name), html);
+  exportarRelatorioPDF('Relatório de Reembolsos — '+esc(person.name), html);
 }
 
 // Relatório de caixa (balanço consolidado do mês)
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
   let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
   if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
@@ -7649,13 +7719,24 @@ function renderOfficeProjetosTab(){
   const statusLabel={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
   const statusBadge={potencial:'badge-yellow',contratado:'badge-blue',concluido:'badge-ok',cancelado:'badge-red'};
   const projetos=(state.office.projetos||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const contaOptsProj = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const rows=projetos.map(p=>{
     const recebiveisDoProjeto=(state.office.recebiveis||[]).filter(r=>r.projetoId===p.id);
     const totalRecebido=recebiveisDoProjeto.filter(isOfficeRecebivelRealizado).reduce((s,r)=>s+(r.valor||0),0);
+    const totalPrevisto=recebiveisDoProjeto.filter(r=>r.estado==='previsto').reduce((s,r)=>s+(r.valor||0),0);
+    // Detalhamento de entrada/parcelamento só existe em projetos contratados
+    // cadastrados com os campos financeiros deste gate — projetos antigos ou
+    // 'potencial' simplesmente não têm esses campos (undefined), sem inventar valor.
+    const temDetalheContrato = p.status==='contratado' && p.valorEntrada!==undefined;
+    const detalheContrato = temDetalheContrato
+      ? ` · Entrada: ${fmtBRL(p.valorEntrada||0)} · Saldo parcelado: ${fmtBRL(Math.max(0,(p.valorContrato||0)-(p.valorEntrada||0)))} (${p.qtdParcelas||0}x) · Previsto: ${fmtBRL(totalPrevisto)} · A receber: ${fmtBRL(totalPrevisto)}`
+      : '';
     return `<div class="item-row">
       <div class="item-row-info">
         <div class="item-row-name">${esc(p.nome)} <span class="badge ${statusBadge[p.status]||'badge-blue'}">${statusLabel[p.status]||p.status}</span></div>
-        <div class="item-row-meta">${esc(p.cliente||'—')} · Contrato: ${fmtBRL(p.valorContrato||0)} · Recebido: ${fmtBRL(totalRecebido)} · ${recebiveisDoProjeto.length} recebível(is)</div>
+        <div class="item-row-meta">${esc(p.cliente||'—')} · Contrato: ${fmtBRL(p.valorContrato||0)} · Recebido: ${fmtBRL(totalRecebido)} · ${recebiveisDoProjeto.length} recebível(is)${detalheContrato}</div>
       </div>
       <button class="btn btn-ghost btn-sm" onclick="openEditOfficeProjeto('${p.id}')">Editar</button>
       <button class="btn btn-ghost btn-sm" onclick="delOfficeProjeto('${p.id}')">🗑</button>
@@ -7670,7 +7751,7 @@ function renderOfficeProjetosTab(){
           <div class="form-group full"><label>Cliente</label><input type="text" id="newProjCliente" placeholder="Ex: João Silva"></div>
           <div class="form-group"><label>Valor do contrato (R$)</label><input type="number" id="newProjValor" placeholder="0,00" min="0" step="0.01"></div>
           <div class="form-group"><label>Status</label>
-            <select id="newProjStatus">
+            <select id="newProjStatus" onchange="onNewProjStatusChange()">
               <option value="potencial">Potencial</option>
               <option value="contratado">Contratado</option>
               <option value="concluido">Concluído</option>
@@ -7680,11 +7761,73 @@ function renderOfficeProjetosTab(){
           <div class="form-group full"><label>Data do contrato</label><input type="date" id="newProjData"></div>
           <div class="form-group full"><label>Observações</label><input type="text" id="newProjObs" placeholder="opcional"></div>
         </div>
-        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>.</div>
+        <div id="newProjContratadoFields" class="form-grid" style="display:none;margin-top:10px">
+          <div class="form-group"><label>Valor da entrada (R$)</label><input type="number" id="newProjEntradaValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Data prevista da entrada</label><input type="date" id="newProjEntradaData"></div>
+          <div class="form-group full">
+            <label><input type="checkbox" id="newProjEntradaRecebida" onchange="onNewProjEntradaRecebidaChange()"> Entrada já recebida</label>
+          </div>
+          <div class="form-group full" id="newProjEntradaDataRealWrap" style="display:none">
+            <label>Data real do recebimento da entrada</label><input type="date" id="newProjEntradaDataReal">
+          </div>
+          <div class="form-group"><label>Parcelas do saldo restante</label><input type="number" id="newProjParcelasQtd" placeholder="0" min="0" step="1" value="0"></div>
+          <div class="form-group"><label>Data prevista da 1ª parcela</label><input type="date" id="newProjParcelaData"></div>
+          <div class="form-group full"><label>Conta empresarial de destino</label><select id="newProjConta">${contaOptsProj}</select></div>
+        </div>
+        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>. Ao cadastrar já como <strong>contratado</strong>, a entrada e as parcelas do saldo geram os recebíveis automaticamente, uma única vez.</div>
         <button class="btn btn-primary mt-16" onclick="addOfficeProjeto()">Adicionar Projeto</button>
       </div>
       <div class="card"><div class="card-header"><div class="card-title">Projetos Cadastrados</div></div><div class="item-list">${rows}</div></div>
     </div>`;
+}
+function onNewProjStatusChange(){
+  const el=document.getElementById('newProjContratadoFields'); if(!el) return;
+  el.style.display = document.getElementById('newProjStatus').value==='contratado' ? 'grid' : 'none';
+}
+function onNewProjEntradaRecebidaChange(){
+  const el=document.getElementById('newProjEntradaDataRealWrap'); if(!el) return;
+  el.style.display = document.getElementById('newProjEntradaRecebida').checked ? 'block' : 'none';
+}
+// Gera os recebíveis (Entrada + Parcela i/N) de um projeto recém-cadastrado
+// como 'contratado', em centavos inteiros pra nunca acumular erro de ponto
+// flutuante — a soma de todas as parcelas com a entrada bate exatamente com
+// o valor do contrato porque o resto da divisão inteira vai inteiro pra
+// última parcela. Ação explícita de cadastro: nunca roda em edição, render
+// ou migração/import (proteção do histórico já recebido).
+function gerarRecebiveisContratoOffice(projeto, opts){
+  const {entradaCent, entradaPrevista, entradaRecebida, entradaDataReal, qtdParcelas, dataPrimeiraParcela, contaDestino, contratoCent}=opts;
+  if(entradaCent>0){
+    const rid=uid();
+    state.office.recebiveis.push({
+      id:rid, projetoId:projeto.id, descricao:'Entrada', valor:entradaCent/100,
+      estado:entradaRecebida?'recebido':'previsto',
+      dataPrevista:entradaPrevista, dataRecebimento:entradaRecebida?entradaDataReal:null,
+      contaDestino, createdAt:uid(),
+    });
+    syncDerivedPersonalTransfer(rid);
+  }
+  const saldoCent=contratoCent-entradaCent;
+  if(saldoCent>0 && qtdParcelas>0){
+    const base=Math.floor(saldoCent/qtdParcelas);
+    const resto=saldoCent-base*qtdParcelas;
+    const [anoP,mesP]=dataPrimeiraParcela.split('-').map(Number);
+    const diaP=Number(dataPrimeiraParcela.split('-')[2]);
+    for(let i=0;i<qtdParcelas;i++){
+      const valorParcelaCent=base+(i===qtdParcelas-1?resto:0);
+      const {mes:mAlvo,ano:aAlvo}=addMonths(mesP,anoP,i);
+      const ultimoDia=new Date(aAlvo,mAlvo,0).getDate();
+      const diaAlvo=Math.min(diaP,ultimoDia);
+      const dataPrevistaParcela=`${aAlvo}-${String(mAlvo).padStart(2,'0')}-${String(diaAlvo).padStart(2,'0')}`;
+      const rid=uid();
+      state.office.recebiveis.push({
+        id:rid, projetoId:projeto.id, descricao:`Parcela ${i+1}/${qtdParcelas}`,
+        valor:valorParcelaCent/100, estado:'previsto',
+        dataPrevista:dataPrevistaParcela, dataRecebimento:null,
+        contaDestino, createdAt:uid(),
+      });
+      syncDerivedPersonalTransfer(rid);
+    }
+  }
 }
 function addOfficeProjeto(){
   const nome=document.getElementById('newProjNome').value.trim();
@@ -7694,8 +7837,50 @@ function addOfficeProjeto(){
   const status=document.getElementById('newProjStatus').value;
   const dataContrato=document.getElementById('newProjData').value||null;
   const observacao=document.getElementById('newProjObs').value.trim();
-  state.office.projetos.push({id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid()});
+  const projeto={id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid()};
+
+  if(status==='contratado'){
+    // Campos financeiros de entrada/parcelamento só se aplicam a projeto
+    // contratado (projeto potencial continua só pipeline, sem gerar caixa).
+    const valorEntradaRaw=document.getElementById('newProjEntradaValor').value;
+    const valorEntrada=valorEntradaRaw?(parseFloat(valorEntradaRaw)||0):0;
+    const dataEntradaPrevista=document.getElementById('newProjEntradaData').value||null;
+    const entradaRecebida=document.getElementById('newProjEntradaRecebida').checked;
+    const dataEntradaReal=entradaRecebida?(document.getElementById('newProjEntradaDataReal').value||null):null;
+    const qtdParcelasRaw=document.getElementById('newProjParcelasQtd').value;
+    const qtdParcelas=qtdParcelasRaw===''?0:Number(qtdParcelasRaw);
+    const dataPrimeiraParcela=document.getElementById('newProjParcelaData').value||null;
+    const contaDestino=document.getElementById('newProjConta').value||null;
+
+    // Tudo em centavos inteiros — nunca ponto flutuante nas validações/soma.
+    const contratoCent=Math.round(valorContrato*100);
+    const entradaCent=Math.round(valorEntrada*100);
+    if(contratoCent<=0){toast('Informe um valor de contrato maior que zero para projeto contratado');return;}
+    if(entradaCent<0){toast('A entrada não pode ser negativa');return;}
+    if(entradaCent>contratoCent){toast('A entrada não pode ser maior que o valor do contrato');return;}
+    if(!Number.isInteger(qtdParcelas)||qtdParcelas<0){toast('Quantidade de parcelas inválida');return;}
+    if(entradaRecebida && !dataEntradaReal){toast('Informe a data real do recebimento da entrada');return;}
+    const saldoCent=contratoCent-entradaCent;
+    if(saldoCent>0 && qtdParcelas===0){toast('Informe a quantidade de parcelas para o saldo restante (ou ajuste a entrada para igualar o contrato)');return;}
+    if(saldoCent>0 && !dataPrimeiraParcela){toast('Informe a data prevista da 1ª parcela');return;}
+    if(!contaDestino){toast('Selecione a conta empresarial de destino');return;}
+
+    projeto.valorEntrada=valorEntrada;
+    projeto.dataEntradaPrevista=dataEntradaPrevista;
+    projeto.entradaRecebida=entradaRecebida;
+    projeto.dataEntradaReal=dataEntradaReal;
+    projeto.qtdParcelas=qtdParcelas;
+    projeto.dataPrimeiraParcela=dataPrimeiraParcela;
+    projeto.contaDestino=contaDestino;
+
+    state.office.projetos.push(projeto);
+    gerarRecebiveisContratoOffice(projeto, {entradaCent, entradaPrevista:dataEntradaPrevista, entradaRecebida, entradaDataReal:dataEntradaReal, qtdParcelas, dataPrimeiraParcela, contaDestino, contratoCent});
+  } else {
+    state.office.projetos.push(projeto);
+  }
+
   scheduleSave();renderOfficeProjetosTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
   toast('Projeto adicionado!');
 }
 function openEditOfficeProjeto(id){

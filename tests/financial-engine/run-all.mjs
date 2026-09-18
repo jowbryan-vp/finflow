@@ -67,6 +67,14 @@ const FILES = [
   'gate4-1-projection.test.mjs',
   'gate4-2-variables.test.mjs',
   'gate4-3-dashboard.test.mjs',
+  // Gate 5 — correções de validação do usuário (UAT): parcelamentos
+  // restritos ao período ativo, nomenclatura de reembolso no fluxo pessoal,
+  // contrato do Caixa do Escritório com entrada e saldo parcelado, e
+  // sincronização segura com o Google Drive diante de falha de transporte.
+  'gate5-parcelamentos-periodo.test.mjs',
+  'gate5-reembolso-nomenclatura.test.mjs',
+  'gate5-office-contrato.test.mjs',
+  'gate5-drive-sync-safety.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
