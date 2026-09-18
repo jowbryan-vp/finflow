@@ -938,6 +938,89 @@ await check('D36', async () => {
   return { ok, detail: JSON.stringify(r) };
 }, 'achado da segunda revisão, caso positivo: com appHydrated=true e accessToken válido (estado pronto), pageshow retoma o envio normalmente e limpa a pendência');
 
+// ── Correção pós-terceira revisão Codex (docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md, FAIL em 55b1c24) ──
+// D37: reprodução literal — cache pendente sintético, token válido,
+// driveFileId=null e nenhum ID local em cache, GET de findDataFile() (dentro
+// de initApp()) atrasado de propósito. Enquanto esse GET ainda está em voo
+// (appHydrated ainda false — só vira true no FINAL de initApp(), depois de
+// TODA a inicialização, não só da hidratação síncrona), dispara um pageshow
+// real. Antes da correção isso disparava um envio concorrente que criava
+// (POST) um arquivo duplicado antes do GET achar o arquivo já existente.
+// Depois: o pageshow não faz nada enquanto initApp() ainda está buscando; ao
+// liberar o GET (que encontra o arquivo remoto existente), initApp() segue
+// seu próprio fluxo e só atualiza (PATCH) esse arquivo — zero POST em
+// qualquer momento.
+await check('D37', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate(async () => {
+    accessToken = 'test-token-not-a-real-credential';
+    appHydrated = false;
+    driveFileId = null;
+    localStorage.removeItem('finflow_drive_file_id');
+
+    const cachePendente = { version: 2, perfilAtivo: 'p1', perfis: { p1: { id: 'p1', name: 'Perfil', color: '#000', data: {
+      categories: [], cards: [], contas: [], movimentacoesContas: [], receitas: [], pessoas: [], cofrinhos: [], movimentacoesCofrinhos: [],
+      excedentes: {}, contribuicaoAjustes: {}, faturasPagas: {}, contribuicaoPaga: {},
+      despesas: [{ id: 'D37_marker', desc: 'pending-user-data', cat: 'geral', subcat: 'Geral', cartao: 'dinheiro', conta: 'c1',
+        valor: 321, parcelas: 1, mesInicio: 9, anoInicio: 2026, dataCompra: '2026-09-01', fixa: false, diaVencimento: null,
+        debitoAutomatico: false, pagoMeses: {}, split: [], repasses: {}, createdAt: 'D37_marker' }],
+    } } } };
+    localStorage.setItem('finflow_local_cache', JSON.stringify(cachePendente));
+    localStorage.setItem('finflow_unsynced', '1');
+
+    const calls = [];
+    let releaseGate;
+    const gate = new Promise((resolve) => { releaseGate = resolve; });
+    window.__origFetch = window.fetch;
+    window.fetch = async (url, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      calls.push({ url: String(url), method });
+      if (method === 'GET') {
+        await gate; // segura a busca até o teste liberar
+        return { ok: true, status: 200, statusText: 'OK',
+          json: async () => ({ files: [{ id: 'existing-remote-id', name: 'finflow_data.json', modifiedTime: '2026-01-01T00:00:00Z' }] }),
+          clone() { return this; } };
+      }
+      return { ok: true, status: 200, statusText: 'OK', json: async () => ({ id: 'existing-remote-id' }), clone() { return this; } };
+    };
+
+    const initPromise = initApp(); // GET dispara e fica preso no gate — não aguardado ainda
+
+    await new Promise((resolve) => setTimeout(resolve, 0)); // deixa o GET disparar de verdade
+    const appHydratedDuringGet = appHydrated;
+
+    window.dispatchEvent(new Event('pageshow')); // deve ser ignorado — initApp() ainda em andamento
+
+    await new Promise((resolve) => setTimeout(resolve, 20)); // dá tempo pro pageshow "vazar" se o guard falhar
+    const callsBeforeRelease = calls.length;
+
+    releaseGate(); // libera o GET — encontra o arquivo já existente
+    await initPromise;
+
+    window.fetch = window.__origFetch; delete window.__origFetch;
+
+    const postCalls = calls.filter((c) => c.url.includes('uploadType=multipart'));
+    const patchCalls = calls.filter((c) => c.method === 'PATCH');
+    const marker = state.despesas.find((d) => d.id === 'D37_marker');
+    return {
+      appHydratedDuringGet,
+      appHydratedAfter: appHydrated,
+      callsBeforeRelease,
+      totalCalls: calls.length,
+      postCallsCount: postCalls.length,
+      patchCallsCount: patchCalls.length,
+      patchUrls: patchCalls.map((c) => c.url),
+      unsynced: localStorage.getItem('finflow_unsynced'),
+      markerPreserved: !!marker && marker.valor === 321,
+    };
+  });
+  const ok = r.appHydratedDuringGet === false && r.appHydratedAfter === true &&
+    r.callsBeforeRelease === 1 && r.postCallsCount === 0 && r.patchCallsCount === 1 &&
+    r.patchUrls.every((u) => u.includes('existing-remote-id')) &&
+    r.unsynced === null && r.markerPreserved;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado da terceira revisão (reprodução literal): pageshow durante o GET (ainda em voo) de findDataFile() dentro de initApp() não dispara nada — zero POST em qualquer momento, apenas 1 PATCH no arquivo já encontrado');
+
 await close();
 
 const fails = results.filter((r) => r.status === 'FAIL').length;

@@ -1169,16 +1169,22 @@ let saveGeneration = 0;
 // disparo passa por saveDrivePending(), que devolve a mesma promise em voo em
 // vez de abrir uma segunda requisição concorrente.
 let inFlightSavePromise = null;
-// Prontidão explícita da hidratação — vira true só depois que initApp() já
-// carregou o cache local real pro `state` em memória (migrateAppData). Antes
-// disso, qualquer envio construiria o corpo a partir do estado ainda
-// default/vazio declarado acima (state={despesas:[],...}), sobrescrevendo
-// silenciosamente uma pendência real no cache com dado vazio — ver
-// docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md (segunda revisão). Não depende só
-// de accessToken: o callback OAuth pode setar accessToken e chamar initApp()
-// sem esperar essa função terminar de hidratar (initApp() não é aguardada
-// pelo listener que a chama), então as duas condições são checadas juntas em
-// retryPendingSaveOnResume().
+// Prontidão explícita da inicialização — vira true só depois que initApp()
+// termina POR COMPLETO: cache local carregado pro `state` (migrateAppData) E
+// a busca/sincronização inicial com o Drive (findDataFile() + envio da
+// pendência, ou download) já resolveram, sucesso ou falha. Não basta a
+// hidratação síncrona do `state` sozinha — ver
+// docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md (terceira revisão): um
+// pageshow/visibilitychange->visible disparado enquanto o findDataFile()
+// interno de initApp() ainda está em voo (driveFileId ainda null, sem ID
+// local em cache) fazia retryPendingSaveOnResume() disparar um envio
+// concorrente que criava (POST) um arquivo duplicado, porque a busca do
+// arquivo já existente ainda não tinha retornado. Redefinida para false no
+// início de toda chamada a initApp() e em signOut() — nunca fica "presa"
+// como true de uma sessão anterior. Não depende só de accessToken: o
+// callback OAuth pode setar accessToken e chamar initApp() sem esperar essa
+// função terminar (initApp() não é aguardada pelo listener que a chama),
+// então as duas condições são checadas juntas em retryPendingSaveOnResume().
 let appHydrated = false;
 
 // Restore saved client id on load
@@ -1256,6 +1262,11 @@ function signOut() {
   localStorage.removeItem('finflow_drive_file_id');
   accessToken = null;
   driveFileId = null;
+  // Sem token, retryPendingSaveOnResume() já ficaria bloqueada (accessToken
+  // falsy) — mas redefinir appHydrated também, explicitamente, garante que
+  // uma eventual reautenticação nesta mesma página precise passar de novo
+  // pela inicialização completa antes de liberar retomada automática.
+  appHydrated = false;
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('authScreen').style.display = 'flex';
   toast('Sessão encerrada.');
@@ -1591,18 +1602,20 @@ function flushPendingSave() {
 // abre uma segunda requisição concorrente com um envio já em voo.
 //
 // Nunca antes de appHydrated===true nem sem accessToken — ver
-// docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md (segunda revisão). Um
-// pageshow/visibilitychange->visible pode disparar ANTES de initApp() ter
-// carregado o cache real pro `state` em memória (ex.: bfcache restaurando a
-// página antes do login, ou o intervalo entre o callback OAuth setar
-// accessToken e initApp() de fato terminar de hidratar, já que ela não é
-// aguardada por quem a chama) — nesse caso saveToDrive() construiria o corpo
-// a partir do estado ainda default/vazio, sobrescrevendo uma pendência real
-// no cache com dado vazio. accessToken sozinho não basta como sinal de
-// prontidão (pode já estar setado antes da hidratação terminar); as duas
-// condições são exigidas juntas. Antes disso, a recuperação fica só por
-// conta do fluxo próprio de initApp() (que já trata finflow_unsynced==='1'
-// depois de hidratar, na mesma função).
+// docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md (segunda e terceira revisões). Um
+// pageshow/visibilitychange->visible pode disparar a qualquer momento,
+// inclusive DURANTE a inicialização inteira de initApp() (não só antes dela
+// começar) — o que inclui a busca do arquivo remoto (findDataFile()) e a
+// sincronização inicial (envio da pendência ou download), que rodam depois
+// da hidratação síncrona do `state`. Se isso disparasse nesse meio-tempo,
+// saveToDrive() poderia rodar concorrentemente com o findDataFile() ainda em
+// voo dentro de initApp() e criar (POST) um arquivo duplicado no Drive antes
+// desse findDataFile() achar o arquivo já existente — por isso appHydrated só
+// vira true no FINAL de initApp(), depois que toda a inicialização (busca +
+// sincronização) já terminou, sucesso ou falha. accessToken sozinho não
+// basta como sinal de prontidão (pode já estar setado antes da inicialização
+// terminar); as duas condições são exigidas juntas. Antes disso, a
+// recuperação fica só por conta do fluxo próprio de initApp().
 function retryPendingSaveOnResume() {
   if (!appHydrated || !accessToken) return;
   if (localStorage.getItem('finflow_unsynced') === '1') {
@@ -2072,16 +2085,17 @@ async function executarReset(){
 }
 
 async function initApp() {
+  // Redefine a prontidão no início de toda inicialização — ver comentário em
+  // appHydrated. Mesmo que já estivesse true de uma sessão anterior nesta
+  // mesma página (re-chamada de initApp()), a busca/sincronização inicial
+  // desta chamada precisa terminar de novo antes de liberar retomada
+  // automática (pageshow/visibilitychange->visible).
+  appHydrated = false;
   // Load local cache first for instant render
   const cache = localStorage.getItem('finflow_local_cache');
   let cachedObj = null;
   if (cache) { try { cachedObj = JSON.parse(cache); } catch(e) {} }
   migrateAppData(cachedObj);
-  // A partir daqui `state` reflete o cache local real (ou os defaults, se
-  // não havia cache nenhum) — só agora é seguro deixar retryPendingSaveOnResume()
-  // (pageshow/visibilitychange->visible) construir e enviar um corpo a partir
-  // do estado em memória, ver comentário em appHydrated.
-  appHydrated = true;
 
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
@@ -2116,6 +2130,22 @@ async function initApp() {
     // Sem alterações pendentes: seguro sincronizar a partir do Drive
     try { await syncFromDrive(); } catch(e) {}
   }
+  // Só agora — depois que a busca do arquivo remoto (findDataFile(), dentro
+  // do ramo acima ou dentro de syncFromDrive()) e a sincronização inicial
+  // (envio da pendência OU download) terminaram de vez, sucesso ou falha —
+  // é seguro liberar retryPendingSaveOnResume() (pageshow/visibilitychange->
+  // visible). Setar isso mais cedo (ex.: logo depois de migrateAppData(),
+  // como numa versão anterior) deixava uma janela real: um pageshow disparado
+  // enquanto o findDataFile() acima ainda estava em voo (driveFileId ainda
+  // null, sem ID local em cache) fazia retryPendingSaveOnResume() chamar
+  // saveDrivePending() concorrentemente — como findDataFile() aqui não passa
+  // pelo lock de saveDrivePending(), o envio disparado pelo resume via CREATE
+  // (driveFileId ainda null) enquanto o GET original ainda não tinha
+  // encontrado o arquivo já existente — resultando em GET, POST e PATCH: um
+  // arquivo novo duplicado no Drive, mesmo já existindo um. Hidratação
+  // síncrona sozinha não bastava; é preciso esperar a inicialização inteira
+  // (busca + sincronização) terminar.
+  appHydrated = true;
   renderAll();
 }
 

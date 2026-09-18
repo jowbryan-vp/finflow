@@ -245,6 +245,59 @@ Saída vazia, exit code 0 — sem erros de espaço em branco.
 - Mesma limitação estrutural das entregas anteriores: validado com eventos de ciclo de vida disparados via `dispatchEvent` e `fetch` mockado em nível de página — nunca contra login OAuth real, `initApp()` real concorrendo de fato com um `pageshow` do navegador, ou o Google Drive real.
 - `appHydrated` nunca é revertido para `false` depois de setado (ex.: em `signOut()`) — não foi pedido pela auditoria e não haveria pendência local relevante a proteger nesse caminho (a tela volta pra autenticação, mas o `state` em memória continua sendo o hidratado); documentado aqui como decisão consciente de escopo, não um descuido.
 
+## Terceira revisão Codex — FAIL em 55b1c24
+
+Auditoria: `docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md`, seção "Terceira revisão — 55b1c24" — **FAIL**, reprodução confirmada: a guarda pré-login/pré-hidratação do patch anterior estava correta, mas `appHydrated` virava `true` cedo demais — logo depois da hidratação **síncrona** do `state` (`migrateAppData`), não depois de toda a inicialização assíncrona (busca do arquivo remoto + sincronização inicial). Patch restrito exatamente a esse achado, sobre a implementação auditada `55b1c24`.
+
+- Hash inicial deste patch (HEAD no momento em que a correção começou): `55b1c24d304fc0e5f3a7d3ce072dfbd789e2db72`
+- Hash final: ver commit informado no handoff ao final da sessão — descendente direto de `55b1c24`, sem alterar nem fazer squash dele.
+
+### Achado — corrida entre `pageshow` e o `GET` de `findDataFile()` dentro de `initApp()`
+
+**Reprodução do Codex**: cache pendente sintético, token válido, `driveFileId=null` e nenhum ID local em cache — iniciar `initApp()` mantendo o `GET` de `findDataFile()` em espera; disparar `pageshow`; então liberar o `GET`, que encontra um arquivo já existente no Drive. Observado: `GET`, `POST`, `PATCH` — criou um arquivo novo (`POST`) apesar do arquivo existente já ter sido encontrado pelo `GET` original. Causa: `appHydrated=true` era setado logo após `migrateAppData()`, no início de `initApp()` — antes do `GET` de `findDataFile()` sequer ser disparado. Um `pageshow` nesse meio-tempo passava pela guarda (`appHydrated` já `true`, `accessToken` válido) e chamava `saveDrivePending()`; como `driveFileId` ainda estava `null` (o `GET` original ainda não tinha retornado), esse envio concorrente tomava o caminho de **criação** (`POST`), duplicando o arquivo no Drive — o próprio `findDataFile()` de `initApp()` não passa pelo lock de `saveDrivePending()`, então não havia proteção nenhuma contra essa corrida específica.
+
+**Correção**: `appHydrated` agora só vira `true` no **final** de `initApp()`, depois que TODA a inicialização — hidratação síncrona, busca do arquivo remoto (`findDataFile()`) e a sincronização inicial (envio da pendência ou download) — termina, com sucesso ou falha, logo antes de `renderAll()`. Também redefinida (`appHydrated = false`) no **início** de toda chamada a `initApp()` (defensivo, caso seja re-chamada) e em `signOut()` (uma reautenticação na mesma página precisa passar de novo pela inicialização completa antes de liberar retomada automática) — resolvendo a limitação documentada na seção anterior deste relatório ("`appHydrated` nunca é revertido..."), que ficou obsoleta com esta correção.
+
+```js
+async function initApp() {
+  appHydrated = false;               // início: redefine
+  ...
+  migrateAppData(cachedObj);         // hidratação síncrona — ainda NÃO libera
+  ...
+  if (localStorage.getItem('finflow_unsynced') === '1') {
+    try { await findDataFile(); } catch(e) {}
+    try { await saveDrivePending(); } catch(e) {}
+  } else {
+    try { await syncFromDrive(); } catch(e) {}
+  }
+  appHydrated = true;                // só agora — depois de busca + sincronização
+  renderAll();
+}
+```
+
+`retryPendingSaveOnResume()` (a checagem em si) não mudou — continua exigindo `appHydrated && accessToken` juntos; o que mudou foi exclusivamente o momento em que `appHydrated` passa a ser `true`. As garantias das revisões anteriores (D01–D36) permanecem intactas e sem alteração de código além desta mudança de timing — nenhuma foi reescrita.
+
+Nenhum bypass foi adicionado ao código de produção para o teste: `appHydrated` continua sendo a mesma variável real que `initApp()` usa em produção.
+
+**Teste** (`gate5-drive-sync-safety.test.mjs`, D37): reproduz literalmente o cenário do Codex — cache pendente sintético (despesa `pending-user-data`), token válido, `driveFileId=null`, `finflow_drive_file_id` removido do cache local, `fetch` mockado com o `GET` de busca deliberadamente atrasado (`await gate`, liberado manualmente pelo teste). Dispara `initApp()` sem aguardar, espera uma volta de microtask pro `GET` realmente disparar, confirma `appHydrated===false` nesse instante, dispara um `pageshow` real, espera mais um pouco (pra qualquer vazamento do guard ter chance de se manifestar) e confirma que nenhuma chamada nova de `fetch` aconteceu enquanto o `GET` ainda estava preso (`callsBeforeRelease===1`, só o próprio `GET`). Libera o `GET` (que resolve encontrando `existing-remote-id`), aguarda `initApp()` terminar, e confirma: zero chamadas `POST`/`uploadType=multipart` em qualquer momento da execução, exatamente 1 `PATCH` (no arquivo encontrado, `existing-remote-id`), `finflow_unsynced` limpo, o marcador da despesa pendente preservado em `state`, e `appHydrated===true` só depois de tudo terminado.
+
+### Resultado da suíte completa pós-patch
+
+```
+cd tests/financial-engine && npm test
+```
+
+Executado uma vez, conforme pedido pela auditoria: `FINFLOW FINANCIAL-ENGINE SUITE: TOTAL_PASS=392 TOTAL_FAIL=0` (391 anteriores + 1 novo: D37). Nenhum `[FAIL]`.
+
+### `git diff --check`
+
+Saída vazia, exit code 0 — sem erros de espaço em branco.
+
+### Limitações desta correção
+
+- Mesma limitação estrutural das entregas anteriores: validado com `fetch`/eventos de ciclo de vida mockados e um `GET` artificialmente atrasado via `Promise` controlada em nível de página — nunca contra o Google Drive real (onde a latência do `GET` é real, não controlada por um teste) nem um `pageshow` de navegador de verdade concorrendo com uma chamada de rede em andamento.
+- `findDataFile()`, quando chamada diretamente dentro de `initApp()` (fora de `saveDrivePending()`), continua sem seu próprio lock de concorrência — a proteção contra a corrida veio de nunca permitir que `retryPendingSaveOnResume()` dispare enquanto `initApp()` está em andamento, não de tornar `findDataFile()` concorrente-segura em geral. Isso é suficiente para todos os caminhos de chamada existentes (só `initApp()` e `syncFromDrive()`, nunca em paralelo com `saveDrivePending()` fora dessas duas rotas), mas não é uma garantia genérica caso um novo caminho de chamada a `findDataFile()` seja adicionado no futuro fora desse controle.
+
 ## Entrega
 
-Três commits sobre `56ef03bd1c265afa7faf0b82da64a589e8f13968`, branch `gate/5-uat-corrections`: `1f48b19` (implementação original), `db261ae` (patch corretivo pós-primeira auditoria) e o commit desta entrega (patch corretivo restrito ao achado da segunda revisão, sem alterar nem fazer squash de nenhum commit anterior). Sem push, sem merge, sem rebase. Edição encerrada nesta entrega — aguardando nova auditoria independente do Codex.
+Quatro commits sobre `56ef03bd1c265afa7faf0b82da64a589e8f13968`, branch `gate/5-uat-corrections`: `1f48b19` (implementação original), `db261ae` (patch corretivo pós-primeira auditoria), `55b1c24` (patch corretivo pós-segunda auditoria) e o commit desta entrega (patch corretivo restrito ao achado da terceira revisão, sem alterar nem fazer squash de nenhum commit anterior). Sem push, sem merge, sem rebase. Edição encerrada nesta entrega — aguardando nova auditoria independente do Codex.
