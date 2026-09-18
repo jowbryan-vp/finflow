@@ -2365,11 +2365,15 @@ function getVariableExpenseEstimate(referenceDate,endDate,method='weighted'){
   const history=[],averages={};
   for(let offset=-3;offset<0;offset++){
     const {mes,ano}=addMonths(rm,ry,offset),items=getDespesasForMonth(mes,ano);
-    if(!items.length) return {unavailable:true,total:0,months:[],reason:'insufficient_history'};
     const categories={};
     for(const d of items) if(!d.fixa&&(d.parcelas||1)===1){
       const cat=d.cat||'uncategorized';categories[cat]=(categories[cat]||0)+Math.max(0,d._valorParcela||0);
     }
+    // Um mês só com despesas fixas/parceladas (sem NENHUM lançamento
+    // variável elegível) não comprova gasto variável zero — é histórico
+    // insuficiente, não uma média legítima de zero (achado 1, auditoria
+    // independente 2f89004).
+    if(!Object.keys(categories).length) return {unavailable:true,total:0,months:[],reason:'insufficient_history'};
     history.push({month:mesKey(mes,ano),categories,weight:weights[offset+3]});
   }
   const divisor=weights.reduce((a,b)=>a+b,0),round=v=>Math.round((v+Number.EPSILON)*100)/100;
