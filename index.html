@@ -1169,6 +1169,17 @@ let saveGeneration = 0;
 // disparo passa por saveDrivePending(), que devolve a mesma promise em voo em
 // vez de abrir uma segunda requisição concorrente.
 let inFlightSavePromise = null;
+// Prontidão explícita da hidratação — vira true só depois que initApp() já
+// carregou o cache local real pro `state` em memória (migrateAppData). Antes
+// disso, qualquer envio construiria o corpo a partir do estado ainda
+// default/vazio declarado acima (state={despesas:[],...}), sobrescrevendo
+// silenciosamente uma pendência real no cache com dado vazio — ver
+// docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md (segunda revisão). Não depende só
+// de accessToken: o callback OAuth pode setar accessToken e chamar initApp()
+// sem esperar essa função terminar de hidratar (initApp() não é aguardada
+// pelo listener que a chama), então as duas condições são checadas juntas em
+// retryPendingSaveOnResume().
+let appHydrated = false;
 
 // Restore saved client id on load
 window.addEventListener('DOMContentLoaded', () => {
@@ -1578,7 +1589,22 @@ function flushPendingSave() {
 // por cima (nunca chama syncFromDrive() aqui — mesma regra de segurança de
 // initApp()/sincronizarAgora()). saveDrivePending() garante que isso nunca
 // abre uma segunda requisição concorrente com um envio já em voo.
+//
+// Nunca antes de appHydrated===true nem sem accessToken — ver
+// docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md (segunda revisão). Um
+// pageshow/visibilitychange->visible pode disparar ANTES de initApp() ter
+// carregado o cache real pro `state` em memória (ex.: bfcache restaurando a
+// página antes do login, ou o intervalo entre o callback OAuth setar
+// accessToken e initApp() de fato terminar de hidratar, já que ela não é
+// aguardada por quem a chama) — nesse caso saveToDrive() construiria o corpo
+// a partir do estado ainda default/vazio, sobrescrevendo uma pendência real
+// no cache com dado vazio. accessToken sozinho não basta como sinal de
+// prontidão (pode já estar setado antes da hidratação terminar); as duas
+// condições são exigidas juntas. Antes disso, a recuperação fica só por
+// conta do fluxo próprio de initApp() (que já trata finflow_unsynced==='1'
+// depois de hidratar, na mesma função).
 function retryPendingSaveOnResume() {
+  if (!appHydrated || !accessToken) return;
   if (localStorage.getItem('finflow_unsynced') === '1') {
     saveDrivePending(false).catch(()=>{});
   }
@@ -2051,6 +2077,11 @@ async function initApp() {
   let cachedObj = null;
   if (cache) { try { cachedObj = JSON.parse(cache); } catch(e) {} }
   migrateAppData(cachedObj);
+  // A partir daqui `state` reflete o cache local real (ou os defaults, se
+  // não havia cache nenhum) — só agora é seguro deixar retryPendingSaveOnResume()
+  // (pageshow/visibilitychange->visible) construir e enviar um corpo a partir
+  // do estado em memória, ver comentário em appHydrated.
+  appHydrated = true;
 
   document.getElementById('authScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';

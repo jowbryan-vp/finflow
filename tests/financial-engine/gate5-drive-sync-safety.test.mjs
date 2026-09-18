@@ -718,7 +718,12 @@ await check('D30', async () => {
   await pushPaddedDespesas(120, 700, 'D30_');
   await installSpies();
   const r = await withVisibilityOverride(async () => {
-    await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; scheduleSave(); });
+    // appHydrated=true simula o que initApp() já teria feito de verdade
+    // (hidratar `state` a partir do cache local) — sem isso, retryPendingSaveOnResume()
+    // agora se recusa a agir (ver docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md,
+    // segunda revisão, e D34/D35 abaixo, que testam exatamente a ausência
+    // dessa prontidão).
+    await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; appHydrated = true; scheduleSave(); });
     await dispatchVisibility('hidden'); // fica pendente (corpo grande demais pra keepalive)
     const antes = await page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
     const depois = await withSucceedingFetch(async () => {
@@ -744,7 +749,8 @@ await check('D31', async () => {
   await loadState(baseSyntheticState());
   await pushPaddedDespesas(120, 700, 'D31_');
   const r = await withVisibilityOverride(async () => {
-    await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; scheduleSave(); });
+    // appHydrated=true simula a hidratação real já concluída (ver comentário em D30).
+    await page.evaluate(() => { localStorage.setItem('finflow_drive_file_id', 'existing-file-id'); driveFileId = 'existing-file-id'; appHydrated = true; scheduleSave(); });
     await dispatchVisibility('hidden');
     const antes = await page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
     const depois = await withSucceedingFetch(async () => {
@@ -826,6 +832,111 @@ await check('D33', async () => {
     r.driveFileIdAfter === 'created-file-id' && r.unsynced === null;
   return { ok, detail: JSON.stringify(r) };
 }, 'criação concorrente de verdade (sem ID pré-existente): duas chamadas simultâneas resultam em exatamente 1 criação, nunca duas');
+
+// ── Correções pós-segunda revisão Codex (docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md, FAIL em db261ae) ──
+// retryPendingSaveOnResume() (pageshow/visibilitychange->visible) podia
+// disparar ANTES de initApp() hidratar `state` a partir do cache local real
+// e/ou antes do login — saveToDrive() então construía o corpo a partir do
+// estado default/vazio (state inicial declarado no topo do arquivo, ainda
+// sem despesas/receitas/etc.) e regravava finflow_local_cache com esse
+// snapshot vazio, apagando uma pendência real. A correção exige duas
+// condições explícitas (appHydrated===true E accessToken truthy) antes de
+// agir — nenhuma delas sozinha basta (accessToken pode ser setado pelo
+// callback OAuth antes de initApp() terminar de hidratar).
+//
+// Os dois testes abaixo desligam appHydrated/accessToken (variáveis reais de
+// produção, os mesmos globais que initApp() usa — não um bypass ou atalho
+// criado só pro teste) para reproduzir as duas reproduções exatas do Codex.
+
+// D34: reprodução literal — accessToken=null (antes do login), cache real
+// com um marcador sintético pendente, finflow_unsynced='1', pageshow
+// disparado com fetch rejeitando. Antes da correção: calls=1, cache
+// sobrescrito (marcador perdido). Depois: nenhuma tentativa de rede, cache e
+// pendência intactos.
+await check('D34', async () => {
+  await loadState(baseSyntheticState());
+  const r = await withVisibilityOverride(() => withCapturingFetch(() => page.evaluate(async () => {
+    accessToken = null; // antes da autenticação
+    appHydrated = true; // mesmo com a hidratação já concluída, sem token não pode agir
+    const cachePendente = { version: 2, perfilAtivo: 'p1', perfis: { p1: { id: 'p1', name: 'Perfil', color: '#000', data: {
+      categories: [], cards: [], contas: [], movimentacoesContas: [], receitas: [], pessoas: [], cofrinhos: [], movimentacoesCofrinhos: [],
+      excedentes: {}, contribuicaoAjustes: {}, faturasPagas: {}, contribuicaoPaga: {},
+      despesas: [{ id: 'D34_marker', desc: 'pending-user-data', cat: 'geral', subcat: 'Geral', cartao: 'dinheiro', conta: 'c1',
+        valor: 123, parcelas: 1, mesInicio: 9, anoInicio: 2026, dataCompra: '2026-09-01', fixa: false, diaVencimento: null,
+        debitoAutomatico: false, pagoMeses: {}, split: [], repasses: {}, createdAt: 'D34_marker' }],
+    } } } };
+    localStorage.setItem('finflow_local_cache', JSON.stringify(cachePendente));
+    localStorage.setItem('finflow_unsynced', '1');
+    window.dispatchEvent(new Event('pageshow'));
+    // Dá uma volta de microtask/macrotask pra qualquer reação assíncrona do
+    // listener (se o guard falhar) ter chance de rodar antes de checarmos.
+    await new Promise((r) => setTimeout(r, 50));
+    const cache = JSON.parse(localStorage.getItem('finflow_local_cache'));
+    return {
+      calls: window.__fetchCalls,
+      unsynced: localStorage.getItem('finflow_unsynced'),
+      cachePreservado: cache.perfis.p1.data.despesas.some((d) => d.id === 'D34_marker'),
+    };
+  })));
+  const ok = r.calls.length === 0 && r.unsynced === '1' && r.cachePreservado;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado da segunda revisão (reprodução literal, sem token): pageshow antes do login não tenta a rede nem sobrescreve o cache pendente');
+
+// D35: token presente, mas appHydrated ainda false (initApp() não terminou
+// de hidratar `state`) — mesmo com accessToken válido, pageshow não pode
+// agir, porque o `state` em memória ainda não reflete o cache real.
+await check('D35', async () => {
+  await loadState(baseSyntheticState());
+  const r = await withVisibilityOverride(() => withCapturingFetch(() => page.evaluate(async () => {
+    accessToken = 'test-token-not-a-real-credential';
+    appHydrated = false; // initApp() ainda não hidratou state a partir do cache
+    const cachePendente = { version: 2, perfilAtivo: 'p1', perfis: { p1: { id: 'p1', name: 'Perfil', color: '#000', data: {
+      categories: [], cards: [], contas: [], movimentacoesContas: [], receitas: [], pessoas: [], cofrinhos: [], movimentacoesCofrinhos: [],
+      excedentes: {}, contribuicaoAjustes: {}, faturasPagas: {}, contribuicaoPaga: {},
+      despesas: [{ id: 'D35_marker', desc: 'pending-user-data', cat: 'geral', subcat: 'Geral', cartao: 'dinheiro', conta: 'c1',
+        valor: 456, parcelas: 1, mesInicio: 9, anoInicio: 2026, dataCompra: '2026-09-01', fixa: false, diaVencimento: null,
+        debitoAutomatico: false, pagoMeses: {}, split: [], repasses: {}, createdAt: 'D35_marker' }],
+    } } } };
+    localStorage.setItem('finflow_local_cache', JSON.stringify(cachePendente));
+    localStorage.setItem('finflow_unsynced', '1');
+    document.dispatchEvent(new Event('visibilitychange')); // window.__visibilityValue já é 'visible' (withVisibilityOverride)
+    await new Promise((r) => setTimeout(r, 50));
+    const cache = JSON.parse(localStorage.getItem('finflow_local_cache'));
+    return {
+      calls: window.__fetchCalls,
+      unsynced: localStorage.getItem('finflow_unsynced'),
+      cachePreservado: cache.perfis.p1.data.despesas.some((d) => d.id === 'D35_marker'),
+    };
+  })));
+  const ok = r.calls.length === 0 && r.unsynced === '1' && r.cachePreservado;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado da segunda revisão: token presente mas ainda não hidratado (appHydrated=false) — pageshow/visible não tenta a rede nem sobrescreve o cache pendente, mesmo com accessToken válido');
+
+// D36: estado pronto (appHydrated=true e accessToken válido) — a recuperação
+// via pageshow/visible volta a funcionar normalmente, confirmando que a
+// correção do achado acima não regride D30/D31 (que já cobrem esse caminho)
+// e comprovando explicitamente as duas condições juntas, com o mesmo
+// cenário de cache real (não payload grande) usado em D34/D35.
+await check('D36', async () => {
+  await loadState(baseSyntheticState());
+  await page.evaluate(() => {
+    accessToken = 'test-token-not-a-real-credential';
+    appHydrated = true;
+    state.despesas.push({ id: 'D36_marker', desc: 'pending-user-data', cat: 'geral', subcat: 'Geral', cartao: 'dinheiro', conta: 'c1',
+      valor: 789, parcelas: 1, mesInicio: 9, anoInicio: 2026, dataCompra: '2026-09-01', fixa: false, diaVencimento: null,
+      debitoAutomatico: false, pagoMeses: {}, split: [], repasses: {}, createdAt: 'D36_marker' });
+    localStorage.setItem('finflow_drive_file_id', 'existing-file-id');
+    driveFileId = 'existing-file-id';
+    localStorage.setItem('finflow_unsynced', '1');
+  });
+  const r = await withSucceedingFetch(async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
+    await page.waitForFunction(() => localStorage.getItem('finflow_unsynced') === null, { timeout: 5000 });
+    return page.evaluate(() => ({ unsynced: localStorage.getItem('finflow_unsynced') }));
+  });
+  const ok = r.unsynced === null;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado da segunda revisão, caso positivo: com appHydrated=true e accessToken válido (estado pronto), pageshow retoma o envio normalmente e limpa a pendência');
 
 await close();
 

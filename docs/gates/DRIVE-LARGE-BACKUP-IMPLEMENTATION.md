@@ -198,6 +198,53 @@ Saída vazia, exit code 0 — sem erros de espaço em branco.
 - Assim como na entrega original, validado inteiramente com `fetch`/eventos de ciclo de vida mockados em nível de página — nunca contra o Google Drive real nem um navegador com aba/janela de verdade sendo minimizada/restaurada. O comportamento exato de `visibilitychange`/`pageshow` num navegador real (inclusive bfcache) não foi e não pode ser confirmado nesta sessão.
 - Os novos testes D29–D31 usam `Object.defineProperty(document, 'visibilityState', ...)` pra simular as transições de visibilidade (a propriedade nativa é somente leitura) e disparam os eventos reais via `dispatchEvent` — os listeners exercitados são exatamente os registrados em `index.html`, não helpers de teste, mas o mecanismo de simulação em si é específico do ambiente de teste (Chromium headless via Playwright).
 
+## Segunda revisão Codex — FAIL em db261ae
+
+Auditoria: `docs/audits/DRIVE-LARGE-BACKUP-REVIEW.md`, seção "Segunda revisão — db261ae" — **FAIL**, reprodução confirmada. Patch restrito exatamente a esse achado, sobre a implementação auditada `db261ae`.
+
+- Hash inicial deste patch (HEAD no momento em que a correção começou): `db261aea5baebc32bb63da5013db3d070a85438f`
+- Hash final: ver commit informado no handoff ao final da sessão — descendente direto de `db261ae`, sem alterar nem fazer squash dele.
+
+### Achado — `pageshow`/`visibilitychange→visible` disparam antes do login e antes da hidratação
+
+**Reprodução do Codex**: `accessToken=null`, cache real com um marcador sintético `pending-user-data`, `finflow_unsynced='1'`, disparar `pageshow` com `fetch` rejeitado. Observado: `calls=1`, `cachePreserved=false`, `pending=1`. `retryPendingSaveOnResume()` (introduzida no patch anterior, achado 1) chamava `saveDrivePending(false)` só checando `finflow_unsynced==='1'` — sem checar se o app já tinha carregado o cache real pro `state` em memória, nem se havia autenticação. `saveToDrive()` então construía o corpo a partir do `state` inicial (`{despesas:[],receitas:[],...}`, os defaults declarados no topo do arquivo, nunca hidratado com o cache real) e regravava `finflow_local_cache` com esse snapshot vazio — apagando silenciosamente uma pendência real do usuário. Bloqueante por risco de perda de dados locais, exatamente a classe de bug que este gate inteiro existe para evitar.
+
+**Correção**: nova variável de prontidão explícita, `appHydrated` (inicialmente `false`), setada para `true` dentro de `initApp()` logo depois de `migrateAppData(cachedObj)` — o ponto exato em que `state` passa a refletir o cache local real (ou os defaults, se não havia cache nenhum; mas nesse caso não há pendência pra perder). `retryPendingSaveOnResume()` agora exige as duas condições juntas antes de agir:
+
+```js
+function retryPendingSaveOnResume() {
+  if (!appHydrated || !accessToken) return;
+  if (localStorage.getItem('finflow_unsynced') === '1') {
+    saveDrivePending(false).catch(()=>{});
+  }
+}
+```
+
+`accessToken` sozinho não é suficiente sinal de prontidão (o audit apontou explicitamente que o callback OAuth pode setar `accessToken` e chamar `initApp()` sem esperar essa função terminar de hidratar, já que a chamada não é `await`ada por quem a dispara) — por isso as duas condições, não uma só. Antes da hidratação/autenticação, a recuperação de uma pendência fica inteiramente a cargo do fluxo já existente dentro do próprio `initApp()` (que já trata `finflow_unsynced==='1'` de forma segura, na mesma função, depois de hidratar — nenhuma mudança nesse fluxo interno).
+
+Nenhum bypass ou atalho foi adicionado ao código de produção só para os testes: `appHydrated` é uma variável real que a própria `initApp()` usa e depende dela da mesma forma em produção e em teste; os testes apenas a definem diretamente (mesmo padrão já usado para `accessToken`, `driveFileId` etc. em toda a suíte), simulando estados reais e alcançáveis (app recém-carregado antes do login; token obtido mas hidratação ainda não concluída; app pronto) — não uma condição inatingível em produção.
+
+`flushPendingSave()` (caminho de ocultar/fechar) não precisou do mesmo guard: ela só age quando existe um `saveTimer` pendente, e `saveTimer` só é setado por `scheduleSave()`, que só é chamado a partir de ações de edição dentro do `appShell` — inatingível antes do login/hidratação (o usuário está preso na tela de autenticação até `initApp()` rodar).
+
+**Testes** (`gate5-drive-sync-safety.test.mjs`, D34–D36): D34 reproduz literalmente o cenário do Codex — `accessToken=null`, cache real (`{version,perfilAtivo,perfis}`, não um objeto artificial) com despesa `pending-user-data`, `finflow_unsynced='1'`, `pageshow` disparado com `fetch` mockado — confirma zero `fetch` e cache preservado. D35 cobre o segundo caso explicitamente pedido pela auditoria — token presente mas `appHydrated=false` — mesmo com `accessToken` válido, nenhuma tentativa de rede, cache preservado. D36 confirma o caso positivo (estado pronto: `appHydrated=true` e `accessToken` válido) — a recuperação volta a funcionar normalmente, sem regressão de D30/D31.
+
+### Resultado da suíte completa pós-patch
+
+```
+cd tests/financial-engine && npm test
+```
+
+Executado uma vez, conforme pedido pela auditoria (sem repetição desnecessária, já que não há indício de flake nesta suíte): `FINFLOW FINANCIAL-ENGINE SUITE: TOTAL_PASS=391 TOTAL_FAIL=0` (388 anteriores + 3 novos: D34, D35, D36). Nenhum `[FAIL]`.
+
+### `git diff --check`
+
+Saída vazia, exit code 0 — sem erros de espaço em branco.
+
+### Limitações desta correção
+
+- Mesma limitação estrutural das entregas anteriores: validado com eventos de ciclo de vida disparados via `dispatchEvent` e `fetch` mockado em nível de página — nunca contra login OAuth real, `initApp()` real concorrendo de fato com um `pageshow` do navegador, ou o Google Drive real.
+- `appHydrated` nunca é revertido para `false` depois de setado (ex.: em `signOut()`) — não foi pedido pela auditoria e não haveria pendência local relevante a proteger nesse caminho (a tela volta pra autenticação, mas o `state` em memória continua sendo o hidratado); documentado aqui como decisão consciente de escopo, não um descuido.
+
 ## Entrega
 
-Dois commits sobre `56ef03bd1c265afa7faf0b82da64a589e8f13968`, branch `gate/5-uat-corrections`: `1f48b19` (implementação original) e o commit desta entrega (patch corretivo restrito aos achados da auditoria Codex, sem alterar nem fazer squash de `1f48b19`). Sem push, sem merge, sem rebase. Edição encerrada nesta entrega — aguardando nova auditoria independente do Codex.
+Três commits sobre `56ef03bd1c265afa7faf0b82da64a589e8f13968`, branch `gate/5-uat-corrections`: `1f48b19` (implementação original), `db261ae` (patch corretivo pós-primeira auditoria) e o commit desta entrega (patch corretivo restrito ao achado da segunda revisão, sem alterar nem fazer squash de nenhum commit anterior). Sem push, sem merge, sem rebase. Edição encerrada nesta entrega — aguardando nova auditoria independente do Codex.
