@@ -462,6 +462,10 @@ select option{background:var(--card)}
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         Repasses / Pessoas
       </div>
+      <div class="nav-item" data-page="escritorio" onclick="navigate('escritorio')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 21v-6h6v6"/></svg>
+        Caixa do Escritório
+      </div>
       <div class="nav-section-label" style="margin-top:8px">Lançamentos</div>
       <div class="nav-item" data-page="receitas" onclick="navigate('receitas')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -602,7 +606,10 @@ select option{background:var(--card)}
                     <option value="salario">Salário Fixo</option>
                     <option value="decimo">13º Salário</option>
                     <option value="ferias">1/3 de Férias</option>
-                    <option value="extra">Projeto Extra</option>
+                    <option value="extra">Projeto Extra (parcelado)</option>
+                    <option value="projeto">Projeto (previsto/recebido)</option>
+                    <option value="rendimento">Rendimento</option>
+                    <option value="outro">Outro</option>
                     <option value="repasse">Presente / Repasse</option>
                   </select>
                 </div>
@@ -631,7 +638,40 @@ select option{background:var(--card)}
                   <label for="recFixo">Recorrente (mensal)</label>
                 </div>
                 <div class="form-group full" id="recSalarioRollInfo" style="display:none">
-                  <div class="info-box">💡 Salário Fixo recorrente: lance no mês em que você <strong>recebe</strong> (ex: dia 26-30) — o app já conta esse dinheiro como disponível no <strong>mês seguinte</strong>, que é quando ele é de fato usado pra pagar as contas.</div>
+                  <div class="info-box">💡 Salário Fixo recorrente (novo modelo): o dinheiro entra no caixa <strong>na data real em que você recebe</strong>, no próprio mês — nunca deslocado pro mês seguinte. Mês/Ano acima ficam só como competência de referência. A previsão de cada mês usa a última sexta-feira automaticamente.</div>
+                </div>
+                <div class="checkbox-row form-group full" id="recSalarioJaRecebidoRow" style="display:none">
+                  <input type="checkbox" id="recSalarioJaRecebido" style="width:auto" onchange="onRecSalarioJaRecebidoChange()">
+                  <label for="recSalarioJaRecebido">Já recebi o salário desta competência</label>
+                </div>
+                <div class="form-group full" id="recSalarioDataRecebimentoGroup" style="display:none">
+                  <label>Data em que caiu na conta</label>
+                  <input type="date" id="recSalarioDataRecebimento">
+                </div>
+                <div class="form-group" id="recCertezaGroup" style="display:none">
+                  <label>Certeza</label>
+                  <select id="recCerteza" onchange="onRecCertezaOuEstadoChange()">
+                    <option value="contratado">Contratado</option>
+                    <option value="potencial">Potencial (proposta ainda não fechada)</option>
+                  </select>
+                </div>
+                <div class="form-group" id="recEstadoGroup" style="display:none">
+                  <label>Situação</label>
+                  <select id="recEstado" onchange="onRecCertezaOuEstadoChange()">
+                    <option value="previsto">Prevista (ainda não caiu na conta)</option>
+                    <option value="recebido">Já recebida</option>
+                  </select>
+                </div>
+                <div class="form-group full" id="recDataPrevistaGroup" style="display:none">
+                  <label>Data prevista</label>
+                  <input type="date" id="recDataPrevista">
+                </div>
+                <div class="form-group full" id="recDataRecebimentoGroup" style="display:none">
+                  <label>Data em que caiu na conta</label>
+                  <input type="date" id="recDataRecebimento">
+                </div>
+                <div class="form-group full" id="recNovoModeloInfo" style="display:none">
+                  <div class="info-box">💡 Mês/Ano acima passam a ser só a <strong>competência</strong> (referência de relatório) — o dinheiro entra no caixa na data prevista/recebida informada acima, não na competência. Ex: previsto pra outubro mas recebido em setembro conta como caixa de setembro.</div>
                 </div>
                 <div class="form-group full" id="repasseInfo" style="display:none">
                   <div class="info-box">💡 Presente/Repasse <strong>não entra no cálculo de contribuição</strong> — é contabilizado separadamente.</div>
@@ -686,6 +726,11 @@ select option{background:var(--card)}
                 <div class="form-group full" id="parcelInfoDiv" style="display:none"><div class="info-box" id="parcelInfoText">—</div></div>
                 <div class="form-group"><label>Mês Início</label><select id="despMes" onchange="onDespMesAnoChange()"><option value="1">Janeiro</option><option value="2">Fevereiro</option><option value="3">Março</option><option value="4">Abril</option><option value="5">Maio</option><option value="6">Junho</option><option value="7">Julho</option><option value="8">Agosto</option><option value="9">Setembro</option><option value="10">Outubro</option><option value="11">Novembro</option><option value="12">Dezembro</option></select></div>
                 <div class="form-group"><label>Ano Início</label><input type="number" id="despAno" value="2025" min="2020" max="2040" onchange="onDespMesAnoChange()"></div>
+                <div class="form-group full">
+                  <label>Data da compra</label>
+                  <input type="date" id="despDataCompra" onchange="onDespDataCompraChange()">
+                  <div style="font-size:10px;color:var(--muted);margin-top:3px">Usada pra calcular em qual fatura a compra cai, considerando o dia de fechamento do cartão.</div>
+                </div>
                 <div class="form-group full" id="despFaturaPreview" style="display:none"></div>
                 <div class="form-group full" id="despContaGroup">
                   <label>Conta bancária (de onde sai o dinheiro)</label>
@@ -776,6 +821,7 @@ select option{background:var(--card)}
 
       <!-- E SE... SIMULADOR -->
       <div id="page-eSe" class="page">
+        <div class="info-box">Simulação mensal com hipóteses próprias. Para planejar o caixa por data, usando salário principal e estimativas por categoria, consulte o Dashboard.</div>
         <!-- Formulário de itens simulados -->
         <div class="card" style="margin-bottom:20px">
           <div class="card-header">
@@ -1060,6 +1106,23 @@ select option{background:var(--card)}
           <div class="card-header"><div class="card-title">Histórico de Transferências</div></div>
           <div id="transferenciasList"></div>
         </div>
+      </div>
+
+      <!-- GATE 3 — CAIXA DO ESCRITÓRIO -->
+      <div id="page-escritorio" class="page">
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header"><div class="card-title">Resumo do Escritório</div></div>
+          <div id="escritorioResumo"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="escritorioSubnav">
+          <button class="btn btn-ghost btn-sm" data-officetab="projetos" onclick="switchOfficeTab('projetos')">Projetos</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="recebiveis" onclick="switchOfficeTab('recebiveis')">Recebíveis</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="despesas" onclick="switchOfficeTab('despesas')">Despesas</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="reservas" onclick="switchOfficeTab('reservas')">Reservas</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="repasses" onclick="switchOfficeTab('repasses')">Repasses</button>
+          <button class="btn btn-ghost btn-sm" data-officetab="config" onclick="switchOfficeTab('config')">Contas &amp; Regras</button>
+        </div>
+        <div id="escritorioSubContent"></div>
       </div>
 
     </div>
@@ -1394,7 +1457,7 @@ const DEFAULT_CARDS = [
   {id:'dinheiro', name:'Dinheiro/PIX', color:'#38e2b4', fecha:null, paga:null},
 ];
 
-let state = { categories:[], cards:[], contas:[], movimentacoesContas:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{} };
+let state = { categories:[], cards:[], contas:[], movimentacoesContas:[], receitas:[], despesas:[], pessoas:[], cofrinhos:[], movimentacoesCofrinhos:[], excedentes:{}, contribuicaoAjustes:{}, faturasPagas:{}, contribuicaoPaga:{}, office:null };
 // ── Perfis (multi-usuário) ──
 // perfis = { id: { id, name, color, data:{...campos do state...} } }
 // state SEMPRE aponta para perfis[perfilAtivo].data — um objeto por perfil.
@@ -1440,13 +1503,40 @@ function getDespesaDefaultMes(cartaoId){
 // a troca de cartão para de "adivinhar" o mês por ele (evita apagar um ajuste
 // que ele já fez de propósito). Resetado sempre que o formulário é reaberto.
 let despMesEditadoManualmente=false;
+// Mantém o campo "Data da compra" coerente com Mês/Ano Início (dia mantido, ou
+// o dia de hoje na primeira vez, com clamp pro último dia do mês escolhido) —
+// ver addDespesa(), onde dataCompra é a fonte primária pra despesas novas.
+function syncDespDataCompraMesAno(mes,ano){
+  const el=document.getElementById('despDataCompra');
+  if(!el||!mes||!ano) return;
+  let dia = el.value ? (parseInt(el.value.split('-')[2])||1) : new Date().getDate();
+  const ultimoDia = new Date(ano,mes,0).getDate();
+  if(dia>ultimoDia) dia=ultimoDia;
+  el.value = `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+}
 function onDespMesAnoChange(){
+  despMesEditadoManualmente=true;
+  syncDespDataCompraMesAno(parseInt(document.getElementById('despMes')?.value),parseInt(document.getElementById('despAno')?.value));
+  updateFaturaPreview();
+}
+// Quando o usuário mexe diretamente na Data da compra, ela passa a mandar no
+// Mês/Ano Início (mesma lógica de onDespMesAnoChange, só que na direção
+// oposta) — os dois campos nunca podem divergir silenciosamente.
+function onDespDataCompraChange(){
+  const val=document.getElementById('despDataCompra')?.value;
+  if(!val) return;
+  const [y,m]=val.split('-').map(Number);
+  if(!y||!m) return;
+  const mesEl=document.getElementById('despMes'), anoEl=document.getElementById('despAno');
+  if(mesEl) mesEl.value=m;
+  if(anoEl) anoEl.value=y;
   despMesEditadoManualmente=true;
   updateFaturaPreview();
 }
 // Atualiza o aviso "Vai pra fatura de: ..." abaixo do Mês/Ano Início, com base
-// no que está selecionado agora no formulário — assim dá pra conferir antes
-// de salvar, mesmo que você tenha ajustado o mês manualmente.
+// no que está selecionado agora no formulário (incluindo a Data da compra,
+// quando preenchida) — assim dá pra conferir antes de salvar, considerando o
+// dia de fechamento do cartão (ver getCompetenciaFatura).
 function updateFaturaPreview(){
   const el=document.getElementById('despFaturaPreview');
   if(!el) return;
@@ -1454,7 +1544,9 @@ function updateFaturaPreview(){
   const mes=parseInt(document.getElementById('despMes')?.value);
   const ano=parseInt(document.getElementById('despAno')?.value);
   if(!cartaoId||!isCartaoDeCredito(cartaoId)||!mes||!ano){ el.style.display='none'; return; }
-  const {mes:faturaMes,ano:faturaAno}=addMonths(mes,ano,1);
+  const cartaoObj=state.cards.find(c=>c.id===cartaoId);
+  const dataCompra=document.getElementById('despDataCompra')?.value||null;
+  const {mes:faturaMes,ano:faturaAno}=getCompetenciaFatura(dataCompra,cartaoObj,mes,ano);
   el.style.display='block';
   el.innerHTML=`<div class="info-box">🧾 Vai entrar na fatura de <strong>${MONTHS[faturaMes-1]} ${faturaAno}</strong></div>`;
 }
@@ -1516,6 +1608,11 @@ function migrateState() {
     if(!r.recebidaMeses) r.recebidaMeses={}; // {mesKey: true/false} para salario/decimo/ferias/repasse/extra não parcelado
   });
   if (!state.movimentacoesCofrinhos) state.movimentacoesCofrinhos = [];
+  // motivoResgate: só existe pra resgates NOVOS (Gate 2, seção 17) — nunca
+  // inferido pra registros antigos. null = não informado/legado (mesmo
+  // princípio de dataCompra=null no Gate 1 — normalizar a presença do campo
+  // não é o mesmo que inventar o valor).
+  state.movimentacoesCofrinhos.forEach(m=>{ if(m.tipo==='resgate'&&m.motivoResgate===undefined) m.motivoResgate=null; });
   if (!state.excedentes) state.excedentes = {}; // {mesKey: valor}
   if (!state.contribuicaoAjustes) state.contribuicaoAjustes = {}; // {mesKey: valorAjustado}
   if (!state.faturasPagas) state.faturasPagas = {};
@@ -1532,6 +1629,13 @@ function migrateState() {
     if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
     if(d.diaVencimento===undefined) d.diaVencimento=null; // dia de vencimento (só despesas fixas em Dinheiro/PIX)
     if(d.debitoAutomatico===undefined) d.debitoAutomatico=false; // banco desconta sozinho — ver aplicarDebitosAutomaticos()
+    // dataCompra: data real da compra (YYYY-MM-DD), usada por getCompetenciaFatura
+    // pra saber em qual fatura ela cai considerando o dia de fechamento do cartão.
+    // null = MODO LEGADO — nunca inferimos essa data a partir de mesInicio/anoInicio
+    // pra um registro antigo; o app continua tratando esse registro exatamente como
+    // sempre tratou (mês da compra + 1 pro cartão), até o usuário explicitamente
+    // informar uma data real (ver eOnDataCompraChange/saveEditDespesa).
+    if(d.dataCompra===undefined) d.dataCompra=null;
     // Despesas em Dinheiro/PIX (fixas ou avulsas) respeitam o status escolhido
     // manualmente no lançamento (Previsto/Pago) — sem nenhum forçamento retroativo.
   });
@@ -1544,6 +1648,43 @@ function migrateState() {
   // Compatibilidade com dados antigos que ainda usavam o id "dizimo" (nome anterior de Contribuição)
   const di=state.categories.findIndex(c=>c.id==='dizimo');
   if(di>=0){state.categories[di].id='contribuicao';state.categories[di].name='Contribuição';state.categories[di].subs=['Contribuição'];}
+
+  // ── GATE 3 — CAIXA DO ESCRITÓRIO ──
+  // Estrutura sempre vazia/default na primeira vez (seção 51 do Gate 3): NUNCA
+  // infere que uma conta/receita/projeto histórico é do escritório. Contas,
+  // projetos, recebíveis, despesas, reservas e repasses do escritório vivem
+  // inteiramente separados de state.contas/receitas/despesas/cofrinhos — nunca
+  // no mesmo array — justamente para impedir que qualquer um dos ~15 pontos
+  // do app que já somam `state.contas`/`calcSaldoConta` pra exibir saldo
+  // PESSOAL passe a incluir, sem querer, dinheiro do escritório (INV-O01/O02).
+  if(!state.office) state.office = {};
+  const off=state.office;
+  if(off.ativo===undefined) off.ativo=false; // usuário ainda não "ativou" o Caixa do Escritório
+  if(!off.nome) off.nome='Escritório'; // configurável — nunca hard-code de um nome de escritório específico
+  if(!off.contas) off.contas=[]; // {id,name,color,saldoInicial} — mesma forma de state.contas, array totalmente separado
+  off.contas.forEach(c=>{ if(c.saldoInicial===undefined) c.saldoInicial=0; });
+  if(!off.movimentacoesContas) off.movimentacoesContas=[]; // ajustes/transferências/repasses/retiradas: {id,contaId,valor,data,obs,transferId?,officeTransferId?}
+  if(!off.projetos) off.projetos=[]; // {id,nome,cliente,valorContrato,status,dataContrato,observacao,createdAt}
+  off.projetos.forEach(p=>{ if(!p.createdAt) p.createdAt=p.id; });
+  if(!off.recebiveis) off.recebiveis=[]; // {id,projetoId,descricao,valor,estado,dataPrevista,dataRecebimento,contaDestino,createdAt}
+  off.recebiveis.forEach(r=>{ if(!r.createdAt) r.createdAt=r.id; if(r.dataRecebimento===undefined) r.dataRecebimento=null; });
+  if(!off.despesas) off.despesas=[]; // {id,descricao,categoria,valor,data,conta,projetoId,status,createdAt}
+  off.despesas.forEach(d=>{ if(!d.createdAt) d.createdAt=d.id; if(d.projetoId===undefined) d.projetoId=null; });
+  if(!off.reservas) off.reservas=[]; // {id,nome,finalidade,color,saldoInicial} — mesma filosofia dos cofrinhos pessoais (patrimônio reservado ≠ caixa operacional)
+  off.reservas.forEach(r=>{ if(r.saldoInicial===undefined) r.saldoInicial=0; });
+  if(!off.movimentacoesReservas) off.movimentacoesReservas=[]; // {id,reservaId,valor,mes,ano,tipo:'aplicacao'|'resgate',motivoResgate?,createdAt}
+  off.movimentacoesReservas.forEach(m=>{ if(m.tipo==='resgate'&&m.motivoResgate===undefined) m.motivoResgate=null; });
+  if(!off.repasses) off.repasses=[]; // {id,tipo:'planejado'|'extraordinario',recebivelId,valor,estado:'previsto'|'recebido'|'cancelado',dataPrevista,dataRecebimento,officeTransferId,createdAt}
+  // regrasDistribuicao: percentual SEMPRE null até o usuário configurar
+  // explicitamente (seção 17 do Gate 3) — nunca inventar 10%/20%/30% etc.
+  if(!off.regrasDistribuicao || !off.regrasDistribuicao.length) off.regrasDistribuicao=[
+    {destino:'reserva', percentual:null},
+    {destino:'impostos', percentual:null},
+    {destino:'repasse_pessoal', percentual:null},
+  ];
+  // receitas pessoais derivadas do escritório (tipo repasse_escritorio/retirada_escritorio):
+  // nunca precisam de inferência aqui — já nascem com todos os campos do
+  // novo modelo (certeza/estado/datas/officeTransferId) no momento da criação.
 }
 
 // ════════════════════════════════════════════════
@@ -1791,7 +1932,7 @@ function importData(e) {
 // ════════════════════════════════════════════════
 // NAVIGATION
 // ════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas'};
+const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Repasses / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas',escritorio:'Caixa do Escritório'};
 function toggleMobileMenu(){
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebarOverlay').classList.toggle('open');
@@ -1839,7 +1980,7 @@ function updatePeriodLabel(){
 function renderAll(){ renderPage(document.querySelector('.nav-item.active')?.dataset?.page||'dashboard'); }
 function renderPage(page){
   updatePeriodLabel();
-  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,contas:renderContas,pessoas:renderPessoas}[page]||renderDashboard)();
+  ({dashboard:renderDashboard,relatorio:renderRelatorio,analise:renderAnalise,eSe:renderEse,cofrinho:renderCofrinho,relatorioPessoas:renderRelatorioPessoas,receitas:renderReceitas,despesas:renderDespesas,parcelamentos:renderParcelamentos,categorias:renderCategorias,cartoes:renderCartoes,contas:renderContas,pessoas:renderPessoas,escritorio:renderEscritorio}[page]||renderDashboard)();
 }
 
 // ════════════════════════════════════════════════
@@ -1862,6 +2003,34 @@ function getReceitasForMonth(mes,ano){
       });
       return;
     }
+    // GATE 2 — novo modelo semântico (r.certeza!==undefined é o marcador de
+    // "não é legado": toda receita nova sempre grava certeza). Nunca aplicado
+    // a registros antigos, que nunca têm esse campo.
+    if(r.certeza!==undefined){
+      if(r.recorrencia){
+        // Recorrente (salário): uma ocorrência por mês a partir da própria
+        // competência de criação, SEM deslocamento +1 (ver seção 7 do Gate 2
+        // — "salário recebido em julho ≠ receita de agosto"). O recebimento
+        // de cada ocorrência é independente (recebidoPorMes), nunca duplica
+        // o registro nem desloca a data.
+        const inicioMes=r.competenciaMes||r.mes, inicioAno=r.competenciaAno||r.ano;
+        if(ano>inicioAno||(ano===inicioAno&&mes>=inicioMes)){
+          const sub=(r.recebidoPorMes||{})[mesKey(mes,ano)];
+          result.push({...r,_dataPrevistaOcorrencia:getExpectedSalaryDate(ano,mes,r.recorrencia),_dataRecebimentoOcorrencia:sub?sub.dataRecebimento:null});
+        }
+        return;
+      }
+      // Evento único (projeto/rendimento/outro): pertence ao mês da DATA DE
+      // CAIXA (recebimento se já recebida, senão a previsão) — nunca à
+      // competência (seção 9 do Gate 2). Ex.: previsto p/ outubro mas
+      // recebido em setembro -> impacto de caixa é setembro (R04/R05).
+      const cashDate=getRevenueCashDate(r);
+      if(cashDate){
+        const [y,m]=cashDate.split('-').map(Number);
+        if(y===ano&&m===mes) result.push(r);
+      }
+      return;
+    }
     if(r.recorrente){
       const roll=r.tipo==='salario'?1:0;
       const {mes:mIni,ano:yIni}=addMonths(r.mes,r.ano,roll);
@@ -1876,37 +2045,758 @@ function getReceitasForMonth(mes,ano){
 // True se esta receita foi marcada como recebida neste mês
 function receitaRecebida(r,mes,ano){
   if(r._isParcela) return r._parcelaRecebida;
+  // GATE 2 — novo modelo semântico: só existe "recebido" quando estado
+  // (evento único) ou recebidoPorMes[mesKey] (recorrente) diz isso
+  // explicitamente. Sem o hack de "mês passado = recebido automaticamente"
+  // que o modelo legado usa abaixo — ver seção 7/regra absoluta de caixa
+  // real (seção 6) do Gate 2: previsão nunca é caixa real.
+  if(r.certeza!==undefined){
+    if(r.recorrencia){
+      const sub=(r.recebidoPorMes||{})[mesKey(mes,ano)];
+      return !!(sub&&sub.estado==='recebido');
+    }
+    return r.estado==='recebido';
+  }
   // Meses passados: salário recorrente considerado recebido automaticamente
-  // (evita ter que marcar retroativamente o histórico todo)
-  const isPast = ano<currentYear||(ano===currentYear&&mes<currentMonth);
+  // (evita ter que marcar retroativamente o histórico todo).
+  // IMPORTANTE: "passado" aqui tem que ser em relação à data real de hoje
+  // (REAL_TODAY_MONTH/REAL_TODAY_YEAR), NUNCA em relação a currentMonth/
+  // currentYear (o mês que está sendo exibido no Dashboard). Projeções e o
+  // simulador "E se..." chamam esta função para vários meses futuros
+  // intermediários enquanto currentMonth/currentYear já está no mês-alvo lá
+  // na frente — usar currentMonth aqui fazia meses futuros intermediários
+  // serem tratados como "passado" (mes < currentMonth), o que marcava o
+  // salário deles como já recebido e zerava a entrada projetada enquanto as
+  // saídas continuavam contando cheias, gerando um déficit acumulado
+  // irreal mês a mês.
+  const isPast = ano<REAL_TODAY_YEAR||(ano===REAL_TODAY_YEAR&&mes<REAL_TODAY_MONTH);
   if(isPast && r.tipo==='salario' && r.recorrente) return true;
   return !!(r.recebidaMeses&&r.recebidaMeses[mesKey(mes,ano)]);
 }
 
-// Receitas que efetivamente entraram no caixa
-function getReceitasEfetivasForMonth(mes,ano){
-  return getReceitasForMonth(mes,ano).filter(r=>receitaRecebida(r,mes,ano));
+// GATE 2.2 (seção 17) — validação real de data ISO (YYYY-MM-DD): não basta
+// ter 10 caracteres, precisa ser um dia de calendário que existe de verdade.
+// Rejeita "2026-13-10", "2026-02-31", "2026-00-10", "abcd-ef-gh". Usada só
+// pra decidir se uma data pode produzir impacto de caixa (ponto de escrita
+// do novo modal de confirmação de recebimento) — nunca aplicada
+// retroativamente a registros legados (nenhuma migração destrutiva).
+function isValidISODateString(str){
+  if(typeof str!=='string') return false;
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(str);
+  if(!m) return false;
+  const y=Number(m[1]), mo=Number(m[2]), d=Number(m[3]);
+  if(mo<1||mo>12||d<1||d>31) return false;
+  const dt=new Date(y,mo-1,d);
+  return dt.getFullYear()===y && dt.getMonth()===mo-1 && dt.getDate()===d;
 }
-// Receitas previstas mas ainda não recebidas
+
+// GATE 2.2 — VISÃO DE CAIXA REAL mensal, distinta da visão de COMPETÊNCIA de
+// getReceitasForMonth (seção 3/4 do Gate 2.2): "que receitas efetivamente
+// tiveram impacto de caixa neste mês?", nunca "que ocorrência de competência
+// existe/foi marcada como recebida neste mês?" — essas são perguntas
+// diferentes que a função antiga (getReceitasEfetivasForMonth, abaixo)
+// colapsava incorretamente pra receita recorrente.
+//
+// Recorrente (salário): a chave em recebidoPorMes é a COMPETÊNCIA da
+// ocorrência, não o mês do impacto de caixa (seção 6) — por isso esta função
+// varre TODAS as chaves de competência de cada receita recorrente (nunca só
+// a do mês consultado) e usa getRecurringRevenueCashDate (motor já existente
+// do Gate 2.1 — nunca uma fórmula duplicada aqui) pra achar a data real de
+// cada ocorrência. Uma ocorrência de competência de setembro paga em outubro
+// aparece na visão de caixa de OUTUBRO, nunca na de setembro — e vice-versa
+// pra antecipação (seção 6/REV-TIME-06/08).
+//
+// Evento único (novo modelo): já não tinha esse problema — getReceitasForMonth
+// já materializa evento único pelo mês da própria data de caixa (dataRecebimento
+// se recebido, senão dataPrevista — nunca uma competência separada, seção 7 do
+// Gate 2.2). Aqui só reforça a regra absoluta de caixa (seção 8): estado
+// 'recebido' + dataRecebimento válida (isValidISODateString), nunca dataPrevista.
+//
+// Legado (sem `certeza`) e parceladas: preserva o critério que já existia
+// (receitaRecebida) — sem granularidade de data real nesses modelos, nunca
+// inventa uma (seção 9).
+function getCashRevenuesForMonth(mes,ano){
+  const targetKey=mesKey(mes,ano);
+  const result=[];
+  state.receitas.forEach(r=>{
+    if(r.tipo==='extra'&&Array.isArray(r.parcelas)&&r.parcelas.length>0){
+      r.parcelas.forEach((p,i)=>{
+        if(p.recebida&&p.mes===mes&&p.ano===ano){
+          result.push({...r,_isParcela:true,_parcelaIdx:i,_parcelaValor:p.valor,_parcelaRecebida:true,_parcelaNum:i+1,_parcelaTotal:r.parcelas.length,valor:p.valor||0});
+        }
+      });
+      return;
+    }
+    if(r.certeza!==undefined){
+      if(r.recorrencia){
+        Object.keys(r.recebidoPorMes||{}).forEach(competenciaKey=>{
+          const cashDate=getRecurringRevenueCashDate(r,competenciaKey);
+          if(!cashDate||cashDate.slice(0,7)!==targetKey) return;
+          const [cAno,cMes]=competenciaKey.split('-').map(Number);
+          result.push({...r,_competenciaKey:competenciaKey,_competenciaMes:cMes,_competenciaAno:cAno,_dataRecebimentoOcorrencia:cashDate});
+        });
+        return;
+      }
+      if(r.estado==='recebido'&&r.dataRecebimento&&isValidISODateString(r.dataRecebimento)&&r.dataRecebimento.slice(0,7)===targetKey){
+        result.push(r);
+      }
+      return;
+    }
+    // Legado — mesmo critério de sempre (receitaRecebida), nunca uma data
+    // inventada; ver getReceitasForMonth pra como cada forma legada é
+    // materializada por mês.
+    if(r.recorrente){
+      const roll=r.tipo==='salario'?1:0;
+      const {mes:mIni,ano:yIni}=addMonths(r.mes,r.ano,roll);
+      if((yIni<ano||(yIni===ano&&mIni<=mes))&&receitaRecebida(r,mes,ano)) result.push(r);
+      return;
+    }
+    if(r.mes===mes&&r.ano===ano&&receitaRecebida(r,mes,ano)) result.push(r);
+  });
+  return result;
+}
+
+// GATE 2.2 (seção 10) — redefinida: os dois únicos callers existentes
+// (getReceitasContribuiveis e calcTotaisIsoladoMes.recsEfetivas/emCaixaEntradas)
+// são perguntas de CAIXA REAL ("quanto efetivamente entrou este mês"), nunca
+// de competência — a auditoria de callers do Gate 2.2 confirmou isso pros
+// dois. Mantido como nome/wrapper (em vez de removido) por compatibilidade —
+// delega inteiramente pro motor correto acima, nunca duplica a lógica.
+function getReceitasEfetivasForMonth(mes,ano){
+  return getCashRevenuesForMonth(mes,ano);
+}
+// Receitas previstas mas ainda não recebidas (visão de COMPETÊNCIA — status
+// da ocorrência daquele mês, não impacto de caixa; ver seção 4 do Gate 2.2 —
+// função inalterada, callers existentes já faziam essa pergunta corretamente).
 function getReceitasPrevistasForMonth(mes,ano){
   return getReceitasForMonth(mes,ano).filter(r=>!receitaRecebida(r,mes,ano));
 }
 // Valor de uma receita naquele mês
 function valorReceita(r){ return r._isParcela?(r._parcelaValor||0):(r.valor||0); }
 
-// Despesas em cartão de crédito viram fatura no mês SEGUINTE ao da compra —
-// é assim que Nubank, Mercado Pago, Bradescard etc. nomeiam a fatura (ex:
-// compras de 03/jun a 02/jul saem como "fatura de julho"). "Mês Início"
-// continua sendo o mês real da compra (o que você digita ao lançar); o
-// deslocamento de +1 mês só vale pra exibição/cálculo (Dashboard, Análise,
-// Relatório, Parcelamentos, Próximos Vencimentos). Dinheiro/PIX não rola —
-// o mês lançado já é o mês em que o dinheiro sai da conta.
+// ════════════════════════════════════════════════
+// GATE 2 — FUNDAÇÃO TEMPORAL DE RECEITAS, SALÁRIO, TRANSFERÊNCIAS E
+// PATRIMÔNIO RESERVADO. Todas as funções abaixo são puras (não lêem nem
+// escrevem state) e testáveis isoladamente — ver tests/financial-engine/.
+//
+// Detecção legado vs. novo modelo: uma receita SÓ é "novo modelo" quando
+// tem `certeza` definida ('recorrente'|'contratado'|'potencial'). Registros
+// antigos nunca têm esse campo — é por isso que ele serve de marcador,
+// exatamente como `dataCompra` serviu pra despesas no Gate 1.
+// ════════════════════════════════════════════════
+
+// Soma/subtrai dias de uma data YYYY-MM-DD sem depender de fuso (usa
+// componentes de data local, igual ao resto do app — nunca UTC/ISO parsing
+// direto, que desloca a data conforme o fuso do navegador).
+function addDaysISO(iso, n){
+  const [y,m,d]=iso.split('-').map(Number);
+  const dt=new Date(y,m-1,d);
+  dt.setDate(dt.getDate()+n);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+
+// Data prevista de salário segundo uma regra de recorrência pura.
+// Convenção de dia da semana (documentada explicitamente, seção 8 do Gate 2):
+// mesma do Date.prototype.getDay() nativo — 0=domingo, 1=segunda, 2=terça,
+// 3=quarta, 4=quinta, 5=sexta, 6=sábado. `month` é 1-based, como no resto do
+// app. Única regra suportada por ora: "last_weekday_of_month" (última
+// ocorrência daquele dia da semana no mês) — a estrutura já é extensível
+// pra outras regras no futuro sem mudar a assinatura.
+function getExpectedSalaryDate(year, month, recurrenceRule){
+  if(!recurrenceRule||recurrenceRule.type!=='last_weekday_of_month') return null;
+  const weekday=recurrenceRule.weekday;
+  if(weekday===undefined||weekday===null) return null;
+  const ultimoDia=new Date(year,month,0).getDate(); // dia 0 do mês seguinte = último dia deste mês
+  for(let d=ultimoDia; d>=1; d--){
+    if(new Date(year,month-1,d).getDay()===weekday){
+      return `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    }
+  }
+  return null;
+}
+
+// Data que efetivamente rege o impacto de caixa de uma receita do novo
+// modelo (evento único): a data real de recebimento se já recebida, senão a
+// previsão (que ainda NÃO é caixa real — só usada pra saber em qual mês uma
+// receita prevista deveria aparecer numa futura tela de previsão; ver seção
+// 9/11 do Gate 2 — nunca a competência).
+function getRevenueCashDate(receita){
+  if(receita.dataRecebimento) return receita.dataRecebimento;
+  if(receita.dataPrevista) return receita.dataPrevista;
+  return null;
+}
+
+// Competência de relatório (mês/ano de referência) de uma receita — nunca
+// usada como data de caixa (seção 9 do Gate 2). Cai no legado (r.mes/r.ano)
+// quando competenciaMes/Ano não existem.
+function getRevenueCompetence(receita){
+  if(receita.competenciaMes!==undefined&&receita.competenciaAno!==undefined) return {mes:receita.competenciaMes,ano:receita.competenciaAno};
+  return {mes:receita.mes,ano:receita.ano};
+}
+
+// Regra absoluta de caixa real (seção 6 do Gate 2): uma receita só afeta
+// caixa real quando está efetivamente recebida NAQUELE mês. Delega pra
+// receitaRecebida, que já implementa essa regra pros dois modelos — existe
+// como função nomeada separada porque a seção 31 do Gate 2 pede esse nome
+// especificamente como parte da API pública/testável do motor.
+//
+// GATE 2.1 (seção 14) — ATENÇÃO AO SIGNIFICADO: pra receita recorrente
+// (salário), mes/ano aqui é a COMPETÊNCIA da ocorrência (a chave usada em
+// recebidoPorMes), não necessariamente o mês em que o dinheiro entrou no
+// caixa — receitaRecebida responde "a ocorrência desta competência já foi
+// marcada como recebida?", nunca "houve impacto de caixa neste mês?". Essas
+// são perguntas diferentes (seção 13) e não devem ser confundidas: a
+// primeira é útil pra exibição/lista de receitas por competência; a segunda
+// é a que calcSaldoConta/calcSaldoContaAte respondem, usando
+// getRecurringRevenueCashDate (dataRecebimento real), abaixo — nunca a
+// chave de competência. Mantido conservador aqui (sem refatoração ampla),
+// só documentado — ver relatório do Gate 2.1 seção 8/9.
+function isRevenueRealized(receita, mes, ano){ return receitaRecebida(receita, mes, ano); }
+
+// GATE 2.1 (seção 7/13) — data de caixa de UMA ocorrência específica de
+// receita recorrente, identificada pela sua própria chave de competência
+// (competenciaKey, formato 'YYYY-MM' — a mesma chave usada em
+// recebidoPorMes). Nunca retorna a própria competenciaKey como se fosse a
+// data de caixa (esse era exatamente o bug encontrado pela auditoria
+// externa em calcSaldoContaAte): usa dataRecebimento de dentro do
+// recebidoPorMes[competenciaKey]. Retorna null (nunca inventa uma data)
+// quando a ocorrência não está com estado 'recebido' ou não tem
+// dataRecebimento válida (seção 12 — SALARY_CASH_INV_01).
+function getRecurringRevenueCashDate(receita, competenciaKey){
+  const sub=(receita&&receita.recebidoPorMes||{})[competenciaKey];
+  if(!sub||sub.estado!=='recebido'||!isValidISODateString(sub.dataRecebimento)) return null;
+  return sub.dataRecebimento;
+}
+
+// Uma movimentação de conta é uma transferência interna (própria pra
+// própria) quando tem transferId — nunca receita/despesa (seção 12).
+function isInternalTransfer(mov){ return !!(mov&&mov.transferId); }
+
+// Uma movimentação pertence a patrimônio reservado (cofrinho) quando tem
+// cofrinhoId — depósito/resgate nunca são despesa/receita econômica
+// (seções 13-15).
+function isReservedAssetMovement(mov){ return !!(mov&&mov.cofrinhoId); }
+
+// Deriva o ciclo financeiro pessoal (entre salários) que contém
+// referenceDate ('YYYY-MM-DD'). salaryEvents: [{dataRecebimento}] — SOMENTE
+// salários efetivamente recebidos, nunca previstos (nunca finge que um
+// salário previsto já entrou). expectedNextDate ('YYYY-MM-DD'|null): usada
+// SÓ como limite projetado quando ainda não existe um próximo recebimento
+// real. Pura, sem UI, sem gravar o ciclo em cada transação (é uma visão
+// derivada — seção 18-20 do Gate 2).
+function getFinancialCycle(referenceDate, salaryEvents, expectedNextDate){
+  const recebidos=(salaryEvents||[]).map(e=>e&&e.dataRecebimento).filter(Boolean).slice().sort();
+  if(!recebidos.length) return {cycleUnavailable:true};
+  let startDate=null, idx=-1;
+  for(let i=0;i<recebidos.length;i++){ if(recebidos[i]<=referenceDate){ startDate=recebidos[i]; idx=i; } }
+  if(!startDate) return {cycleUnavailable:true}; // referenceDate é anterior a qualquer salário recebido conhecido
+  const proximoRecebido=recebidos[idx+1];
+  if(proximoRecebido) return {startDate,endDate:addDaysISO(proximoRecebido,-1),startSource:'received_salary',endSource:'received_salary'};
+  if(expectedNextDate) return {startDate,endDate:addDaysISO(expectedNextDate,-1),startSource:'received_salary',endSource:'expected_salary'};
+  return {startDate,endDate:null,startSource:'received_salary',endSource:null};
+}
+
+// GATE 2.2 (seção 18) — adapter puro entre state.receitas e getFinancialCycle
+// (motor acima, NUNCA reescrito): percorre as receitas de salário recorrente
+// do novo modelo e materializa, pra cada ocorrência de competência marcada
+// como recebida com data real válida, um evento {competenciaKey,
+// dataRecebimento}. Reusa getRecurringRevenueCashDate (nunca duplica a
+// fórmula) — por isso uma ocorrência 'recebida' sem dataRecebimento válida
+// nunca produz um evento (a mesma regra absoluta de caixa de sempre).
+// A COMPETÊNCIA da ocorrência nunca determina a fronteira do ciclo (seção 19)
+// — só a dataRecebimento real entra em salaryEvents; getFinancialCycle
+// ordena e decide a fronteira sozinho.
+function getReceivedSalaryEvents(salaryId){
+  const events=[];
+  (state.receitas||[]).forEach(r=>{
+    if(r.certeza===undefined) return; // ciclo só é derivado do novo modelo (granularidade por competência)
+    if(!r.recorrencia) return;
+    if(r.tipo!=='salario') return;
+    if(salaryId&&r.id!==salaryId) return;
+    Object.keys(r.recebidoPorMes||{}).forEach(competenciaKey=>{
+      const dataRecebimento=getRecurringRevenueCashDate(r,competenciaKey);
+      if(!dataRecebimento) return;
+      events.push({competenciaKey,dataRecebimento,receitaId:r.id});
+    });
+  });
+  return events;
+}
+
+// GATE 2.2 (seção 21) — integra state.receitas + getExpectedSalaryDate (regra
+// de recorrência já existente, nunca reinventada) + getFinancialCycle (motor
+// puro inalterado) numa função só, testável, sem acoplamento a UI.
+// referenceDate ('YYYY-MM-DD', opcional — default: hoje real).
+// expectedNextDate é usado por getFinancialCycle SOMENTE como limite
+// projetado quando ainda não existe um próximo salário efetivamente
+// recebido — nunca tratado como se já fosse um evento de caixa (seção 20):
+// é a próxima data prevista (getExpectedSalaryDate) a partir da referência,
+// avançando um mês se a deste mês já tiver passado.
+function getCurrentFinancialCycle(referenceDate){
+  const hoje=new Date();
+  const ref=referenceDate||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  const candidates=(state.receitas||[]).filter(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
+  const selected=state.financialPreferences?.primarySalaryId;
+  const salaryRevenue=selected?candidates.find(r=>r.id===selected):(candidates.length===1?candidates[0]:null);
+  if(!salaryRevenue) return {cycleUnavailable:true,selectionRequired:candidates.length>0};
+  const events=getReceivedSalaryEvents(salaryRevenue.id);
+  let expectedNextDate=null;
+  if(salaryRevenue){
+    const [ry,rm]=ref.split('-').map(Number);
+    expectedNextDate=getExpectedSalaryDate(ry,rm,salaryRevenue.recorrencia);
+    if(expectedNextDate&&expectedNextDate<=ref){
+      const nxt=addMonths(rm,ry,1);
+      expectedNextDate=getExpectedSalaryDate(nxt.ano,nxt.mes,salaryRevenue.recorrencia);
+    }
+    const start=mesKey(salaryRevenue.competenciaMes||salaryRevenue.mes,salaryRevenue.competenciaAno||salaryRevenue.ano);
+    if(expectedNextDate&&expectedNextDate.slice(0,7)<start){
+      expectedNextDate=getExpectedSalaryDate(salaryRevenue.competenciaAno||salaryRevenue.ano,salaryRevenue.competenciaMes||salaryRevenue.mes,salaryRevenue.recorrencia);
+    }
+  }
+  return getFinancialCycle(ref,events,expectedNextDate);
+}
+
+// Gate 4.2: a planning buffer, never a realized transaction or a fabricated payment date.
+function getVariableExpenseEstimate(referenceDate,endDate,method='weighted'){
+  if(!isValidISODateString(referenceDate)||!isValidISODateString(endDate)||endDate<referenceDate)
+    return {unavailable:true,total:0,months:[],reason:'invalid_period'};
+  const [ry,rm,rd]=referenceDate.split('-').map(Number),[ey,em,ed]=endDate.split('-').map(Number);
+  if((ey-ry)*12+em-rm>11) return {unavailable:true,total:0,months:[],reason:'period_too_long'};
+  const weights=method==='simple'?[1,1,1]:[1,2,3];
+  const history=[],averages={};
+  for(let offset=-3;offset<0;offset++){
+    const {mes,ano}=addMonths(rm,ry,offset),items=getDespesasForMonth(mes,ano);
+    const categories={};
+    for(const d of items) if(!d.fixa&&(d.parcelas||1)===1){
+      const cat=d.cat||'uncategorized';categories[cat]=(categories[cat]||0)+Math.max(0,d._valorParcela||0);
+    }
+    // Um mês só com despesas fixas/parceladas (sem NENHUM lançamento
+    // variável elegível) não comprova gasto variável zero — é histórico
+    // insuficiente, não uma média legítima de zero (achado 1, auditoria
+    // independente 2f89004).
+    if(!Object.keys(categories).length) return {unavailable:true,total:0,months:[],reason:'insufficient_history'};
+    history.push({month:mesKey(mes,ano),categories,weight:weights[offset+3]});
+  }
+  const divisor=weights.reduce((a,b)=>a+b,0),round=v=>Math.round((v+Number.EPSILON)*100)/100;
+  for(const h of history) for(const [cat,total] of Object.entries(h.categories)) averages[cat]=(averages[cat]||0)+total*h.weight/divisor;
+  const months=[];
+  for(let serial=ry*12+rm-1;serial<=ey*12+em-1;serial++){
+    const year=Math.floor(serial/12),month=serial%12+1,days=new Date(year,month,0).getDate();
+    const start=year===ry&&month===rm?rd:1,finish=year===ey&&month===em?ed:days;
+    const fraction=(finish-start+1)/(days-start+1),known={};
+    for(const d of getDespesasForMonth(month,year)) if(!d.fixa&&(d.parcelas||1)===1){
+      const cat=d.cat||'uncategorized';known[cat]=(known[cat]||0)+Math.max(0,d._valorParcela||0);
+    }
+    const categories=Object.keys(averages).map(category=>({category,expected:round(averages[category]),
+      registered:round(known[category]||0),remaining:round(Math.max(0,averages[category]-(known[category]||0))*fraction)}));
+    months.push({month:mesKey(month,year),fraction,categories,total:round(categories.reduce((s,c)=>s+c.remaining,0))});
+  }
+  return {unavailable:false,method:method==='simple'?'simple':'weighted',history,months,total:round(months.reduce((s,m)=>s+m.total,0)),assumption:'uniform_remaining_days'};
+}
+function getFinancialOutlook(referenceDate,endDate){
+  const known=getChronologicalProjection(referenceDate,endDate);if(known.unavailable)return known;
+  const variable=getVariableExpenseEstimate(referenceDate,endDate,state.financialPreferences?.variableMethod||'weighted');
+  return {...known,knownProjected:known.projected,projected:known.projected-variable.total,variable,
+    incomplete:known.incomplete||variable.unavailable};
+}
+
+// Gate 4.1: derived cash planning. Never writes movements or changes source records.
+function projectionDate(year,month,day){
+  if(!Number.isInteger(Number(day))||Number(day)<1||Number(day)>31) return null;
+  return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(Number(day),new Date(year,month,0).getDate())).padStart(2,'0')}`;
+}
+function getChronologicalProjection(referenceDate,endDate){
+  if(!isValidISODateString(referenceDate)||!isValidISODateString(endDate)||endDate<referenceDate)
+    return {unavailable:true,reason:'invalid_period'};
+  const [ry,rm]=referenceDate.split('-').map(Number), [ey,em]=endDate.split('-').map(Number);
+  if((ey-ry)*12+em-rm>11) return {unavailable:true,reason:'period_too_long'};
+  const available=(state.contas||[]).reduce((s,c)=>s+calcSaldoConta(c.id),0);
+  const events=[], undated=[], issues=[];
+  const add=(event)=>{
+    if(!Number.isFinite(event.amount)){ issues.push({id:event.id,reason:'invalid_amount'});return; }
+    if(!event.amount) return;
+    if(!isValidISODateString(event.date)){ undated.push({...event,date:null});return; }
+    if(event.date>endDate) return;
+    events.push({...event,originalDate:event.date,overdue:event.date<referenceDate,date:event.date<referenceDate?referenceDate:event.date});
+  };
+  // Start from the earliest recorded monthly item, with a visible guard against unbounded imports.
+  const starts=[ry*12+rm-1];
+  for(const d of state.despesas||[]) if(d.anoInicio&&d.mesInicio) starts.push(d.anoInicio*12+d.mesInicio-1);
+  for(const r of state.receitas||[]) if(r.ano&&r.mes) starts.push(r.ano*12+r.mes-1);
+  for(const r of state.receitas||[]) if(isValidISODateString(r.dataPrevista)){
+    const [y,m]=r.dataPrevista.split('-').map(Number);starts.push(y*12+m-1);
+  }
+  const earliest=Math.min(...starts), first=Math.max(earliest,ry*12+rm-1-239);
+  if(first>earliest) issues.push({reason:'history_limited'});
+  const accounts=new Set((state.contas||[]).map(c=>c.id));
+  for(let serial=first;serial<=ey*12+em-1;serial++){
+    const year=Math.floor(serial/12),month=serial%12+1,key=mesKey(month,year);
+    const debts=getDespesasForMonth(month,year);
+    for(const d of debts){
+      if(d.cartao!=='dinheiro'&&!(state.cards||[]).some(c=>c.id===d.cartao)) issues.push({id:d.id,reason:'missing_card'});
+      if(d.cartao!=='dinheiro'||d._pago) continue;
+      add({id:`expense:${d.id}:${key}`,kind:'expense',label:d.desc||'Despesa',amount:-d._valorParcela,
+        date:d.diaVencimento?projectionDate(year,month,d.diaVencimento):(!d.fixa&&isValidISODateString(d.dataCompra)&&d.dataCompra.slice(0,7)===key?d.dataCompra:null),month:key,category:d.cat});
+    }
+    const invoices=calcByCardForMonth(month,year);
+    for(const card of state.cards||[]){
+      if(card.id==='dinheiro'||isFaturaPaga(card.id,month,year)) continue;
+      add({id:`invoice:${card.id}:${key}`,kind:'invoice',label:`Fatura ${card.name}`,amount:-(invoices[card.id]||0),date:projectionDate(year,month,card.paga),month:key});
+    }
+    // Preserve existing contribution policy; there is no exact due-date field in this schema.
+    if(!isContribuicaoPaga(month,year)) add({id:`contribution:${key}`,kind:'contribution',label:'Contribuição',amount:-calcContribuicao(month,year),date:null,month:key});
+    for(const r of getReceitasForMonth(month,year)){
+      if(receitaRecebida(r,month,year)) continue;
+      const kind=r.certeza==='potencial'?'potential':'income';
+      const date=r.recorrencia?r._dataPrevistaOcorrencia:r.dataPrevista;
+      const item={id:`revenue:${r.id}:${r._isParcela?r._parcelaIdx:key}`,kind,label:r.nome||'Receita',amount:valorReceita(r),date,month:key};
+      if(!accounts.has(r.conta)){ issues.push({id:item.id,reason:'missing_personal_account'}); continue; }
+      // Legacy items have neither a reliable daily date nor a declared certainty level.
+      if(r.certeza===undefined) item.kind='potential';
+      add(item);
+    }
+  }
+  // New one-off receipts with no planned date never materialize in the monthly helper.
+  for(const r of state.receitas||[]){
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado!=='recebido'&&!isValidISODateString(r.dataPrevista))
+      issues.push({id:r.id,reason:'missing_revenue_date'});
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado==='recebido'&&!isValidISODateString(r.dataRecebimento))
+      issues.push({id:r.id,reason:'invalid_received_date'});
+    if(r.recorrencia) for(const [key,receipt] of Object.entries(r.recebidoPorMes||{})){
+      if(receipt?.estado==='recebido'&&!getRecurringRevenueCashDate(r,key)) issues.push({id:`${r.id}:${key}`,reason:'invalid_received_date'});
+    }
+  }
+  const all=events.concat(undated);
+  const obligations=-all.filter(e=>e.kind!=='income'&&e.kind!=='potential').reduce((s,e)=>s+e.amount,0);
+  const contracted=events.filter(e=>e.kind==='income').reduce((s,e)=>s+e.amount,0);
+  const potentials=all.filter(e=>e.kind==='potential').reduce((s,e)=>s+e.amount,0);
+  events.sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
+  const timeline=[]; let running=available,minimum=available,firstShortfall=available<0?referenceDate:null;
+  for(const date of [...new Set(events.map(e=>e.date))]){
+    const dayEvents=events.filter(e=>e.date===date);
+    running+=dayEvents.filter(e=>e.kind!=='potential').reduce((s,e)=>s+e.amount,0);
+    minimum=Math.min(minimum,running);
+    if(running<0&&!firstShortfall) firstShortfall=date;
+    timeline.push({date,balance:running,events:dayEvents});
+  }
+  return {referenceDate,endDate,available,obligations,contracted,potentials,committed:available-obligations,
+    projected:available-obligations+contracted,events,undated,issues,timeline,minimum,firstShortfall,
+    incomplete:undated.length>0||issues.length>0,cycle:getCurrentFinancialCycle(referenceDate)};
+}
+
+// ════════════════════════════════════════════════
+// GATE 3 — CAIXA DO ESCRITÓRIO: fundação da separação patrimonial entre
+// PESSOA FÍSICA e ESCRITÓRIO (ver FINFLOW_IMPLEMENTATION_GATE_3_REPORT.md).
+// Todas as funções abaixo são puras (não lêem/escrevem DOM, só state.office
+// e o subconjunto de state.receitas que elas mesmas criam) e testáveis
+// isoladamente — ver tests/financial-engine/gate3-*.test.mjs.
+//
+// Princípio estrutural (seção 3/10 do Gate 3): contas/recebíveis/despesas do
+// escritório NUNCA compartilham array com contas/receitas/despesas pessoais
+// — vivem inteiramente em state.office.*. Isso torna INV-O01/O02 verdade por
+// CONSTRUÇÃO: nenhum dos ~15 pontos do app que somam state.contas pra saldo
+// pessoal (calcSaldoConta, o total de "Saldo por Conta", etc.) consegue
+// incluir dinheiro do escritório sem que alguém explicitamente some
+// state.office.contas também — o que nenhuma função pessoal existente faz.
+// ════════════════════════════════════════════════
+
+function isOfficeAccount(contaId){ return !!((state.office&&state.office.contas)||[]).some(c=>c.id===contaId); }
+function isOfficeReserveMovement(mov){ return !!(mov&&mov.reservaId); }
+function isOfficeToPersonalTransfer(mov){ return !!(mov&&mov.officeTransferId); }
+
+// Regra absoluta de caixa (mesma do Gate 2/2.1, seção 8/9 do Gate 3): um
+// recebível só é caixa real do escritório quando está 'recebido' E possui
+// dataRecebimento válida — nunca por dataPrevista, nunca inventando uma data.
+function isOfficeRecebivelRealizado(recebivel){
+  return !!(recebivel && recebivel.estado==='recebido' && recebivel.dataRecebimento);
+}
+// Data que rege o impacto de caixa de um recebível: a data real, nunca a
+// prevista (a prevista só serve pra exibição/previsão, nunca pra caixa).
+function getOfficeRecebivelCashDate(recebivel){
+  return isOfficeRecebivelRealizado(recebivel) ? recebivel.dataRecebimento : null;
+}
+
+// Saldo real de UMA conta do escritório: saldoInicial + ajustes/transferências/
+// repasses/retiradas (movimentacoesContas) + recebíveis efetivamente recebidos
+// nela − despesas empresariais debitadas dela. Nunca inclui recebível previsto,
+// projeto potencial, ou reserva empresarial (seção 11 do Gate 3).
+function calcSaldoOfficeConta(contaId){
+  const c=((state.office&&state.office.contas)||[]).find(x=>x.id===contaId);
+  if(!c) return 0;
+  let saldo=c.saldoInicial||0;
+  ((state.office&&state.office.movimentacoesContas)||[]).forEach(m=>{ if(m.contaId===contaId) saldo+=(m.valor||0); });
+  ((state.office&&state.office.recebiveis)||[]).forEach(r=>{
+    if(r.contaDestino!==contaId) return;
+    if(isOfficeRecebivelRealizado(r)) saldo+=(r.valor||0);
+  });
+  ((state.office&&state.office.despesas)||[]).forEach(d=>{ if(d.conta===contaId) saldo-=(d.valor||0); });
+  return saldo;
+}
+// Mesmo cálculo, com corte temporal (mesma filosofia de calcSaldoContaAte,
+// incluindo a correção do Gate 2.1: usa a data REAL de cada evento, nunca uma
+// chave de competência/agrupamento).
+function calcSaldoOfficeContaAte(contaId, mes, ano){
+  const c=((state.office&&state.office.contas)||[]).find(x=>x.id===contaId);
+  if(!c) return 0;
+  const limite=mesKey(mes,ano);
+  let saldo=c.saldoInicial||0;
+  ((state.office&&state.office.movimentacoesContas)||[]).forEach(m=>{
+    if(m.contaId!==contaId) return;
+    const mk=(m.data||'').slice(0,7);
+    if(mk && mk>limite) return;
+    saldo+=(m.valor||0);
+  });
+  ((state.office&&state.office.recebiveis)||[]).forEach(r=>{
+    if(r.contaDestino!==contaId) return;
+    const cashDate=getOfficeRecebivelCashDate(r);
+    if(cashDate && cashDate.slice(0,7)<=limite) saldo+=(r.valor||0);
+  });
+  ((state.office&&state.office.despesas)||[]).forEach(d=>{
+    if(d.conta!==contaId) return;
+    const dk=(d.data||'').slice(0,7);
+    if(dk && dk<=limite) saldo-=(d.valor||0);
+  });
+  return saldo;
+}
+// Saldo operacional total do escritório = soma dos saldos reais de TODAS as
+// contas do escritório. Nunca inclui recebível previsto, reserva empresarial
+// ou qualquer saldo pessoal (INV-O01/O02/O05).
+function getOfficeOperationalBalance(){
+  return ((state.office&&state.office.contas)||[]).reduce((s,c)=>s+calcSaldoOfficeConta(c.id),0);
+}
+function getOfficeOperationalBalanceAte(mes,ano){
+  return ((state.office&&state.office.contas)||[]).reduce((s,c)=>s+calcSaldoOfficeContaAte(c.id,mes,ano),0);
+}
+
+// Recebíveis cujo evento de referência (data real de recebimento se já
+// recebido, senão a data prevista) cai no mês/ano informado — mesma
+// filosofia de getReceitasForMonth (evento único), sem recorrência.
+function getOfficeReceivables(mes,ano){
+  return ((state.office&&state.office.recebiveis)||[]).filter(r=>{
+    const ref = isOfficeRecebivelRealizado(r) ? r.dataRecebimento : r.dataPrevista;
+    if(!ref) return false;
+    const [y,m]=ref.split('-').map(Number);
+    return y===ano && m===mes;
+  });
+}
+function getOfficeReceivedCash(mes,ano){
+  return getOfficeReceivables(mes,ano).filter(isOfficeRecebivelRealizado).reduce((s,r)=>s+(r.valor||0),0);
+}
+function getOfficeReceivablesPrevistoTotal(mes,ano){
+  return getOfficeReceivables(mes,ano).filter(r=>!isOfficeRecebivelRealizado(r)&&r.estado!=='cancelado').reduce((s,r)=>s+(r.valor||0),0);
+}
+
+// Reservas empresariais — mesma filosofia dos cofrinhos pessoais (seção 14 do
+// Gate 3): patrimônio reservado, nunca caixa operacional disponível.
+//
+// GATE 3.1 (seção 4/5): reserva.saldoInicial é preservado aqui SOMENTE por
+// compatibilidade histórica com reservas criadas antes deste patch — nenhuma
+// migração destrutiva foi feita, o cálculo de reservas já existentes continua
+// exatamente como estava. A partir do Gate 3.1, NENHUMA reserva NOVA pode
+// nascer com saldoInicial != 0 (ver addOfficeReserva) — o único jeito de
+// colocar dinheiro numa reserva nova é uma "Aplicação em Reserva" explícita,
+// que sai de uma conta empresarial real (confirmarAplicarOfficeReserva),
+// nunca um número digitado sem contrapartida. saldoInicial>0 num registro
+// novo criaria patrimônio do nada (CAIXA + RESERVA teria que ser igual ao
+// PATRIMÔNIO real do escritório — seção 2 do Gate 3.1).
+function getSaldoOfficeReserva(reservaId){
+  const r=((state.office&&state.office.reservas)||[]).find(x=>x.id===reservaId);
+  const saldoInicial=(r&&r.saldoInicial)||0; // legacy opening balance — compatibilidade histórica somente
+  const movs=((state.office&&state.office.movimentacoesReservas)||[]).filter(m=>m.reservaId===reservaId);
+  const aplicacoes=movs.filter(m=>m.tipo!=='resgate').reduce((s,m)=>s+(m.valor||0),0);
+  const resgates=movs.filter(m=>m.tipo==='resgate').reduce((s,m)=>s+(m.valor||0),0);
+  return saldoInicial+aplicacoes-resgates;
+}
+function getOfficeReservedBalance(){
+  return ((state.office&&state.office.reservas)||[]).reduce((s,r)=>s+getSaldoOfficeReserva(r.id),0);
+}
+// Patrimônio financeiro total do escritório (seção 2/18 do Gate 3.1): caixa
+// operacional + reservas empresariais. Mover dinheiro entre os dois nunca
+// altera esta soma — é a invariante que a aplicação/resgate de reserva (e a
+// proibição de saldoInicial em reserva nova) protegem. Principalmente uma
+// invariante de teste; não é (ainda) um indicador visual obrigatório.
+function getOfficeFinancialPatrimony(){
+  return getOfficeOperationalBalance()+getOfficeReservedBalance();
+}
+
+// Gate 3.3 (seção 6): tolerância monetária explícita para decidir "saldo
+// efetivamente zero" sem comparar float com === 0 (risco de resíduo binário
+// tipo 0.0000000001). Uso restrito a esta decisão semântica de exclusão —
+// NUNCA usada para arredondar patrimônio, saldo exibido ou qualquer outro
+// cálculo financeiro do app.
+const MONEY_EPSILON = 0.005;
+function isEffectivelyZeroMoney(value){
+  return Math.abs(Number(value)||0) < MONEY_EPSILON;
+}
+
+// Gate 3.2 — seção 4-9: um registro financeiro do escritório com histórico
+// REALIZADO nunca pode ser apagado destrutivamente (isso faria dinheiro que
+// já existiu desaparecer contabilmente, quebrando PATRIMÔNIO = CAIXA +
+// RESERVAS). Puros — nunca alteram state/DOM, nunca chamam toast/scheduleSave
+// — só respondem se a exclusão é permitida e, se não, por quê. Quem chama
+// (delOfficeReserva/delOfficeConta) decide o que fazer com a resposta.
+//
+// Mapa real de referências a uma conta empresarial, levantado por busca no
+// código (documentado no relatório do Gate 3.2 — nenhum campo foi presumido):
+//   state.office.recebiveis        → contaDestino
+//   state.office.despesas          → conta
+//   state.office.movimentacoesContas → contaId (cobre aplicação/resgate de
+//     reserva, repasse realizado via realizeOfficeTransfer e retirada
+//     extraordinária via createExtraordinaryWithdrawal — nenhum dos dois
+//     grava a conta em outro lugar além de movimentacoesContas)
+//   state.office.projetos          → nenhuma referência a conta
+//   state.office.repasses          → nenhuma referência a conta diretamente
+//     (o vínculo com a conta empresarial de origem só existe através do
+//     lançamento em movimentacoesContas que realizeOfficeTransfer cria)
+//
+// Gate 3.3 (seção 4/7/8/10): "sem movimentações/referências" não é o mesmo
+// que "financeiramente vazio". ENTIDADE FINANCEIRAMENTE EXCLUÍVEL = SEM
+// HISTÓRICO + SEM REFERÊNCIAS + SALDO EFETIVO = ZERO — as três condições
+// juntas, nunca uma substituindo a outra. Ordem de checagem (precedência
+// preservada do Gate 3.2): (1) a entidade existe? se não, not_found — nunca
+// allowed:true para um ID que não existe; (2) tem histórico/referência? se
+// sim, bloqueia por ISSO primeiro, mesmo que o saldo seja zero; (3) só então
+// o saldo efetivo é checado, usando o motor de cálculo real (getSaldoOfficeReserva/
+// calcSaldoOfficeConta — nunca uma fórmula duplicada aqui) com a tolerância
+// de isEffectivelyZeroMoney (saldo negativo também bloqueia: só zero exclui).
+function canDeleteOfficeReserve(reservaId){
+  const r=((state.office&&state.office.reservas)||[]).find(x=>x.id===reservaId);
+  if(!r) return {allowed:false, reason:'not_found'};
+  const temMovimentacao=((state.office&&state.office.movimentacoesReservas)||[]).some(m=>m.reservaId===reservaId);
+  if(temMovimentacao) return {allowed:false, reason:'has_financial_history'};
+  if(!isEffectivelyZeroMoney(getSaldoOfficeReserva(reservaId))) return {allowed:false, reason:'has_nonzero_balance'};
+  return {allowed:true, reason:null};
+}
+function canDeleteOfficeAccount(contaId){
+  const off=state.office||{};
+  const c=(off.contas||[]).find(x=>x.id===contaId);
+  if(!c) return {allowed:false, reason:'not_found'};
+  if((off.recebiveis||[]).some(r=>r.contaDestino===contaId)) return {allowed:false, reason:'has_recebivel'};
+  if((off.despesas||[]).some(d=>d.conta===contaId)) return {allowed:false, reason:'has_despesa'};
+  if((off.movimentacoesContas||[]).some(m=>m.contaId===contaId)) return {allowed:false, reason:'has_movimentacao'};
+  if(!isEffectivelyZeroMoney(calcSaldoOfficeConta(contaId))) return {allowed:false, reason:'has_nonzero_balance'};
+  return {allowed:true, reason:null};
+}
+
+// Gate 3.4 — decorre da auditoria patrimonial final do Gate 3.3: diferente de
+// recebível (que só é caixa real quando estado==='recebido' — isOfficeRecebivelRealizado)
+// e de reserva/conta (protegidas por histórico/saldo acima), uma despesa
+// empresarial NÃO TEM estado "previsto" — addOfficeDespesa sempre grava
+// status:'pago', e calcSaldoOfficeConta desconta TODA despesa cadastrada da
+// conta correspondente incondicionalmente (sem checar status). Ou seja, no
+// modelo atual:
+//   DESPESA EMPRESARIAL CADASTRADA == DESPESA FINANCEIRAMENTE REALIZADA
+// Apagar uma despesa cadastrada recria, no cálculo, o dinheiro que já saiu de
+// verdade — sem nenhum estorno/reembolso/contrapartida real (a mesma classe
+// de bug que canDeleteOfficeReserve/canDeleteOfficeAccount já bloqueiam pra
+// reserva/conta). Este Gate NÃO introduz um novo modelo de estados de despesa
+// (previsto/pago/cancelado/estornado) — decisão de produto explicitamente
+// fora de escopo — só reconhece a semântica financeira JÁ REAL do código:
+// toda despesa existente é realizada, logo nenhuma despesa existente pode
+// ser excluída destrutivamente. Puro — nunca altera state/DOM/toast/scheduleSave.
+function canDeleteOfficeExpense(despesaId){
+  const off=state.office||{};
+  const d=(off.despesas||[]).find(x=>x.id===despesaId);
+  if(!d) return {allowed:false, reason:'not_found'};
+  // Toda despesa que existe em state.office.despesas já é descontada
+  // incondicionalmente por calcSaldoOfficeConta — não há, no modelo atual,
+  // nenhuma despesa "ainda não realizada" que possa ser excluída sem alterar
+  // patrimônio já efetivado.
+  return {allowed:false, reason:'realized_expense'};
+}
+
+// Valida a SOMA e os valores individuais das regras de distribuição (seção
+// 9-12 do Gate 3.1). NUNCA inventa nem normaliza percentuais — só diz se o
+// que já está configurado é matematicamente válido.
+//   - Enquanto qualquer destino ainda estiver null/undefined: configured é
+//     sempre false (comportamento pré-3.1 preservado — nenhum repasse
+//     automático) e a soma dos destinos já preenchidos NÃO precisa ser 100;
+//     um percentual individual fora do intervalo [0,100] ou não numérico
+//     ainda assim invalida a configuração inteira (nunca é salvo).
+//   - Quando TODOS os destinos estiverem preenchidos: configured=true, e a
+//     soma tem que ser exatamente 100 (com tolerância segura de ponto
+//     flutuante) — caso contrário valid=false.
+function validateOfficeDistributionRules(rules){
+  const list=rules||[];
+  if(!list.length) return { valid:true, configured:false, totalPercent:0, reason:null };
+  let totalPercent=0, allFilled=true;
+  for(const rule of list){
+    const p=rule&&rule.percentual;
+    if(p===null||p===undefined){ allFilled=false; continue; }
+    if(typeof p!=='number' || !Number.isFinite(p)) return { valid:false, configured:false, totalPercent:null, reason:'percentual_invalido' };
+    if(p<0||p>100) return { valid:false, configured:false, totalPercent:null, reason:'percentual_fora_do_intervalo' };
+    totalPercent+=p;
+  }
+  totalPercent=Math.round(totalPercent*100)/100;
+  if(!allFilled) return { valid:true, configured:false, totalPercent, reason:null };
+  const TOL=0.005; // tolerância segura de ponto flutuante — nunca "quase 100"
+  if(Math.abs(totalPercent-100)>TOL) return { valid:false, configured:true, totalPercent, reason:'total_diferente_de_100' };
+  return { valid:true, configured:true, totalPercent, reason:null };
+}
+
+// Distribuição de um recebível pelas regras configuradas (seção 17/18/63 do
+// Gate 3; validação de integridade adicionada no Gate 3.1). NUNCA inventa
+// percentuais: quando regrasDistribuicao ainda não foi preenchida pelo
+// usuário pra um destino, OU a configuração preenchida não é matematicamente
+// válida (soma != 100, percentual fora de [0,100], NaN/Infinity — seção 9-12
+// do Gate 3.1), esse destino volta com valor=null e configured=false — quem
+// chama decide o que fazer (ex.: não gerar repasse). A base de cálculo (valor
+// do recebível) NÃO foi alterada neste Gate — DISTRIBUTION_BASE_DEFINITION_REQUIRED
+// permanece uma decisão futura, fora de escopo aqui.
+function calculateOfficeDistribution(recebivel){
+  const regras=(state.office&&state.office.regrasDistribuicao)||[];
+  const validation=validateOfficeDistributionRules(regras);
+  const ativa=validation.valid && validation.configured;
+  const porDestino={};
+  regras.forEach(rule=>{
+    const p=rule.percentual;
+    porDestino[rule.destino]=(ativa && p!==null && p!==undefined) ? (recebivel.valor||0)*(p/100) : null;
+  });
+  return { valor:recebivel.valor||0, configured:ativa, porDestino, validation };
+}
+
+// Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
+// data real da compra e do dia de fechamento configurado pro cartão. Pura — não
+// lê nem escreve state, não decide nada sobre despesas em Dinheiro/PIX (essas
+// nunca "rolam" — ver getDespesasForMonth).
+//
+//   dia da compra <= cartao.fecha → cai na fatura do MESMO mês da compra
+//   dia da compra >  cartao.fecha → cai na fatura do mês SEGUINTE
+//
+// MODO LEGADO (regra histórica "mês da compra + 1", sem olhar o dia nenhum):
+// aplicado sempre que dataCompra ou cartao.fecha não existirem. Isso cobre dois
+// casos de propósito: (1) despesas antigas, lançadas antes de existir o campo
+// dataCompra — nunca tentamos adivinhar o dia a partir do mês; (2) despesas
+// novas num cartão que não tem dia de fechamento configurado — sem saber o dia
+// de corte, a única regra segura é a mesma de sempre. mesInicioLegacy/
+// anoInicioLegacy só são usados nesse caminho.
+function getCompetenciaFatura(dataCompra, cartao, mesInicioLegacy, anoInicioLegacy){
+  if(dataCompra && cartao && cartao.fecha){
+    const [y,m,d] = dataCompra.split('-').map(Number);
+    if(y && m && d){
+      return d<=cartao.fecha ? {mes:m,ano:y} : addMonths(m,y,1);
+    }
+  }
+  return addMonths(mesInicioLegacy,anoInicioLegacy,1); // modo legado
+}
+
+// Despesas em cartão de crédito viram fatura no mês em que a compra efetivamente
+// caiu, segundo o dia de fechamento do cartão (ver getCompetenciaFatura) — pra
+// despesas antigas, sem essa informação, continua valendo a regra histórica
+// "mês da compra + 1" (ex: compras de 03/jun a 02/jul saem como "fatura de
+// julho"). "Mês Início"/"Ano Início" continuam sendo o mês/ano de referência da
+// compra; dataCompra (quando existir) é que decide o dia dentro desse mês.
+// Dinheiro/PIX não rola — o mês lançado já é o mês em que o dinheiro sai da conta.
 function getDespesasForMonth(mes,ano){
   const result=[];
   state.despesas.forEach(d=>{
     const parcelas=d.parcelas||1;
-    const roll=isCartaoDeCredito(d.cartao)?1:0;
-    const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
+    let mIni,yIni;
+    if(isCartaoDeCredito(d.cartao)){
+      const cartaoObj=state.cards.find(c=>c.id===d.cartao);
+      ({mes:mIni,ano:yIni}=getCompetenciaFatura(d.dataCompra,cartaoObj,d.mesInicio,d.anoInicio));
+    } else {
+      mIni=d.mesInicio; yIni=d.anoInicio; // Dinheiro/PIX: nunca rola
+    }
     // ignorarAntes: parcelas de compras antigas (lançadas no app depois de já
     // terem começado na vida real) anteriores a esse mês/ano ficam de fora do
     // cálculo inteiro — não entram em previsão, cenários nem próximos
@@ -2575,52 +3465,73 @@ function renderProjecaoFinanceira(t){
   });
 }
 
+function setFinancialPreference(key,value){
+  if(key==='primarySalaryId'&&value&&!(state.receitas||[]).some(r=>r.id===value&&r.tipo==='salario'&&r.certeza!==undefined&&r.recorrencia)) return;
+  if(key==='variableMethod'&&!['weighted','simple'].includes(value))return;
+  if(key==='projectionEndDate'&&value){
+    const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    if(getChronologicalProjection(today,value).unavailable){toast('Escolha uma data de hoje até os próximos 12 meses');return;}
+  }
+  if(!['primarySalaryId','variableMethod','projectionEndDate'].includes(key))return;
+  state.financialPreferences={...(state.financialPreferences||{}),[key]:value};
+  scheduleSave();renderFinancialOutlook();
+}
+function renderFinancialOutlook(){
+  const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const preferences=state.financialPreferences||{},cycle=getCurrentFinancialCycle(today);
+  const fallback=projectionDate(now.getFullYear(),now.getMonth()+1,31);
+  let end=preferences.projectionEndDate||cycle.endDate||fallback;
+  if(!isValidISODateString(end)||end<today)end=cycle.endDate&&cycle.endDate>=today?cycle.endDate:fallback;
+  let p=getFinancialOutlook(today,end);
+  if(p.unavailable){end=fallback;p=getFinancialOutlook(today,end);}
+  const salaries=(state.receitas||[]).filter(r=>r.tipo==='salario'&&r.certeza!==undefined&&r.recorrencia);
+  const primary=preferences.primarySalaryId||(salaries.length===1?salaries[0].id:'');
+  const dateLabel=date=>isValidISODateString(date)?date.split('-').reverse().join('/'):'Sem data';
+  const metric=(id,title,value,note)=>`<div class="hero-tile"><div class="hero-label">${title}</div><div id="${id}" class="hero-value ${value<0?'red':'blue'}">${fmtBRL(value)}</div><div class="hero-sub">${note}</div></div>`;
+  document.getElementById('dashHero').innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div><div class="card-title">Seu planejamento a partir de hoje</div><div class="card-sub">${dateLabel(today)} até ${dateLabel(end)} · os relatórios mensais continuam abaixo</div></div></div>
+      <div class="form-grid">
+        <div class="form-group"><label for="primarySalarySelect">Salário principal do ciclo</label><select id="primarySalarySelect" onchange="setFinancialPreference('primarySalaryId',this.value)"><option value="">${salaries.length?'Escolha o salário principal':'Nenhum salário recorrente cadastrado'}</option>${salaries.map(r=>`<option value="${esc(r.id)}" ${r.id===primary?'selected':''}>${esc(r.nome||'Salário')}</option>`).join('')}</select></div>
+        <div class="form-group"><label for="projectionEndDate">Planejar até</label><input id="projectionEndDate" type="date" min="${today}" value="${end}" onchange="setFinancialPreference('projectionEndDate',this.value)"></div>
+        <div class="form-group"><label for="variableMethodSelect">Estimativa dos últimos 3 meses</label><select id="variableMethodSelect" onchange="setFinancialPreference('variableMethod',this.value)"><option value="weighted" ${preferences.variableMethod!=='simple'?'selected':''}>Mais peso ao recente (1, 2, 3)</option><option value="simple" ${preferences.variableMethod==='simple'?'selected':''}>Média simples</option></select></div>
+        <div class="form-group"><label>Ciclo do salário principal</label><div id="financialCycleLabel" class="info-box">${cycle.cycleUnavailable?(cycle.selectionRequired?'Escolha um salário principal para definir o ciclo.':'Ainda não há recebimento real para definir o ciclo.'):`${dateLabel(cycle.startDate)} → ${cycle.endDate?dateLabel(cycle.endDate):'fim ainda desconhecido'}${cycle.endSource==='expected_salary'?' (fim estimado)':''}`}</div><button class="btn btn-ghost btn-sm" onclick="setFinancialPreference('projectionEndDate','')">Usar fim do ciclo</button></div>
+      </div>
+    </div>
+    <div class="hero-grid">
+      ${metric('outlookAvailable','Disponível agora',p.available,'Saldo registrado nas contas pessoais. Reservas e escritório ficam separados.')}
+      ${metric('outlookCommitted','Após obrigações',p.committed,`Disponível menos ${fmtBRL(p.obligations)} a pagar. Não inclui receitas pendentes.`)}
+      ${metric('outlookProjected','Saldo projetado',p.projected,`Inclui ${fmtBRL(p.contracted)} a receber e desconta ${fmtBRL(p.variable.total)} de estimativa variável.`)}
+    </div>
+    <div class="info-box" id="outlookQuality">${!state.contas.length?'Cadastre contas pessoais para ter um saldo inicial. ':''}${p.incomplete?'Projeção incompleta: confira datas, cadastros e histórico abaixo.':'Projeção baseada nos lançamentos registrados e na hipótese de gastos indicada abaixo.'} O saldo inicial é o registrado agora; não é uma reconstrução do saldo diário histórico.</div>
+    <div class="card" style="margin-top:16px"><div class="card-title">Receitas potenciais: <span id="outlookPotentials">${fmtBRL(p.potentials)}</span></div><p class="card-sub">Apresentadas separadamente. Não aumentam o disponível nem o saldo projetado.</p></div>`;
+  const risk=p.firstShortfall?`Os lançamentos com data indicam saldo negativo em ${dateLabel(p.firstShortfall)}.`:
+    p.projected<0?'O saldo final projetado é negativo. Confira as obrigações e a estimativa.':
+    'Não foi identificado saldo negativo nos lançamentos com data. Isso não garante suficiência para gastos sem data ou ainda desconhecidos.';
+  const issueNames={missing_personal_account:'Receita sem conta pessoal válida',missing_revenue_date:'Receita sem data prevista válida',invalid_received_date:'Recebimento com data real inválida',missing_card:'Despesa com cartão não encontrado',invalid_amount:'Valor inválido',history_limited:'Histórico de atrasos limitado a 240 meses'};
+  document.getElementById('dashProjecaoFinanceira').innerHTML=`<div class="card"><div class="card-title">Linha do tempo dos lançamentos conhecidos</div><p id="outlookRisk">${risk}</p><p class="card-sub">${p.undated.length} lançamento(s) sem data ficam fora desta sequência. A estimativa variável também não tem dia de pagamento definido. Eventos do mesmo dia são somados, sem presumir a ordem dentro do dia.</p>
+    <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Data</th><th>Lançamentos</th><th>Saldo após o dia</th></tr></thead><tbody>${p.timeline.length?p.timeline.map(day=>`<tr><td>${dateLabel(day.date)}</td><td>${day.events.map(e=>`${esc(e.label)}: ${fmtBRL(e.amount)}${e.kind==='potential'?' (potencial; fora do saldo)':''}${e.overdue?` (atrasado desde ${dateLabel(e.originalDate)})`:''}`).join('<br>')}</td><td class="mono ${day.balance<0?'red':''}">${fmtBRL(day.balance)}</td></tr>`).join(''):'<tr><td colspan="3">Nenhum lançamento pendente com data neste período.</td></tr>'}</tbody></table></div>
+    ${p.undated.length?`<details><summary>Ver lançamentos sem data definida (${p.undated.length})</summary>${p.undated.map(e=>`<p>${esc(e.label)} · ${esc(e.month)} · ${fmtBRL(e.amount)}${e.kind==='potential'?' · potencial; fora do saldo':''}</p>`).join('')}<p>Obrigações incluídas no saldo final de forma conservadora; o dia de pagamento precisa ser confirmado.</p></details>`:''}
+    ${p.issues.length?`<details open><summary>Cadastros para conferir (${p.issues.length})</summary>${[...new Set(p.issues.map(i=>issueNames[i.reason]||'Cadastro incompleto'))].map(label=>`<p>${esc(label)}</p>`).join('')}</details>`:''}</div>`;
+  document.getElementById('dashPrevisaoMedia').innerHTML=`<div class="card"><div class="card-title">Gastos variáveis ainda estimados: ${fmtBRL(p.variable.total)}</div><p class="card-sub">${p.variable.unavailable?'Histórico insuficiente: são necessários lançamentos nos três meses completos anteriores. Não foi adicionada estimativa.':'Média por categoria, descontando tudo o que já foi lançado no mês. Para períodos parciais, o restante é distribuído proporcionalmente pelos dias restantes; é uma hipótese de planejamento.'}</p>${(p.variable.months||[]).map(m=>`<details><summary>${esc(m.month)} · ${fmtBRL(m.total)}</summary>${m.categories.map(c=>`<p>${esc(state.categories.find(cat=>cat.id===c.category)?.name||c.category)}: média ${fmtBRL(c.expected)} · lançado ${fmtBRL(c.registered)} · restante no período ${fmtBRL(c.remaining)}</p>`).join('')}</details>`).join('')}</div>`;
+}
+
 function renderDashboard(){
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
-  renderResumoPagar(t);
-  renderProjecaoFinanceira(t);
+  // Replaced by one consistent planning summary; monthly details remain below.
+  document.getElementById('dashResumoPagar').innerHTML='';
+  // Daily planning is rendered by renderFinancialOutlook.
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
   const contribuicaoAjustada=state.contribuicaoAjustes?.[k]!==undefined;
   const pendentesCount=getReceitasPrevistasForMonth(currentMonth,currentYear).length;
 
-  // ── Hero: os 3 números que mais importam (Caixa / Pior / Melhor) ──
-  document.getElementById('dashHero').innerHTML=`
-    <div class="hero-grid">
-      <div class="hero-tile t-accent" style="cursor:pointer" onclick="navigateReceitasFiltro('recebidas')" title="Saldo efetivo atual incluindo meses anteriores">
-        <div class="hero-label" style="color:var(--accent)">🏦 Em Caixa Agora</div>
-        <div class="hero-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
-        <div class="hero-sub">${usaContasComoFonte
-          ? 'Soma do saldo de todas as Contas Bancárias'
-          : isProjecaoFutura
-            ? 'Projeção (Pior Cenário) a partir do saldo atual das contas'
-            : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
-      </div>
-      <div class="hero-tile t-warn" title="${isMesAtualReal(currentMonth,currentYear)?'Paga tudo, não recebe nada pendente':(isProjecaoFutura?'Caixa atual, projetado mês a mês até aqui, sem repasses de terceiros':'Sem repasses de terceiros, mês isolado (sem caixa atual)')}">
-        <div class="hero-label" style="color:var(--warn)">📉 Pior Cenário</div>
-        <div class="hero-value ${saldoPiorCenario>=0?'blue':'red'}">${fmtBRL(saldoPiorCenario)}</div>
-        <div class="hero-sub">${isMesAtualReal(currentMonth,currentYear)?'Entrada real − previsto saídas':(isProjecaoFutura?'Caixa atual − despesas previstas até aqui':'Salário previsto (sem repasses) − saídas')}</div>
-      </div>
-      <div class="hero-tile t-ok" title="${isMesAtualReal(currentMonth,currentYear)?'Recebe tudo pendente, paga tudo':(isProjecaoFutura?'Caixa atual, projetado mês a mês até aqui, somando repasses no caminho':'Salário + repasses do mês, mês isolado (sem caixa atual)')}">
-        <div class="hero-label" style="color:var(--accent2)">📈 Melhor Cenário</div>
-        <div class="hero-value ${saldoMelhorCenario>=0?'green':'red'}">${fmtBRL(saldoMelhorCenario)}</div>
-        <div class="hero-sub">${isMesAtualReal(currentMonth,currentYear)
-          ? ((totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente')
-          : (isProjecaoFutura?'Caixa atual + repasses − despesas até aqui':(repassesPendentes>0?`+${fmtBRL(repassesPendentes)} de repasses no mês`:'Sem repasses previstos'))}</div>
-      </div>
-    </div>
-    <div class="tip" style="font-size:11px;color:var(--muted);margin:-10px 0 4px">
-      ${isMesAtualReal(currentMonth,currentYear)
-        ? '💡 Cenários do mês corrente incluem o caixa atual e o saldo acumulado de meses anteriores.'
-        : (isProjecaoFutura
-          ? '💡 Projeção: parte do seu caixa atual (soma das Contas Bancárias) e acumula, mês a mês, o resultado previsto de cada mês até o mês navegado.'
-          : '💡 Mês fora do período atual: cenários calculados de forma isolada, sem considerar o caixa de hoje (sobra/falta não atravessa meses).')}
-    </div>`;
+  renderFinancialOutlook();
 
   // ── Detalhamento do mês: previsto x real, lado a lado ──
   document.getElementById('dashDetalhamento').innerHTML=`
@@ -2791,7 +3702,7 @@ function renderDashboard(){
   });
 
   // ── Previsão de gastos variáveis por média histórica ──
-  renderPrevisaoMediaHistorica();
+  // Variable estimates are included in the planning panel.
 
   // ── Recent table ──
   if(!desps.length){
@@ -2822,9 +3733,16 @@ function renderDashboard(){
 // Usa os meses anteriores que tiverem algum lançamento (até 12), exige
 // no mínimo 3 meses de histórico para começar a exibir.
 function getMesesHistoricoDisponiveis(maxN){
+  // Sempre olha pra trás a partir de HOJE de verdade (REAL_TODAY_MONTH/ANO),
+  // nunca do mês que está sendo exibido no Dashboard (currentMonth/currentYear).
+  // Isso é usado como base pra "média histórica de gastos variáveis" que
+  // alimenta a projeção futura e o simulador "E se..." — se dependesse do
+  // mês exibido, navegar pra um mês futuro faria a "história" recuar junto
+  // (ou até incluir meses futuros sem lançamento nenhum), dando uma média
+  // diferente — e às vezes zerada — dependendo de qual mês você está olhando.
   const meses=[];
   for(let i=1;i<=maxN;i++){
-    let m=currentMonth-i, y=currentYear;
+    let m=REAL_TODAY_MONTH-i, y=REAL_TODAY_YEAR;
     while(m<=0){ m+=12; y-=1; }
     const desps=getDespesasForMonth(m,y);
     const recs=getReceitasForMonth(m,y);
@@ -2914,7 +3832,7 @@ function renderRelatorio(){
   html+=`</div><h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Receitas</h4>`;
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
-    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+    const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
     html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
     recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
@@ -2939,14 +3857,39 @@ function renderRelatorio(){
 // ════════════════════════════════════════════════
 // RECEITAS
 // ════════════════════════════════════════════════
+// GATE 2: tipos que usam o novo modelo semântico (certeza + estado +
+// datas), sempre como evento único (sem recorrência nem parcelamento).
+const NOVO_MODELO_TIPOS_SINGULARES=['projeto','rendimento','outro'];
+
 function onRecTipoChange(){
   const tipo=document.getElementById('recTipo').value;
-  document.getElementById('recNomeGroup').style.display=(tipo==='extra'||tipo==='repasse')?'flex':'none';
+  const isNovoSingular=NOVO_MODELO_TIPOS_SINGULARES.includes(tipo);
+  document.getElementById('recNomeGroup').style.display=(tipo==='extra'||tipo==='repasse'||isNovoSingular)?'flex':'none';
   document.getElementById('repasseInfo').style.display=tipo==='repasse'?'block':'none';
-  document.getElementById('recRecorrenteRow').style.display=(tipo==='repasse'||tipo==='extra')?'none':'flex';
+  document.getElementById('recRecorrenteRow').style.display=(tipo==='repasse'||tipo==='extra'||isNovoSingular)?'none':'flex';
   document.getElementById('recParceladoRow').style.display=tipo==='extra'?'flex':'none';
   if(tipo!=='extra'){ document.getElementById('recParceladoBox').style.display='none'; document.getElementById('recParcelado').checked=false; }
+  ['recCertezaGroup','recEstadoGroup','recNovoModeloInfo'].forEach(elId=>{ const el=document.getElementById(elId); if(el) el.style.display=isNovoSingular?'flex':'none'; });
+  if(isNovoSingular) onRecCertezaOuEstadoChange();
+  else { ['recDataPrevistaGroup','recDataRecebimentoGroup'].forEach(elId=>{ const el=document.getElementById(elId); if(el) el.style.display='none'; }); }
   onRecFixoChange();
+}
+
+// Mostra Data Prevista ou Data de Recebimento conforme a Situação escolhida
+// (evento único do novo modelo — seções 4/9/23 do Gate 2). Nunca os dois ao
+// mesmo tempo: previsto usa dataPrevista, recebido usa dataRecebimento.
+function onRecCertezaOuEstadoChange(){
+  const estado=document.getElementById('recEstado')?.value||'previsto';
+  const gPrevista=document.getElementById('recDataPrevistaGroup');
+  const gRecebimento=document.getElementById('recDataRecebimentoGroup');
+  if(gPrevista) gPrevista.style.display=(estado==='previsto')?'flex':'none';
+  if(gRecebimento){
+    gRecebimento.style.display=(estado==='recebido')?'flex':'none';
+    if(estado==='recebido'){
+      const inp=document.getElementById('recDataRecebimento');
+      if(inp&&!inp.value){ const h=new Date(); inp.value=`${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`; }
+    }
+  }
 }
 
 function onRecFixoChange(){
@@ -2954,6 +3897,26 @@ function onRecFixoChange(){
   const fixo=document.getElementById('recFixo').checked;
   const box=document.getElementById('recSalarioRollInfo');
   if(box) box.style.display=(tipo==='salario'&&fixo)?'block':'none';
+  const jaRecebidoRow=document.getElementById('recSalarioJaRecebidoRow');
+  if(jaRecebidoRow) jaRecebidoRow.style.display=(tipo==='salario'&&fixo)?'flex':'none';
+  if(!(tipo==='salario'&&fixo)){
+    const chk=document.getElementById('recSalarioJaRecebido');
+    if(chk) chk.checked=false;
+    onRecSalarioJaRecebidoChange();
+  }
+}
+
+// Mostra o campo de data real quando o usuário marca "já recebi o salário
+// desta competência" ao cadastrar um salário recorrente novo (seção 23 —
+// "receita já recebida exige dataRecebimento").
+function onRecSalarioJaRecebidoChange(){
+  const checked=document.getElementById('recSalarioJaRecebido')?.checked;
+  const g=document.getElementById('recSalarioDataRecebimentoGroup');
+  if(g) g.style.display=checked?'flex':'none';
+  if(checked){
+    const inp=document.getElementById('recSalarioDataRecebimento');
+    if(inp&&!inp.value){ const h=new Date(); inp.value=`${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`; }
+  }
 }
 
 function onRecValorChange(){ if(document.getElementById('recParcelado')?.checked) gerarParcelasReceita(); }
@@ -3002,19 +3965,55 @@ function addReceita(){
   const mes=parseInt(document.getElementById('recMes').value);
   const ano=parseInt(document.getElementById('recAno').value);
   const conta=document.getElementById('recConta')?.value||'';
-  const rec=document.getElementById('recFixo').checked&&tipo!=='repasse'&&tipo!=='extra';
+  const isNovoSingular=NOVO_MODELO_TIPOS_SINGULARES.includes(tipo);
+  const isSalarioRecorrenteNovo=tipo==='salario'&&document.getElementById('recFixo').checked;
+  const rec=document.getElementById('recFixo').checked&&tipo!=='repasse'&&tipo!=='extra'&&!isNovoSingular;
   const parcelado=tipo==='extra'&&document.getElementById('recParcelado')?.checked;
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   if(!conta){toast('Cadastre e selecione uma conta bancária de destino');return;}
   if(parcelado&&recParcelasData.length<2){toast('Gere as parcelas primeiro');return;}
-  const novaRec={id:uid(),tipo,nome,valor,mes,ano,conta,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
-  if(parcelado) novaRec.parcelas=recParcelasData.map(p=>({...p}));
+
+  let novaRec;
+  if(isSalarioRecorrenteNovo){
+    // GATE 2 (seções 7/8): salário recorrente NOVO — sem deslocamento +1.
+    // certeza:'recorrente' é o marcador de novo modelo; cada mês tem seu
+    // próprio estado de recebimento em recebidoPorMes (nunca duplica o
+    // registro, nunca desloca a data — ver getReceitasForMonth/receitaRecebida).
+    novaRec={id:uid(),tipo,nome:nome||'Salário',valor,mes,ano,competenciaMes:mes,competenciaAno:ano,conta,
+      certeza:'recorrente',recorrencia:{type:'last_weekday_of_month',weekday:5},recebidoPorMes:{},createdAt:uid()};
+    if(document.getElementById('recSalarioJaRecebido')?.checked){
+      const hoje=new Date();
+      const dataRec=document.getElementById('recSalarioDataRecebimento')?.value||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+      novaRec.recebidoPorMes[mesKey(mes,ano)]={estado:'recebido',dataRecebimento:dataRec};
+    }
+  } else if(isNovoSingular){
+    // GATE 2 (seções 4/9/10/11): projeto/rendimento/outro — evento único,
+    // certeza+estado+datas separados de competência (mes/ano acima).
+    const certeza=document.getElementById('recCerteza')?.value||'contratado';
+    const estado=document.getElementById('recEstado')?.value||'previsto';
+    const dataPrevista=document.getElementById('recDataPrevista')?.value||null;
+    let dataRecebimento=null;
+    if(estado==='recebido'){
+      const hoje=new Date();
+      dataRecebimento=document.getElementById('recDataRecebimento')?.value||`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+    } else if(!dataPrevista){
+      toast('Informe a data prevista'); return;
+    }
+    novaRec={id:uid(),tipo,nome,valor,mes,ano,competenciaMes:mes,competenciaAno:ano,conta,
+      certeza,estado,dataPrevista,dataRecebimento,createdAt:uid()};
+  } else {
+    novaRec={id:uid(),tipo,nome,valor,mes,ano,conta,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
+    if(parcelado) novaRec.parcelas=recParcelasData.map(p=>({...p}));
+  }
   state.receitas.push(novaRec);
   scheduleSave();renderReceitas();toast('Receita adicionada!');
   document.getElementById('recValor').value='';document.getElementById('recNome').value='';
   recParcelasData=[];
   if(document.getElementById('recParcelado')) document.getElementById('recParcelado').checked=false;
   if(document.getElementById('recParceladoBox')) document.getElementById('recParceladoBox').style.display='none';
+  if(document.getElementById('recSalarioJaRecebido')) document.getElementById('recSalarioJaRecebido').checked=false;
+  if(document.getElementById('recDataPrevista')) document.getElementById('recDataPrevista').value='';
+  if(document.getElementById('recDataRecebimento')) document.getElementById('recDataRecebimento').value='';
 }
 function renderReceitas(){
   document.getElementById('recPeriodLabel').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
@@ -3040,7 +4039,7 @@ function renderReceitas(){
     bannerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.2);border-radius:var(--radius);padding:8px 14px;margin-bottom:10px;font-size:12px;gap:10px"><span>✓ Mostrando só as receitas <strong>já recebidas</strong></span><button class="btn btn-ghost btn-sm" onclick="window._recFiltro='todas';renderReceitas()">✕ Ver todas</button></div>`;
   }
 
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
   let html=bannerHTML;
 
   // ── Seção de Repasses agrupada por pessoa ──
@@ -3127,11 +4126,100 @@ function renderReceitas(){
 
 function toggleReceitaRecebida(recId){
   const r=state.receitas.find(x=>x.id===recId);if(!r)return;
+  // GATE 3 (seção 22/37) — receita derivada do escritório (repasse/retirada):
+  // é o MESMO evento lógico que existe do lado do escritório (state.office.
+  // repasses) — nunca alterna só o lado pessoal isoladamente, senão os dois
+  // lados divergem silenciosamente. Realizar o repasse é uma ação explícita
+  // na aba Caixa do Escritório (realizeOfficeTransfer), não aqui.
+  if(r.origem==='office_distribution'){
+    toast('Este repasse vem do Caixa do Escritório — realize-o lá (aba Repasses) para manter os dois lados sincronizados');
+    return;
+  }
+  if(r.origem==='office_extraordinary_withdrawal'){
+    toast('Esta retirada extraordinária já foi registrada como recebida no momento em que ocorreu');
+    return;
+  }
+  if(r.certeza!==undefined){
+    // GATE 2 — novo modelo: atualiza o MESMO evento lógico (nunca cria uma
+    // segunda receita, seção 24). recorrente (salário): estado por mês em
+    // recebidoPorMes; evento único: estado/dataRecebimento no topo do objeto.
+    // GATE 2.2 (seção 15/16) — DESMARCAR (recebido → previsto) continua
+    // instantâneo aqui, sem precisar de data. MARCAR como recebido (previsto
+    // → recebido) precisa da data REAL de recebimento, que pode ser
+    // diferente de hoje (lançamento retroativo) — nunca forçar a data atual
+    // sem dar chance de o usuário informar a data real; isso agora abre um
+    // modal de confirmação (openConfirmarReceitaRecebidaModal) em vez de
+    // gravar direto.
+    if(r.recorrencia){
+      const k=mesKey(currentMonth,currentYear);
+      const jaRecebida=r.recebidoPorMes&&r.recebidoPorMes[k]&&r.recebidoPorMes[k].estado==='recebido';
+      if(jaRecebida){
+        delete r.recebidoPorMes[k];
+        scheduleSave();renderReceitas();renderDashboard();
+        toast('Voltou para prevista');
+        return;
+      }
+      openConfirmarReceitaRecebidaModal(recId);
+      return;
+    }
+    if(r.estado==='recebido'){
+      r.estado='previsto'; r.dataRecebimento=null;
+      scheduleSave();renderReceitas();renderDashboard();
+      toast('Voltou para prevista');
+      return;
+    }
+    openConfirmarReceitaRecebidaModal(recId);
+    return;
+  }
+  // Legado — comportamento inalterado (seção 9 do Gate 2.2: sem
+  // granularidade de data real nesse modelo, nunca inventar uma).
   if(!r.recebidaMeses) r.recebidaMeses={};
   const k=mesKey(currentMonth,currentYear);
   r.recebidaMeses[k]=!r.recebidaMeses[k];
   scheduleSave();renderReceitas();renderDashboard();
   toast(r.recebidaMeses[k]?'✓ Marcada como recebida — entra no caixa!':'Voltou para prevista');
+}
+
+// GATE 2.2 (seção 15) — modal de confirmação com a data real de recebimento
+// editável: sugere hoje como default (a maioria dos casos é "acabei de
+// receber"), mas o usuário pode alterar pra uma data passada (lançamento
+// retroativo) ou de outro mês antes de confirmar — nunca é forçado a aceitar
+// a data de hoje. Usado tanto pra salário recorrente quanto pra evento único
+// (mesma necessidade, mesmo bug — seção 15 cita salário como exemplo, mas o
+// código de toggleReceitaRecebida era idêntico nos dois ramos).
+function openConfirmarReceitaRecebidaModal(recId){
+  const r=state.receitas.find(x=>x.id===recId); if(!r) return;
+  const hoje=new Date();
+  const hojeISO=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  document.getElementById('modalTitle').textContent='Confirmar Recebimento';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Informe a data em que o dinheiro efetivamente entrou — pode ser diferente de hoje (lançamento retroativo) e de mês diferente da competência.</div>
+    <div class="form-grid">
+      <div class="form-group full"><label>Data real de recebimento</label><input type="date" id="confRecDataRecebimento" value="${hojeISO}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarReceitaRecebidaComData('${recId}')">Confirmar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarReceitaRecebidaComData(recId){
+  const r=state.receitas.find(x=>x.id===recId); if(!r) return;
+  const dataReal=document.getElementById('confRecDataRecebimento')?.value;
+  // Seção 17 — data inválida nunca produz impacto de caixa: bloqueia antes
+  // de tocar em qualquer coisa (um <input type="date"> já normaliza a maior
+  // parte dos formatos malformados pra string vazia, que também é rejeitada
+  // aqui).
+  if(!isValidISODateString(dataReal)){ toast('Informe uma data válida'); return; }
+  if(r.recorrencia){
+    if(!r.recebidoPorMes) r.recebidoPorMes={};
+    const k=mesKey(currentMonth,currentYear);
+    r.recebidoPorMes[k]={estado:'recebido',dataRecebimento:dataReal};
+  } else {
+    r.estado='recebido'; r.dataRecebimento=dataReal;
+  }
+  scheduleSave();closeModal();renderReceitas();renderDashboard();
+  toast('✓ Marcada como recebida — entra no caixa na data informada!');
 }
 
 function toggleParcelaReceita(recId, parcelaIdx){
@@ -3141,10 +4229,35 @@ function toggleParcelaReceita(recId, parcelaIdx){
   scheduleSave();renderReceitas();renderDashboard();
   toast(r.parcelas[parcelaIdx].recebida?'Parcela marcada como recebida — entra no caixa!':'Parcela voltou para prevista');
 }
-function delReceita(id){state.receitas=state.receitas.filter(r=>r.id!==id);scheduleSave();renderReceitas();toast('Receita removida');}
+function delReceita(id){
+  const r=state.receitas.find(x=>x.id===id);
+  // GATE 3 (seção 38) — nunca apaga silenciosamente uma receita derivada do
+  // escritório: ela representa histórico financeiro (um repasse já
+  // realizado, ou um previsto vinculado a um recebível ainda existente).
+  if(r && r.origem && r.origem.startsWith('office_')){
+    toast('Esta receita vem do Caixa do Escritório — exclua/cancele o recebível ou repasse de origem na aba Escritório');
+    return;
+  }
+  state.receitas=state.receitas.filter(r=>r.id!==id);scheduleSave();renderReceitas();toast('Receita removida');
+}
 
 function openEditReceita(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  // GATE 3 (seção 37) — receita derivada do escritório: editar livremente
+  // aqui faria divergir do evento de origem sem aviso. Mostra um aviso
+  // explícito em vez de construir permissões complexas.
+  if(r.origem && r.origem.startsWith('office_')){
+    document.getElementById('modalTitle').textContent='Receita derivada do Caixa do Escritório';
+    document.getElementById('modalBody').innerHTML=`
+      <div class="info-box">Esta receita (<strong>${esc(r.nome||'')}</strong>, ${fmtBRL(r.valor||0)}) foi gerada automaticamente a partir do Caixa do Escritório e está vinculada a um evento lá (<code>${esc(r.officeTransferId||'')}</code>). Edite o recebível/repasse de origem na aba <strong>Caixa do Escritório</strong> para alterar valor ou data — editar só o lado pessoal faria os dois lados divergirem silenciosamente.</div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-primary" onclick="closeModal();navigate('escritorio')">Ir para o Caixa do Escritório</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Fechar</button>
+      </div>`;
+    document.getElementById('modalOverlay').classList.add('open');
+    return;
+  }
+  if(r.certeza!==undefined) return openEditReceitaNovoModelo(id);
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Presente / Repasse',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
@@ -3185,6 +4298,94 @@ function saveEditReceita(id){
   scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
 }
 
+// GATE 2 — edição de receita do novo modelo (certeza!==undefined). Nunca
+// aplicado a registros legados: abrir uma receita legada continua chamando
+// exatamente o modal/salvamento acima, sem ganhar `certeza` nem `estado` —
+// editar um campo não-temporal de uma receita antiga não a "promove" pro
+// novo modelo (mesmo princípio do Gate 1 pra despesas legadas).
+function openEditReceitaNovoModelo(id){
+  const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  const contaOpts = state.contas.length
+    ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
+      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+    : `<option value="">— Nenhuma conta cadastrada —</option>`;
+  document.getElementById('modalTitle').textContent='Editar Receita';
+  if(r.recorrencia){
+    document.getElementById('modalBody').innerHTML=`
+      <div class="info-box" style="margin-bottom:14px">Salário recorrente (novo modelo) — recorrência: última sexta-feira do mês. O recebimento de cada competência é controlado pelo botão Prevista/Recebida na lista de Receitas, não aqui.</div>
+      <div class="form-grid">
+        <div class="form-group full"><label>Nome</label><input type="text" id="eRecNome2" value="${esc(r.nome||'')}"></div>
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor2" value="${r.valor}" min="0" step="0.01"></div>
+        <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      </div>`;
+  } else {
+    document.getElementById('modalBody').innerHTML=`
+      <div class="form-grid">
+        <div class="form-group full"><label>Nome</label><input type="text" id="eRecNome2" value="${esc(r.nome||'')}"></div>
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor2" value="${r.valor}" min="0" step="0.01"></div>
+        <div class="form-group"><label>Certeza</label>
+          <select id="eRecCerteza2">
+            <option value="contratado" ${r.certeza==='contratado'?'selected':''}>Contratado</option>
+            <option value="potencial" ${r.certeza==='potencial'?'selected':''}>Potencial</option>
+          </select>
+        </div>
+        <div class="form-group"><label>Situação</label>
+          <select id="eRecEstado2" onchange="onERecEstado2Change()">
+            <option value="previsto" ${r.estado==='previsto'?'selected':''}>Prevista</option>
+            <option value="recebido" ${r.estado==='recebido'?'selected':''}>Recebida</option>
+            <option value="cancelado" ${r.estado==='cancelado'?'selected':''}>Cancelada</option>
+          </select>
+        </div>
+        <div class="form-group full" id="eRecDataPrevista2Group"><label>Data prevista</label><input type="date" id="eRecDataPrevista2" value="${r.dataPrevista||''}"></div>
+        <div class="form-group full" id="eRecDataRecebimento2Group" style="${r.estado==='recebido'?'':'display:none'}"><label>Data em que caiu na conta</label><input type="date" id="eRecDataRecebimento2" value="${r.dataRecebimento||''}"></div>
+        <div class="form-group full"><label>Competência (mês/ano de referência — não é a data de caixa)</label>
+          <div style="display:flex;gap:8px">
+            <select id="eRecCompMes2" style="flex:1">${MONTHS.map((m,i)=>`<option value="${i+1}" ${(r.competenciaMes||r.mes)===i+1?'selected':''}>${m}</option>`).join('')}</select>
+            <input type="number" id="eRecCompAno2" value="${r.competenciaAno||r.ano}" min="2020" max="2040" style="flex:1">
+          </div>
+        </div>
+        <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:20px">
+        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      </div>`;
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function onERecEstado2Change(){
+  const estado=document.getElementById('eRecEstado2')?.value;
+  const grp=document.getElementById('eRecDataRecebimento2Group');
+  if(grp) grp.style.display=(estado==='recebido')?'block':'none';
+}
+function saveEditReceitaNovoModelo(id){
+  const r=state.receitas.find(x=>x.id===id);if(!r)return;
+  if(!r.recorrencia&&document.getElementById('eRecEstado2').value==='recebido'&&
+    !isValidISODateString(document.getElementById('eRecDataRecebimento2').value)){
+    toast('Informe a data real de recebimento'); return;
+  }
+  r.nome=document.getElementById('eRecNome2').value.trim();
+  r.valor=parseFloat(document.getElementById('eRecValor2').value)||0;
+  const contaSel=document.getElementById('eRecConta2')?.value;
+  r.conta=contaSel!==undefined?(contaSel||null):(r.conta||null);
+  if(!r.recorrencia){
+    // Evento único: continua sendo o MESMO evento lógico — nunca cria uma
+    // segunda receita ao transicionar previsto -> recebido (seção 24).
+    r.certeza=document.getElementById('eRecCerteza2').value;
+    r.estado=document.getElementById('eRecEstado2').value;
+    r.dataPrevista=document.getElementById('eRecDataPrevista2').value||null;
+    r.dataRecebimento=r.estado==='recebido'?(document.getElementById('eRecDataRecebimento2').value||r.dataRecebimento||null):null;
+    r.competenciaMes=parseInt(document.getElementById('eRecCompMes2').value);
+    r.competenciaAno=parseInt(document.getElementById('eRecCompAno2').value);
+    r.mes=r.competenciaMes; r.ano=r.competenciaAno; // mantém mes/ano em sincronia pra qualquer leitura legada desses campos
+  }
+  scheduleSave();closeModal();renderReceitas();toast('Receita atualizada!');
+}
+
 // ════════════════════════════════════════════════
 // DESPESAS
 // ════════════════════════════════════════════════
@@ -3207,6 +4408,15 @@ function populateDespForma(){
     contaSel.innerHTML = state.contas.length
       ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
+  }
+  // Data da compra: preenche com a data real de hoje por padrão (editável) —
+  // toda despesa nova passa a ter uma data real (ver addDespesa()). onCartaoChange(),
+  // logo abaixo, pode ajustar o mês/ano dela se sugerir um Mês Início diferente
+  // (fluxo de planejar uma fatura futura navegando o Dashboard adiante).
+  const dataCompraEl=document.getElementById('despDataCompra');
+  if(dataCompraEl){
+    const hoje=new Date();
+    dataCompraEl.value=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
   }
   onCartaoChange();
   currentSplitRows=[];
@@ -3254,6 +4464,7 @@ function onCartaoChange(){
     const def=getDespesaDefaultMes(cartaoId);
     document.getElementById('despMes').value=def.mes;
     document.getElementById('despAno').value=def.ano;
+    syncDespDataCompraMesAno(def.mes,def.ano);
   }
   updateFaturaPreview();
 }
@@ -3343,8 +4554,21 @@ function addDespesa(){
   const conta=isDinheiro?(document.getElementById('despConta')?.value||''):null;
   const valor=parseFloat(document.getElementById('despValor').value);
   const parcelas=parseInt(document.getElementById('despParcelas').value)||1;
-  const mesI=parseInt(document.getElementById('despMes').value);
-  const anoI=parseInt(document.getElementById('despAno').value);
+  // dataCompra é a fonte primária pra despesas NOVAS (mesInicio/anoInicio são
+  // derivados dela, nunca lidos direto dos selects, pra nunca divergir
+  // silenciosamente — ver seção 7 do FINFLOW_FINANCIAL_ENGINE_AUDIT.md). O
+  // campo é preenchido automaticamente com a data de hoje em populateDespForma()
+  // e mantido em sincronia com Mês/Ano Início pelos handlers on*Change acima —
+  // só fica vazio se o próprio input de data falhar, daí o fallback abaixo.
+  const dataCompraRaw=document.getElementById('despDataCompra')?.value||'';
+  let mesI,anoI,dataCompra=null;
+  const partesData=dataCompraRaw.split('-').map(Number);
+  if(dataCompraRaw && partesData[0] && partesData[1]){
+    dataCompra=dataCompraRaw; anoI=partesData[0]; mesI=partesData[1];
+  } else {
+    mesI=parseInt(document.getElementById('despMes').value);
+    anoI=parseInt(document.getElementById('despAno').value);
+  }
   const fixa=document.getElementById('despFixa').checked;
   const diaVencimento=(isDinheiro&&fixa)?(parseInt(document.getElementById('despDiaVencimento')?.value)||null):null;
   const debitoAutomatico=(isDinheiro&&fixa)?!!document.getElementById('despDebitoAutomatico')?.checked:false;
@@ -3360,7 +4584,7 @@ function addDespesa(){
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
   const split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
-  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,fixa,diaVencimento,debitoAutomatico,pagoMeses,split,repasses:{},createdAt:uid()});
+  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta,valor,parcelas,mesInicio:mesI,anoInicio:anoI,dataCompra,fixa,diaVencimento,debitoAutomatico,pagoMeses,split,repasses:{},createdAt:uid()});
   aplicarDebitosAutomaticos(); // se o dia já passou nesse mês, já nasce dada como paga
   scheduleSave();renderDespesas();toast('Despesa adicionada!');
   document.getElementById('despDesc').value='';document.getElementById('despValor').value='';
@@ -3597,6 +4821,12 @@ function openEditDespesa(id){
         <select id="eDespMes">${MONTHS.map((m,i)=>`<option value="${i+1}" ${d.mesInicio===i+1?'selected':''}>${m}</option>`).join('')}</select>
       </div>
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
+      <div class="form-group full" id="eDespDataCompraGroup">
+        <label>Data da compra</label>
+        <input type="date" id="eDespDataCompra" value="${d.dataCompra||''}" onchange="eOnDataCompraChange('${id}')">
+        ${!d.dataCompra?'<div style="font-size:10px;color:var(--muted);margin-top:3px">Lançamento antigo, sem data exata registrada — deixe em branco pra manter o comportamento de sempre (mês da compra + 1 pro cartão). Preencher uma data real pode mudar em qual fatura essa compra aparece; o app avisa antes de aplicar.</div>':''}
+        <div id="eDespDataCompraWarn" style="display:none"></div>
+      </div>
       <div class="form-group full" id="eDespIgnorarGroup" style="display:${(d.parcelas||1)>1?'block':'none'}">
         <div class="checkbox-row"><input type="checkbox" id="eDespIgnorarCheck" style="width:auto" ${d.ignorarAntes?'checked':''} onchange="eOnIgnorarChange()"><label for="eDespIgnorarCheck">Compra antiga — desconsiderar parcelas anteriores a um mês (já pagas antes de eu usar o app)</label></div>
         <div id="eDespIgnorarFields" style="display:${d.ignorarAntes?'flex':'none'};gap:10px;margin-top:8px">
@@ -3636,6 +4866,10 @@ function openEditDespesa(id){
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
   if(hasSplit) eRenderSplitRows();
+  // Reabrir o modal sempre começa "sem mudança pendente" na Data da compra —
+  // só fica bloqueado depois que o usuário efetivamente alterar esse campo
+  // pra algo que mude a competência da fatura (ver eOnDataCompraChange).
+  window._eDespDataCompraConfirmado=true;
 }
 function eOnDespDivididaChange(){
   const checked=document.getElementById('eDespDividida').checked;
@@ -3699,8 +4933,46 @@ function eOnCartaoChange(){
   const debitoAutoGroup=document.getElementById('eDespDebitoAutoGroup');
   if(debitoAutoGroup) debitoAutoGroup.style.display=(isDinheiro&&fixa)?'flex':'none';
 }
+// Roda quando o usuário mexe na Data da compra de uma despesa existente.
+// Compara a competência de fatura ATUAL (com o dataCompra salvo, ou legado se
+// nunca teve) com a que resultaria da NOVA data digitada — se mudar, exige
+// confirmação explícita antes de deixar salvar (nunca corrige silenciosamente
+// uma fatura histórica). Sem cartão de crédito envolvido, não há fatura pra
+// mudar — libera direto.
+function eOnDataCompraChange(id){
+  const d=state.despesas.find(x=>x.id===id); if(!d) return;
+  const warnEl=document.getElementById('eDespDataCompraWarn');
+  if(!warnEl) return;
+  const novaData=document.getElementById('eDespDataCompra')?.value||null;
+  const cartaoId=document.getElementById('eDespCartao')?.value||d.cartao;
+  if(!isCartaoDeCredito(cartaoId)){
+    warnEl.style.display='none'; window._eDespDataCompraConfirmado=true; return;
+  }
+  const mes=parseInt(document.getElementById('eDespMes')?.value)||d.mesInicio;
+  const ano=parseInt(document.getElementById('eDespAno')?.value)||d.anoInicio;
+  const cartaoObj=state.cards.find(c=>c.id===cartaoId);
+  const competenciaAtual=getCompetenciaFatura(d.dataCompra,cartaoObj,d.mesInicio,d.anoInicio);
+  const competenciaNova=getCompetenciaFatura(novaData,cartaoObj,mes,ano);
+  const mudou = (novaData||null)!==(d.dataCompra||null) &&
+    (competenciaAtual.mes!==competenciaNova.mes || competenciaAtual.ano!==competenciaNova.ano);
+  if(mudou){
+    window._eDespDataCompraConfirmado=false;
+    warnEl.style.display='block';
+    warnEl.innerHTML=`<div class="alert alert-warn" style="margin-top:8px">⚠️ Isso muda a fatura dessa compra de <strong>${MONTHS[competenciaAtual.mes-1]} ${competenciaAtual.ano}</strong> para <strong>${MONTHS[competenciaNova.mes-1]} ${competenciaNova.ano}</strong>. Se a fatura antiga já foi paga ou tem ajuste manual, isso pode desalinhar o histórico.
+      <div class="checkbox-row" style="margin-top:8px"><input type="checkbox" id="eDespDataCompraConfirma" style="width:auto" onchange="window._eDespDataCompraConfirmado=this.checked"><label for="eDespDataCompraConfirma">Entendi, quero mudar mesmo assim</label></div>
+    </div>`;
+  } else {
+    warnEl.style.display='none';
+    window._eDespDataCompraConfirmado=true;
+  }
+}
 function saveEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
+  const novaDataCompra=document.getElementById('eDespDataCompra')?.value||null;
+  if(window._eDespDataCompraConfirmado===false){
+    toast('Confirme a mudança de fatura antes de salvar (veja o aviso na Data da compra)');
+    return;
+  }
   d.desc=document.getElementById('eDespDesc').value.trim();
   d.cat=document.getElementById('eDespCat').value;
   d.subcat=document.getElementById('eDespSubcat').value;
@@ -3712,8 +4984,19 @@ function saveEditDespesa(id){
   d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
   const ignorarCheck=document.getElementById('eDespIgnorarCheck')?.checked;
   d.ignorarAntes=(ignorarCheck&&d.parcelas>1)?{mes:parseInt(document.getElementById('eDespIgnorarMes').value),ano:parseInt(document.getElementById('eDespIgnorarAno').value)}:null;
-  d.mesInicio=parseInt(document.getElementById('eDespMes').value);
-  d.anoInicio=parseInt(document.getElementById('eDespAno').value);
+  d.dataCompra=novaDataCompra;
+  if(novaDataCompra){
+    // dataCompra é a fonte primária assim que existir — mesInicio/anoInicio
+    // passam a ser sempre derivados dela, nunca lidos direto dos selects
+    // (evita os dois campos divergirem silenciosamente, ver seção 7 da auditoria).
+    const partes=novaDataCompra.split('-').map(Number);
+    d.mesInicio=partes[1]; d.anoInicio=partes[0];
+  } else {
+    // Sem data real (registro continua/volta a ser legado): Mês/Ano Início
+    // seguem exatamente como o formulário sempre permitiu editar.
+    d.mesInicio=parseInt(document.getElementById('eDespMes').value);
+    d.anoInicio=parseInt(document.getElementById('eDespAno').value);
+  }
   d.fixa=document.getElementById('eDespFixa').checked;
   d.diaVencimento=(isDinheiro&&d.fixa)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
   d.debitoAutomatico=(isDinheiro&&d.fixa)?!!document.getElementById('eDespDebitoAutomatico')?.checked:false;
@@ -3732,13 +5015,18 @@ function renderParcelamentos(){
   if(!parceled.length){document.getElementById('parcelamentosList').innerHTML='<div class="empty-state">Nenhum parcelamento cadastrado</div>';return;}
   let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Total</th><th>Parcela</th><th>Início</th><th>Progresso</th><th>Valor/x</th><th></th></tr></thead><tbody>';
   parceled.forEach(d=>{
-    // Progresso usa o mesmo deslocamento de fatura (cartão = +1 mês) pra bater com o Dashboard.
-    const roll=isCartaoDeCredito(d.cartao)?1:0;
-    const {mes:mIni,ano:yIni}=addMonths(d.mesInicio,d.anoInicio,roll);
+    // Progresso usa a mesma competência de fatura que o resto do app (ver
+    // getCompetenciaFatura) — pra bater com o Dashboard e com Faturas dos Cartões.
+    const card=state.cards.find(c=>c.id===d.cartao);
+    let mIni,yIni;
+    if(isCartaoDeCredito(d.cartao)){
+      ({mes:mIni,ano:yIni}=getCompetenciaFatura(d.dataCompra,card,d.mesInicio,d.anoInicio));
+    } else {
+      mIni=d.mesInicio; yIni=d.anoInicio;
+    }
     let cp=0;
     for(let i=0;i<d.parcelas;i++){let m=(mIni-1)+i,y=yIni+Math.floor(m/12),mo=(m%12)+1;if(y<currentYear||(y===currentYear&&mo<=currentMonth))cp=i+1;}
     const pct=Math.min(100,(cp/d.parcelas)*100).toFixed(0);
-    const card=state.cards.find(c=>c.id===d.cartao);
     html+=`<tr>
       <td>${esc(d.desc)}<br><span style="font-size:11px;color:${card?.color||'var(--muted)'}">${esc(card?.name||d.cartao)}</span></td>
       <td class="mono">${fmtBRL(d.valor)}</td>
@@ -4276,6 +5564,20 @@ function calcSaldoConta(contaId){
     if(r.conta!==contaId) return;
     if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
       r.parcelas.forEach(p=>{ if(p.recebida) saldo+=(p.valor||0); });
+    } else if(r.certeza!==undefined){
+      // GATE 2 — novo modelo semântico: só entra no caixa real quando
+      // efetivamente recebido (estado/recebidoPorMes) — nunca por previsão,
+      // certeza ou competência (regra absoluta de caixa real, seção 6).
+      // GATE 2.1 (seção 6/12): exige dataRecebimento válida — sem ela, não
+      // existe impacto de caixa determinável, e o motor não pode inventar
+      // uma data (SALARY_CASH_INV_01). Cada competência entra no máximo uma
+      // vez, sem depender de qual mês está sendo consultado (calcSaldoConta
+      // não tem corte temporal — ver calcSaldoContaAte pra isso).
+      if(r.recorrencia){
+        Object.keys(r.recebidoPorMes||{}).forEach(mk=>{ if(getRecurringRevenueCashDate(r,mk)) saldo+=(r.valor||0); });
+      } else if(r.estado==='recebido'&&isValidISODateString(r.dataRecebimento)){
+        saldo+=(r.valor||0);
+      }
     } else {
       // recorrente ou única: soma os meses marcados como recebidos
       Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk]) saldo+=(r.valor||0); });
@@ -4336,6 +5638,28 @@ function calcSaldoContaAte(contaId,mes,ano){
     if(r.conta!==contaId) return;
     if(r.tipo==='extra'&&Array.isArray(r.parcelas)){
       r.parcelas.forEach(p=>{ if(p.recebida && mesKey(p.mes,p.ano)<=limite) saldo+=(p.valor||0); });
+    } else if(r.certeza!==undefined){
+      // GATE 2 — mesmo corte temporal do modelo legado, mas usando a data
+      // real de recebimento em vez de recebidaMeses.
+      // GATE 2.1 (seção 2/3/7) — CORREÇÃO: a auditoria externa encontrou que
+      // esta comparação usava `mk` (a chave de COMPETÊNCIA da ocorrência em
+      // recebidoPorMes) como se fosse o mês do IMPACTO DE CAIXA. São coisas
+      // diferentes — uma competência de setembro pode ter dataRecebimento
+      // em outubro (recebimento atrasado) ou até em agosto (recebimento
+      // antecipado). O corte temporal tem que usar o mês da dataRecebimento
+      // real, nunca a chave de competência. getRecurringRevenueCashDate
+      // também garante que uma ocorrência sem dataRecebimento válida nunca
+      // entra (nenhuma data é inventada — SALARY_CASH_INV_01).
+      if(r.recorrencia){
+        Object.keys(r.recebidoPorMes||{}).forEach(mk=>{
+          const cashDate=getRecurringRevenueCashDate(r,mk);
+          if(cashDate && cashDate.slice(0,7)<=limite) saldo+=(r.valor||0);
+        });
+      } else if(r.estado==='recebido'&&isValidISODateString(r.dataRecebimento)){
+        const dataCaixa=r.dataRecebimento;
+        const mk=dataCaixa?dataCaixa.slice(0,7):null;
+        if(mk&&mk<=limite) saldo+=(r.valor||0);
+      }
     } else {
       Object.keys(r.recebidaMeses||{}).forEach(mk=>{ if(r.recebidaMeses[mk] && mk<=limite) saldo+=(r.valor||0); });
     }
@@ -5950,13 +7274,14 @@ function openResgatarCofrinho(cofrinhoId){
   document.getElementById('modalTitle').textContent='Resgatar do '+nomeCofr;
   const mesOpts=MONTHS.map((m,i)=>'<option value="'+(i+1)+'"'+(i+1===currentMonth?' selected':'')+'>'+m+'</option>').join('');
   document.getElementById('modalBody').innerHTML=
-    '<div class="info-box" style="margin-bottom:14px">Saldo disponível: <strong style="color:var(--accent2)">'+fmtBRL(saldoDisp)+'</strong><br>O valor resgatado entra como receita <strong>não tributável</strong>, já creditada na conta escolhida.</div>'+
+    '<div class="info-box" style="margin-bottom:14px">Saldo disponível: <strong style="color:var(--accent2)">'+fmtBRL(saldoDisp)+'</strong><br>O valor volta pra sua conta disponível — <strong>não é receita</strong>, é o mesmo dinheiro que já era seu, só saindo do patrimônio reservado.</div>'+
     '<div class="form-grid">'+
       '<div class="form-group full"><label>Valor a resgatar (R$)</label><input type="number" id="resgateValor" value="'+saldoDisp.toFixed(2)+'" min="0.01" step="0.01"></div>'+
       '<div class="form-group full"><label>Conta bancária de destino</label><select id="resgateConta">'+contaOpts+'</select></div>'+
-      '<div class="form-group"><label>Mês de entrada no caixa</label><select id="resgatesMes">'+mesOpts+'</select></div>'+
+      '<div class="form-group"><label>Mês de referência</label><select id="resgatesMes">'+mesOpts+'</select></div>'+
       '<div class="form-group"><label>Ano</label><input type="number" id="resgateAno" value="'+currentYear+'" min="2020" max="2040"></div>'+
-      '<div class="form-group full"><label>Motivo (opcional)</label><input type="text" id="resgateObs" placeholder="Ex: Cobertura de déficit de Julho"></div>'+
+      '<div class="form-group full"><label>Motivo</label><select id="resgateMotivo"><option value="planejado">Resgate planejado</option><option value="cobertura_caixa">Cobertura de caixa (déficit)</option><option value="outro" selected>Outro</option></select></div>'+
+      '<div class="form-group full"><label>Observação (opcional)</label><input type="text" id="resgateObs" placeholder="Ex: Cobertura de déficit de Julho"></div>'+
     '</div>'+
     '<div style="display:flex;gap:10px;margin-top:20px">'+
       '<button class="btn btn-warn" onclick="confirmarResgateCofrinho(\'' + cofrinhoId + '\')">↩ Confirmar resgate</button>'+
@@ -5971,20 +7296,28 @@ function confirmarResgateCofrinho(cofrinhoId){
   const ano=parseInt(document.getElementById('resgateAno').value);
   const contaId=document.getElementById('resgateConta')?.value;
   const obs=document.getElementById('resgateObs').value.trim();
+  const motivo=document.getElementById('resgateMotivo')?.value||'outro';
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   if(!contaId){toast('Cadastre e selecione a conta bancária de destino');return;}
   const saldoDisp=getSaldoCofrinho(cofrinhoId);
   if(valor>saldoDisp){toast('Saldo insuficiente (disponível: '+fmtBRL(saldoDisp)+')');return;}
   const cofr=state.cofrinhos.find(x=>x.id===cofrinhoId);
   const nomeCofr=cofr?cofr.name:'';
-  const movId=uid(); // ID compartilhado entre a movimentação do cofrinho e a receita gerada, pra exclusão exata
-  state.movimentacoesCofrinhos.push({id:movId,cofrinhoId,valor,mes,ano,obs:obs||'Resgate '+nomeCofr,tipo:'resgate',createdAt:uid()});
-  // Já entra creditado e recebido na conta escolhida — é um movimento imediato e real.
-  // tipo:'resgate' (não 'repasse') — é dinheiro que já era seu, não uma nova
-  // entrada operacional; tributavel:false garante que fica fora da base de 10%
-  // mesmo sem depender do flag isRepasse (que é conceito de terceiros).
-  state.receitas.push({id:uid(),tipo:'resgate',nome:'Resgate do Cofrinho: '+nomeCofr+(obs?' - '+obs:''),valor,mes,ano,conta:contaId,recorrente:false,isResgate:true,tributavel:false,cofrinhoMovId:movId,recebidaMeses:{[mesKey(mes,ano)]:true},createdAt:uid()});
+  const movId=uid(); // ID compartilhado entre a movimentação do cofrinho e o crédito na conta, pra exclusão exata
+  // GATE 2 (seção 15) — CORREÇÃO CONCEITUAL: resgate de cofrinho NÃO é
+  // receita. É patrimônio reservado voltando pra caixa disponível — mesma
+  // ideia de uma transferência interna, não uma nova entrada econômica.
+  // Pra eventos NOVOS (a partir daqui), o impacto de caixa é uma
+  // movimentacoesContas positiva, no mesmo padrão simétrico do depósito
+  // (que já debitava direto, nunca como despesa) — nunca mais um push em
+  // state.receitas. Registros ANTIGOS (tipo:'resgate' já existentes em
+  // state.receitas, de antes deste Gate) NÃO são migrados nem
+  // reinterpretados — continuam exatamente como estão (ver migrateState,
+  // isRevenueRealized só olha `certeza`, que esses registros nunca têm).
+  state.movimentacoesCofrinhos.push({id:movId,cofrinhoId,valor,mes,ano,obs:obs||'Resgate '+nomeCofr,tipo:'resgate',motivoResgate:motivo,createdAt:uid()});
+  state.movimentacoesContas.push({id:movId,contaId,valor:valor,data:new Date().toISOString(),obs:'Resgate do cofrinho: '+nomeCofr+(obs?' — '+obs:'')});
   scheduleSave();closeModal();renderCofrinho();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='contas') renderContas();
   if(mes===currentMonth&&ano===currentYear) renderDashboard();
   toast('Resgate de '+fmtBRL(valor)+' registrado! Já creditado na conta.');
 }
@@ -6084,7 +7417,7 @@ function exportarRepassePessoaPDF(personId){
 // Relatório de caixa (balanço consolidado do mês)
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
-  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho'};
+  const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Presente/Repasse',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
   let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
   if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
@@ -6133,6 +7466,824 @@ function exportarAnalisePDF(){
       <tbody>${rows}</tbody>
     </table>`;
   exportarRelatorioPDF('Análise por Categoria', html);
+}
+
+// ════════════════════════════════════════════════
+// GATE 3 — CAIXA DO ESCRITÓRIO (ações que gravam state + UI)
+// As funções puras (calcSaldoOfficeConta, isOfficeRecebivelRealizado,
+// calculateOfficeDistribution, getFinancialCycle etc.) vivem perto do topo
+// do arquivo, junto das funções puras do Gate 2 — aqui só o que lê/escreve
+// DOM e as duas funções que criam o vínculo escritório↔pessoal.
+// ════════════════════════════════════════════════
+
+// Sincroniza (cria/atualiza/cancela) a receita pessoal + o repasse do
+// escritório derivados de UM recebível — idempotente por construção: usa um
+// id determinístico (officeTransferId='off_'+recebivelId), então rodar isso
+// de novo pro MESMO recebível nunca cria um segundo repasse/receita (seção
+// 36/48 do Gate 3, INV-O14/OP03/PJ). Só age em projetos 'contratado'
+// (PJ02/PJ05) e nunca inventa um percentual de repasse não configurado
+// (seção 17/18, OP01/OP04).
+function syncDerivedPersonalTransfer(recebivelId){
+  const recebivel=(state.office.recebiveis||[]).find(r=>r.id===recebivelId);
+  if(!recebivel) return;
+  const projeto=(state.office.projetos||[]).find(p=>p.id===recebivel.projetoId);
+  const officeTransferId='off_'+recebivelId;
+  const repasseExistente=(state.office.repasses||[]).find(rp=>rp.officeTransferId===officeTransferId);
+  const receitaExistente=state.receitas.find(r=>r.officeTransferId===officeTransferId);
+
+  // Recebível cancelado: invalida a previsão derivada, mas NUNCA cancela
+  // retroativamente um repasse/receita já efetivamente recebido (seção 34).
+  if(recebivel.estado==='cancelado'){
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+    return;
+  }
+  // Projeto ausente, potencial ou cancelado: nunca gera repasse automático
+  // (PJ02/PJ05) — só projeto 'contratado' pode.
+  if(!projeto || projeto.status!=='contratado'){
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+    return;
+  }
+
+  const distribuicao=calculateOfficeDistribution(recebivel);
+  const valorRepasse=distribuicao.porDestino.repasse_pessoal;
+  // Regra de repasse_pessoal ainda não configurada — NUNCA inventa um
+  // percentual (BLOCKED_DISTRIBUTION_RULE / DISTRIBUTION_RULES_CONFIGURATION_REQUIRED).
+  if(valorRepasse===null||valorRepasse===undefined||valorRepasse<=0){
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+    return;
+  }
+
+  const dataPrevista=recebivel.dataPrevista||recebivel.dataRecebimento||null;
+  if(repasseExistente){
+    if(repasseExistente.estado==='previsto'){
+      // Recebível mudou de valor/data: o repasse previsto acompanha a regra
+      // (OP04) — nunca sobrescreve um repasse já efetivamente realizado.
+      repasseExistente.estado='previsto';
+      repasseExistente.valor=valorRepasse;
+      repasseExistente.dataPrevista=dataPrevista;
+      if(receitaExistente && receitaExistente.estado==='previsto'){
+        receitaExistente.valor=valorRepasse;
+        receitaExistente.dataPrevista=dataPrevista;
+        const [ano,mes]=(dataPrevista||'').split('-').map(Number);
+        receitaExistente.competenciaMes=mes||receitaExistente.competenciaMes;
+        receitaExistente.competenciaAno=ano||receitaExistente.competenciaAno;
+        receitaExistente.mes=receitaExistente.competenciaMes; receitaExistente.ano=receitaExistente.competenciaAno;
+      }
+    }
+    // Se já 'recebido' (repasse efetivamente realizado), nunca é
+    // sobrescrito por um recálculo (seção 37 — editar na origem só antes
+    // de realizar; depois de realizado, é histórico).
+    return;
+  }
+  // Primeira vez: cria o repasse do lado do escritório e a receita
+  // correspondente do lado pessoal, já vinculados pelo mesmo officeTransferId.
+  const [ano,mes]=(dataPrevista||'').split('-').map(Number);
+  state.office.repasses.push({
+    id:uid(), tipo:'planejado', recebivelId, valor:valorRepasse, estado:'previsto',
+    dataPrevista, dataRecebimento:null, officeTransferId, createdAt:uid(),
+  });
+  state.receitas.push({
+    id:uid(), tipo:'repasse_escritorio', nome:'Repasse do Escritório'+(projeto?(' — '+projeto.nome):''),
+    valor:valorRepasse, certeza:'contratado', estado:'previsto', dataPrevista, dataRecebimento:null,
+    competenciaMes:mes||null, competenciaAno:ano||null, mes:mes||null, ano:ano||null, conta:null,
+    origem:'office_distribution', officeTransferId, createdAt:uid(),
+  });
+}
+
+// Efetiva um repasse previsto: Escritório -valor / Pessoal +valor, no MESMO
+// evento lógico dos dois lados (nunca cria uma segunda receita — seção
+// 22/OP09). Idempotente: chamar de novo sobre um repasse já 'recebido' não
+// faz nada (retorna false).
+function realizeOfficeTransfer(repasseId, dataReal, officeContaId, personalContaId){
+  const rep=(state.office.repasses||[]).find(r=>r.id===repasseId);
+  if(!rep || rep.estado==='recebido') return false;
+  rep.estado='recebido';
+  rep.dataRecebimento=dataReal;
+  state.office.movimentacoesContas.push({id:uid(),contaId:officeContaId,valor:-rep.valor,data:dataReal,obs:'Repasse ao financeiro pessoal',officeTransferId:rep.officeTransferId});
+  const receita=state.receitas.find(r=>r.officeTransferId===rep.officeTransferId);
+  if(receita){
+    receita.estado='recebido';
+    receita.dataRecebimento=dataReal;
+    receita.conta=personalContaId;
+  }
+  return true;
+}
+
+// Retirada extraordinária (seção 24-26 do Gate 3): escritório -valor /
+// pessoal +valor, IMEDIATA (não passa por um estado "previsto" — o usuário
+// só registra depois que já precisou do dinheiro) e SEMPRE identificável
+// separadamente de repasse planejado ou salário (nunca mascarada).
+function createExtraordinaryWithdrawal(valor, dataReal, officeContaId, personalContaId, obs){
+  if(!valor||valor<=0) return null;
+  const transferId=uid();
+  state.office.movimentacoesContas.push({id:uid(),contaId:officeContaId,valor:-valor,data:dataReal,obs:'Retirada extraordinária'+(obs?': '+obs:''),officeTransferId:transferId,tipoRetirada:'extraordinaria'});
+  const [ano,mes]=(dataReal||'').split('-').map(Number);
+  state.receitas.push({
+    id:uid(), tipo:'retirada_escritorio', nome:'Retirada Extraordinária do Escritório'+(obs?' — '+obs:''),
+    valor, certeza:'contratado', estado:'recebido', dataPrevista:dataReal, dataRecebimento:dataReal,
+    competenciaMes:mes||null, competenciaAno:ano||null, mes:mes||null, ano:ano||null, conta:personalContaId,
+    origem:'office_extraordinary_withdrawal', officeTransferId:transferId, createdAt:uid(),
+  });
+  return transferId;
+}
+
+let officeSubTab='projetos';
+function switchOfficeTab(tab){
+  officeSubTab=tab;
+  document.querySelectorAll('#escritorioSubnav [data-officetab]').forEach(b=>{
+    b.classList.toggle('btn-primary', b.dataset.officetab===tab);
+    b.classList.toggle('btn-ghost', b.dataset.officetab!==tab);
+  });
+  renderOfficeSubContent();
+}
+function renderOfficeSubContent(){
+  const fns={projetos:renderOfficeProjetosTab, recebiveis:renderOfficeRecebiveisTab, despesas:renderOfficeDespesasTab, reservas:renderOfficeReservasTab, repasses:renderOfficeRepassesTab, config:renderOfficeConfigTab};
+  (fns[officeSubTab]||renderOfficeProjetosTab)();
+}
+function renderEscritorio(){
+  renderEscritorioResumo();
+  document.querySelectorAll('#escritorioSubnav [data-officetab]').forEach(b=>{
+    b.classList.toggle('btn-primary', b.dataset.officetab===officeSubTab);
+    b.classList.toggle('btn-ghost', b.dataset.officetab!==officeSubTab);
+  });
+  renderOfficeSubContent();
+}
+
+function renderEscritorioResumo(){
+  const el=document.getElementById('escritorioResumo'); if(!el) return;
+  const off=state.office||{};
+  if(!off.contas.length && !off.projetos.length){
+    el.innerHTML=`<div class="info-box">Nenhuma conta ou projeto do escritório cadastrado ainda. Cadastre uma conta empresarial em "Contas &amp; Regras" e um projeto em "Projetos" para começar. O saldo do escritório nunca é somado ao seu caixa pessoal.</div>`;
+    return;
+  }
+  const saldoOperacional=getOfficeOperationalBalance();
+  const recebidoMes=getOfficeReceivedCash(currentMonth,currentYear);
+  const previstoMes=getOfficeReceivablesPrevistoTotal(currentMonth,currentYear);
+  const despesasMes=(off.despesas||[]).filter(d=>(d.data||'').slice(0,7)===mesKey(currentMonth,currentYear)).reduce((s,d)=>s+(d.valor||0),0);
+  const reservado=getOfficeReservedBalance();
+  const repassesPrevistoTotal=(off.repasses||[]).filter(r=>r.estado==='previsto').reduce((s,r)=>s+(r.valor||0),0);
+  const repassesRealizadoMes=(off.repasses||[]).filter(r=>r.estado==='recebido'&&(r.dataRecebimento||'').slice(0,7)===mesKey(currentMonth,currentYear)).reduce((s,r)=>s+(r.valor||0),0);
+  el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Saldo operacional</div><div class="item-row-meta">Contas do escritório</div></div><div class="item-row-val ${saldoOperacional>=0?'pos':'neg'}">${fmtBRL(saldoOperacional)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Recebíveis previstos</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val muted">${fmtBRL(previstoMes)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Recebido no período</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val pos">${fmtBRL(recebidoMes)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Despesas do escritório</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val neg">${fmtBRL(despesasMes)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Reservas empresariais</div><div class="item-row-meta">Fora do caixa operacional</div></div><div class="item-row-val muted">${fmtBRL(reservado)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Previsto p/ repasse</div><div class="item-row-meta">Ainda não transferido</div></div><div class="item-row-val muted">${fmtBRL(repassesPrevistoTotal)}</div></div>
+    <div class="item-row"><div class="item-row-info"><div class="item-row-name">Repassado no período</div><div class="item-row-meta">${MONTHS[currentMonth-1]}</div></div><div class="item-row-val pos">${fmtBRL(repassesRealizadoMes)}</div></div>
+  </div>`;
+}
+
+// ── Projetos ──
+function renderOfficeProjetosTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const statusLabel={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
+  const statusBadge={potencial:'badge-yellow',contratado:'badge-blue',concluido:'badge-ok',cancelado:'badge-red'};
+  const projetos=(state.office.projetos||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const rows=projetos.map(p=>{
+    const recebiveisDoProjeto=(state.office.recebiveis||[]).filter(r=>r.projetoId===p.id);
+    const totalRecebido=recebiveisDoProjeto.filter(isOfficeRecebivelRealizado).reduce((s,r)=>s+(r.valor||0),0);
+    return `<div class="item-row">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(p.nome)} <span class="badge ${statusBadge[p.status]||'badge-blue'}">${statusLabel[p.status]||p.status}</span></div>
+        <div class="item-row-meta">${esc(p.cliente||'—')} · Contrato: ${fmtBRL(p.valorContrato||0)} · Recebido: ${fmtBRL(totalRecebido)} · ${recebiveisDoProjeto.length} recebível(is)</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeProjeto('${p.id}')">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeProjeto('${p.id}')">🗑</button>
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhum projeto cadastrado ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Novo Projeto</div></div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Nome do projeto</label><input type="text" id="newProjNome" placeholder="Ex: Residência Silva"></div>
+          <div class="form-group full"><label>Cliente</label><input type="text" id="newProjCliente" placeholder="Ex: João Silva"></div>
+          <div class="form-group"><label>Valor do contrato (R$)</label><input type="number" id="newProjValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Status</label>
+            <select id="newProjStatus">
+              <option value="potencial">Potencial</option>
+              <option value="contratado">Contratado</option>
+              <option value="concluido">Concluído</option>
+              <option value="cancelado">Cancelado</option>
+            </select>
+          </div>
+          <div class="form-group full"><label>Data do contrato</label><input type="date" id="newProjData"></div>
+          <div class="form-group full"><label>Observações</label><input type="text" id="newProjObs" placeholder="opcional"></div>
+        </div>
+        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>.</div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeProjeto()">Adicionar Projeto</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Projetos Cadastrados</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeProjeto(){
+  const nome=document.getElementById('newProjNome').value.trim();
+  if(!nome){toast('Informe o nome do projeto');return;}
+  const cliente=document.getElementById('newProjCliente').value.trim();
+  const valorContrato=parseFloat(document.getElementById('newProjValor').value)||0;
+  const status=document.getElementById('newProjStatus').value;
+  const dataContrato=document.getElementById('newProjData').value||null;
+  const observacao=document.getElementById('newProjObs').value.trim();
+  state.office.projetos.push({id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid()});
+  scheduleSave();renderOfficeProjetosTab();renderEscritorioResumo();
+  toast('Projeto adicionado!');
+}
+function openEditOfficeProjeto(id){
+  const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
+  const statusLabel={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
+  document.getElementById('modalTitle').textContent='Editar Projeto';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Nome</label><input type="text" id="eProjNome" value="${esc(p.nome)}"></div>
+      <div class="form-group full"><label>Cliente</label><input type="text" id="eProjCliente" value="${esc(p.cliente||'')}"></div>
+      <div class="form-group"><label>Valor do contrato</label><input type="number" id="eProjValor" value="${p.valorContrato||0}" min="0" step="0.01"></div>
+      <div class="form-group"><label>Status</label>
+        <select id="eProjStatus">
+          ${['potencial','contratado','concluido','cancelado'].map(s=>`<option value="${s}" ${p.status===s?'selected':''}>${statusLabel[s]}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group full"><label>Data do contrato</label><input type="date" id="eProjData" value="${p.dataContrato||''}"></div>
+      <div class="form-group full"><label>Observações</label><input type="text" id="eProjObs" value="${esc(p.observacao||'')}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditOfficeProjeto('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function saveEditOfficeProjeto(id){
+  const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
+  const statusAntigo=p.status;
+  p.nome=document.getElementById('eProjNome').value.trim()||p.nome;
+  p.cliente=document.getElementById('eProjCliente').value.trim();
+  p.valorContrato=parseFloat(document.getElementById('eProjValor').value)||0;
+  p.status=document.getElementById('eProjStatus').value;
+  p.dataContrato=document.getElementById('eProjData').value||null;
+  p.observacao=document.getElementById('eProjObs').value.trim();
+  // Mudou de/para 'contratado': os repasses derivados dos recebíveis deste
+  // projeto precisam ser recalculados (podem passar a existir ou a ser
+  // cancelados, conforme PJ02/PJ05).
+  if(statusAntigo!==p.status){
+    (state.office.recebiveis||[]).filter(r=>r.projetoId===id).forEach(r=>syncDerivedPersonalTransfer(r.id));
+  }
+  scheduleSave();closeModal();renderOfficeProjetosTab();renderEscritorioResumo();toast('Projeto atualizado!');
+}
+function delOfficeProjeto(id){
+  const recebiveis=(state.office.recebiveis||[]).filter(r=>r.projetoId===id);
+  const temRealizado = recebiveis.some(isOfficeRecebivelRealizado) || (state.office.repasses||[]).some(rp=>recebiveis.some(r=>r.id===rp.recebivelId) && rp.estado==='recebido');
+  if(temRealizado){ toast('Este projeto tem recebíveis ou repasses já efetivamente recebidos e não pode ser excluído'); return; }
+  const idsRecebiveis=recebiveis.map(r=>r.id);
+  const transferIds=idsRecebiveis.map(rid=>'off_'+rid);
+  state.office.repasses=(state.office.repasses||[]).filter(rp=>!transferIds.includes(rp.officeTransferId));
+  state.receitas=state.receitas.filter(r=>!transferIds.includes(r.officeTransferId));
+  state.office.recebiveis=(state.office.recebiveis||[]).filter(r=>r.projetoId!==id);
+  state.office.projetos=(state.office.projetos||[]).filter(p=>p.id!==id);
+  scheduleSave();renderOfficeProjetosTab();renderEscritorioResumo();toast('Projeto removido');
+}
+
+// ── Recebíveis ──
+function renderOfficeRecebiveisTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const statusLabelProj={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
+  const projetoOpts = (state.office.projetos||[]).length
+    ? state.office.projetos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${statusLabelProj[p.status]||p.status})</option>`).join('')
+    : `<option value="">— Cadastre um projeto primeiro —</option>`;
+  const contaOpts = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const estadoLabel={previsto:'Previsto',recebido:'Recebido',cancelado:'Cancelado'};
+  const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
+  const recebiveis=(state.office.recebiveis||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const rows=recebiveis.map(r=>{
+    const projeto=(state.office.projetos||[]).find(p=>p.id===r.projetoId);
+    return `<div class="item-row ${r.estado==='recebido'?'pago':r.estado==='previsto'?'previsto':''}">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(r.descricao||'Recebível')} <span class="badge ${estadoBadge[r.estado]||'badge-blue'}">${estadoLabel[r.estado]||r.estado}</span></div>
+        <div class="item-row-meta">${esc(projeto?projeto.nome:'—')} · Previsto: ${r.dataPrevista||'—'}${r.dataRecebimento?' · Recebido: '+r.dataRecebimento:''}</div>
+      </div>
+      <div class="item-row-val ${r.estado==='recebido'?'pos':'muted'}">${fmtBRL(r.valor||0)}</div>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeRecebivel('${r.id}')">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeRecebivel('${r.id}')">🗑</button>
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhum recebível cadastrado ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Novo Recebível</div></div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Projeto</label><select id="newRecebProjeto">${projetoOpts}</select></div>
+          <div class="form-group full"><label>Descrição / parcela</label><input type="text" id="newRecebDesc" placeholder="Ex: Entrada, Parcela 2/3"></div>
+          <div class="form-group"><label>Valor (R$)</label><input type="number" id="newRecebValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Data prevista</label><input type="date" id="newRecebDataPrevista"></div>
+          <div class="form-group full"><label>Conta empresarial de destino</label><select id="newRecebConta">${contaOpts}</select></div>
+        </div>
+        <div class="info-box" style="margin-top:10px">Nasce como <strong>previsto</strong> — recebível previsto nunca entra no caixa real. Marque como recebido depois, com a data real.</div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeRecebivel()">Adicionar Recebível</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Recebíveis</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeRecebivel(){
+  const projetoId=document.getElementById('newRecebProjeto').value;
+  const descricao=document.getElementById('newRecebDesc').value.trim();
+  const valor=parseFloat(document.getElementById('newRecebValor').value);
+  const dataPrevista=document.getElementById('newRecebDataPrevista').value||null;
+  const contaDestino=document.getElementById('newRecebConta').value||null;
+  if(!projetoId){toast('Cadastre e selecione um projeto');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  const id=uid();
+  state.office.recebiveis.push({id,projetoId,descricao,valor,estado:'previsto',dataPrevista,dataRecebimento:null,contaDestino,createdAt:uid()});
+  syncDerivedPersonalTransfer(id);
+  scheduleSave();renderOfficeRecebiveisTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Recebível adicionado!');
+}
+function openEditOfficeRecebivel(id){
+  const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
+  const contaOpts = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}" ${r.contaDestino===c.id?'selected':''}>${esc(c.name)}</option>`).join('')
+    : `<option value="">— Nenhuma conta cadastrada —</option>`;
+  document.getElementById('modalTitle').textContent='Editar Recebível';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Descrição</label><input type="text" id="eRecebDesc" value="${esc(r.descricao||'')}"></div>
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecebValor" value="${r.valor}" min="0" step="0.01"></div>
+      <div class="form-group"><label>Estado</label>
+        <select id="eRecebEstado" onchange="onERecebEstadoChange()">
+          <option value="previsto" ${r.estado==='previsto'?'selected':''}>Previsto</option>
+          <option value="recebido" ${r.estado==='recebido'?'selected':''}>Recebido</option>
+          <option value="cancelado" ${r.estado==='cancelado'?'selected':''}>Cancelado</option>
+        </select>
+      </div>
+      <div class="form-group full"><label>Data prevista</label><input type="date" id="eRecebDataPrevista" value="${r.dataPrevista||''}"></div>
+      <div class="form-group full" id="eRecebDataRecebimentoGroup" style="${r.estado==='recebido'?'':'display:none'}"><label>Data em que caiu na conta</label><input type="date" id="eRecebDataRecebimento" value="${r.dataRecebimento||''}"></div>
+      <div class="form-group full"><label>Conta empresarial de destino</label><select id="eRecebConta">${contaOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditOfficeRecebivel('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function onERecebEstadoChange(){
+  const estado=document.getElementById('eRecebEstado')?.value;
+  const grp=document.getElementById('eRecebDataRecebimentoGroup');
+  if(grp) grp.style.display=(estado==='recebido')?'block':'none';
+}
+function saveEditOfficeRecebivel(id){
+  const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
+  r.descricao=document.getElementById('eRecebDesc').value.trim();
+  r.valor=parseFloat(document.getElementById('eRecebValor').value)||0;
+  r.estado=document.getElementById('eRecebEstado').value;
+  r.dataPrevista=document.getElementById('eRecebDataPrevista').value||null;
+  r.dataRecebimento=r.estado==='recebido'?(document.getElementById('eRecebDataRecebimento').value||r.dataRecebimento||null):null;
+  r.contaDestino=document.getElementById('eRecebConta').value||null;
+  syncDerivedPersonalTransfer(id);
+  scheduleSave();closeModal();renderOfficeRecebiveisTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Recebível atualizado!');
+}
+function delOfficeRecebivel(id){
+  const r=(state.office.recebiveis||[]).find(x=>x.id===id);
+  if(r && isOfficeRecebivelRealizado(r)){ toast('Este recebível já foi efetivamente recebido e não pode ser excluído — cancele-o se necessário, o histórico é preservado'); return; }
+  const officeTransferId='off_'+id;
+  const repasseVinculado=(state.office.repasses||[]).find(rp=>rp.officeTransferId===officeTransferId);
+  if(repasseVinculado && repasseVinculado.estado==='recebido'){ toast('Este recebível já gerou um repasse efetivamente realizado e não pode ser excluído'); return; }
+  state.office.repasses=(state.office.repasses||[]).filter(rp=>rp.officeTransferId!==officeTransferId);
+  state.receitas=state.receitas.filter(x=>x.officeTransferId!==officeTransferId);
+  state.office.recebiveis=(state.office.recebiveis||[]).filter(x=>x.id!==id);
+  scheduleSave();renderOfficeRecebiveisTab();renderEscritorioResumo();toast('Recebível removido');
+}
+
+// ── Despesas do escritório ──
+function renderOfficeDespesasTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const contaOpts = (state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const projetoOpts = `<option value="">— Sem projeto vinculado —</option>` + (state.office.projetos||[]).map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+  const despesas=(state.office.despesas||[]).slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const rows=despesas.map(d=>{
+    const projeto=(state.office.projetos||[]).find(p=>p.id===d.projetoId);
+    const conta=(state.office.contas||[]).find(c=>c.id===d.conta);
+    return `<div class="item-row">
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(d.descricao)}</div>
+        <div class="item-row-meta">${esc(d.categoria||'—')} · ${conta?esc(conta.name):'—'} · ${d.data||'—'}${projeto?' · '+esc(projeto.nome):''}</div>
+      </div>
+      <div class="item-row-val neg">${fmtBRL(d.valor||0)}</div>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeDespesa('${d.id}')">🗑</button>
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhuma despesa empresarial cadastrada ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Nova Despesa do Escritório</div></div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Descrição</label><input type="text" id="newODespDesc" placeholder="Ex: Impressão de projeto, software, renderização"></div>
+          <div class="form-group"><label>Categoria</label><input type="text" id="newODespCat" placeholder="Ex: Material, Software"></div>
+          <div class="form-group"><label>Valor (R$)</label><input type="number" id="newODespValor" placeholder="0,00" min="0" step="0.01"></div>
+          <div class="form-group"><label>Data</label><input type="date" id="newODespData" value="${new Date().toISOString().slice(0,10)}"></div>
+          <div class="form-group full"><label>Conta empresarial de origem</label><select id="newODespConta">${contaOpts}</select></div>
+          <div class="form-group full"><label>Projeto (opcional)</label><select id="newODespProjeto">${projetoOpts}</select></div>
+        </div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeDespesa()">Adicionar Despesa</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Despesas do Escritório</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeDespesa(){
+  const descricao=document.getElementById('newODespDesc').value.trim();
+  const categoria=document.getElementById('newODespCat').value.trim();
+  const valor=parseFloat(document.getElementById('newODespValor').value);
+  const data=document.getElementById('newODespData').value||null;
+  const conta=document.getElementById('newODespConta').value||null;
+  const projetoId=document.getElementById('newODespProjeto').value||null;
+  if(!descricao){toast('Informe a descrição');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!conta){toast('Cadastre e selecione a conta empresarial de origem');return;}
+  state.office.despesas.push({id:uid(),descricao,categoria,valor,data,conta,projetoId,status:'pago',createdAt:uid()});
+  scheduleSave();renderOfficeDespesasTab();renderEscritorioResumo();toast('Despesa registrada!');
+}
+function delOfficeDespesa(id){
+  // Gate 3.4: toda despesa empresarial cadastrada já é financeiramente
+  // realizada (ver comentário de canDeleteOfficeExpense) — excluí-la faria
+  // dinheiro que já saiu reaparecer no cálculo de saldo/patrimônio, sem
+  // nenhum evento financeiro real (estorno/reembolso) por trás. Bloqueio
+  // total, zero mutation — nunca uma "exclusão inteligente" que compensa.
+  // EDITAR a despesa (corrigir descrição/valor/data/conta digitados errado)
+  // continua permitido normalmente — isso não é o caminho destrutivo que
+  // este guard fecha.
+  const check=canDeleteOfficeExpense(id);
+  if(!check.allowed){
+    if(check.reason==='not_found') toast('Despesa não encontrada.');
+    else toast('Esta despesa já está registrada como realizada e não pode ser excluída. Edite o lançamento caso precise corrigir os dados.');
+    return;
+  }
+  state.office.despesas=(state.office.despesas||[]).filter(d=>d.id!==id);
+  scheduleSave();renderOfficeDespesasTab();renderEscritorioResumo();toast('Despesa removida');
+}
+
+// ── Reservas empresariais ──
+function renderOfficeReservasTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const finalidadeLabel={impostos:'Impostos',equipamentos:'Equipamentos',software:'Software',marketing:'Marketing',capital_giro:'Capital de giro',investimento:'Investimento',emergencia:'Emergência',outro:'Outro'};
+  const reservas=(state.office.reservas||[]);
+  const rows=reservas.map(r=>`<div class="item-row">
+      <div style="width:12px;height:12px;border-radius:50%;background:${r.color||'#5b7fff'};flex-shrink:0"></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(r.nome)}</div><div class="item-row-meta">${finalidadeLabel[r.finalidade]||r.finalidade||'—'}</div></div>
+      <div class="item-row-val muted">${fmtBRL(getSaldoOfficeReserva(r.id))}</div>
+      <button class="btn btn-ghost btn-sm" onclick="openAplicarOfficeReserva('${r.id}')">+ Aplicar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openResgatarOfficeReserva('${r.id}')">Resgatar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeReserva('${r.id}')">🗑</button>
+    </div>`).join('') || '<div class="info-box">Nenhuma reserva empresarial cadastrada ainda.</div>';
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Nova Reserva Empresarial</div></div>
+        <div class="info-box" style="margin-bottom:10px">Patrimônio reservado do escritório — nunca compõe o caixa operacional disponível (mesma filosofia dos cofrinhos pessoais).</div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Nome</label><input type="text" id="newOReservaNome" placeholder="Ex: Reserva de Impostos"></div>
+          <div class="form-group"><label>Finalidade</label>
+            <select id="newOReservaFinalidade">
+              ${Object.entries(finalidadeLabel).map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group"><label>Cor</label><input type="color" id="newOReservaColor" value="#5b7fff" style="height:38px;padding:4px"></div>
+        </div>
+        <div class="info-box" style="margin-top:10px">Toda reserva nova começa com R$ 0,00 — para colocar dinheiro nela, use "+ Aplicar" depois de criá-la, saindo de uma conta empresarial real (nunca um saldo inicial digitado sem contrapartida).</div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeReserva()">Adicionar Reserva</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Reservas Empresariais</div></div><div class="item-list">${rows}</div></div>
+    </div>`;
+}
+function addOfficeReserva(){
+  const nome=document.getElementById('newOReservaNome').value.trim();
+  if(!nome){toast('Informe o nome');return;}
+  const finalidade=document.getElementById('newOReservaFinalidade').value;
+  const color=document.getElementById('newOReservaColor').value;
+  // Gate 3.1 (seção 4-7): uma reserva NOVA nunca nasce com saldo != 0 — isso
+  // criaria patrimônio do nada (caixa + reserva > patrimônio real do
+  // escritório). saldoInicial=0 sempre aqui; dinheiro só entra via aplicação
+  // explícita, que sai de uma conta empresarial de verdade.
+  state.office.reservas.push({id:'oreserva_'+uid(),nome,finalidade,color,saldoInicial:0});
+  scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva adicionada!');
+}
+function delOfficeReserva(id){
+  // Gate 3.2 (seção 5): uma reserva com QUALQUER movimentação (aplicação ou
+  // resgate) tem histórico financeiro realizado — bloqueia a exclusão, sem
+  // tocar em nada (nem a reserva, nem movimentacoesReservas, nem
+  // movimentacoesContas). Nenhuma "exclusão inteligente"/compensação
+  // automática (seção 6) — o passado nunca é reescrito silenciosamente.
+  // Gate 3.3 (seção 12): saldo e histórico são conceitos diferentes — mensagens
+  // distintas para cada motivo de bloqueio (nunca um "está em uso" genérico).
+  const check=canDeleteOfficeReserve(id);
+  if(!check.allowed){
+    if(check.reason==='has_nonzero_balance') toast('Esta reserva possui saldo e não pode ser excluída.');
+    else if(check.reason==='not_found') toast('Reserva não encontrada.');
+    else toast('Esta reserva possui movimentações financeiras e não pode ser excluída.');
+    return;
+  }
+  // Sem movimentação vinculada e com saldo efetivo zero (garantido pelo guard
+  // acima) — só o registro da reserva em si é removido.
+  state.office.reservas=(state.office.reservas||[]).filter(r=>r.id!==id);
+  scheduleSave();renderOfficeReservasTab();renderEscritorioResumo();toast('Reserva removida');
+}
+function openAplicarOfficeReserva(reservaId){
+  const contaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Aplicar na Reserva';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">O valor sai do caixa operacional e vai para a reserva — não é despesa (receita=0, despesa=0, só muda a composição do patrimônio).</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="aplicOReservaValor" placeholder="0,00" min="0" step="0.01"></div>
+      <div class="form-group full"><label>Conta empresarial de origem</label><select id="aplicOReservaConta">${contaOpts}</select></div>
+      <div class="form-group full"><label>Observação (opcional)</label><input type="text" id="aplicOReservaObs" placeholder="opcional"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarAplicarOfficeReserva('${reservaId}')">Aplicar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarAplicarOfficeReserva(reservaId){
+  const valor=parseFloat(document.getElementById('aplicOReservaValor').value);
+  const contaId=document.getElementById('aplicOReservaConta')?.value;
+  const obs=document.getElementById('aplicOReservaObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!contaId){toast('Cadastre e selecione a conta de origem');return;}
+  const movId=uid();
+  const hoje=new Date();
+  state.office.movimentacoesReservas.push({id:movId,reservaId,valor,mes:hoje.getMonth()+1,ano:hoje.getFullYear(),tipo:'aplicacao',obs,createdAt:uid()});
+  state.office.movimentacoesContas.push({id:movId,contaId,valor:-valor,data:hoje.toISOString(),obs:'Aplicação em reserva'+(obs?': '+obs:'')});
+  scheduleSave();closeModal();renderOfficeReservasTab();renderEscritorioResumo();toast('Aplicado na reserva!');
+}
+function openResgatarOfficeReserva(reservaId){
+  const r=(state.office.reservas||[]).find(x=>x.id===reservaId); if(!r) return;
+  const saldo=getSaldoOfficeReserva(reservaId);
+  const contaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Resgatar da Reserva — '+r.nome;
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Saldo disponível: <strong>${fmtBRL(saldo)}</strong>. Não é receita — é o mesmo dinheiro que já era do escritório voltando pro caixa operacional.</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="resgOReservaValor" placeholder="0,00" min="0" max="${saldo}" step="0.01"></div>
+      <div class="form-group full"><label>Conta empresarial de destino</label><select id="resgOReservaConta">${contaOpts}</select></div>
+      <div class="form-group full"><label>Observação (opcional)</label><input type="text" id="resgOReservaObs" placeholder="opcional"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarResgatarOfficeReserva('${reservaId}')">Resgatar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarResgatarOfficeReserva(reservaId){
+  const valor=parseFloat(document.getElementById('resgOReservaValor').value);
+  const contaId=document.getElementById('resgOReservaConta')?.value;
+  const obs=document.getElementById('resgOReservaObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!contaId){toast('Cadastre e selecione a conta de destino');return;}
+  const movId=uid();
+  const hoje=new Date();
+  state.office.movimentacoesReservas.push({id:movId,reservaId,valor,mes:hoje.getMonth()+1,ano:hoje.getFullYear(),tipo:'resgate',obs,createdAt:uid()});
+  state.office.movimentacoesContas.push({id:movId,contaId,valor,data:hoje.toISOString(),obs:'Resgate da reserva'+(obs?': '+obs:'')});
+  scheduleSave();closeModal();renderOfficeReservasTab();renderEscritorioResumo();toast('Resgatado da reserva! Já creditado na conta.');
+}
+
+// ── Repasses / retiradas ──
+function renderOfficeRepassesTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const officeContaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const personalContaOpts=(state.contas||[]).length
+    ? state.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
+  const estadoLabel={previsto:'Previsto',recebido:'Realizado',cancelado:'Cancelado'};
+  const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
+  const repasses=(state.office.repasses||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+  const rows=repasses.map(rp=>{
+    const recebivel=(state.office.recebiveis||[]).find(r=>r.id===rp.recebivelId);
+    return `<div class="item-row ${rp.estado==='recebido'?'pago':rp.estado==='previsto'?'previsto':''}">
+      <div class="item-row-info">
+        <div class="item-row-name">Repasse Planejado <span class="badge ${estadoBadge[rp.estado]}">${estadoLabel[rp.estado]}</span></div>
+        <div class="item-row-meta">${recebivel?esc(recebivel.descricao||''):'—'} · Previsto: ${rp.dataPrevista||'—'}${rp.dataRecebimento?' · Realizado: '+rp.dataRecebimento:''}</div>
+      </div>
+      <div class="item-row-val ${rp.estado==='recebido'?'pos':'muted'}">${fmtBRL(rp.valor||0)}</div>
+      ${rp.estado==='previsto'?`<button class="btn btn-primary btn-sm" onclick="openRealizarOfficeRepasse('${rp.id}')">Realizar</button>`:''}
+    </div>`;
+  }).join('') || '<div class="info-box">Nenhum repasse planejado ainda — cadastre um recebível de um projeto contratado e configure a regra de distribuição em "Contas &amp; Regras".</div>';
+  const retiradasExtraord=(state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const rowsRetiradas=retiradasExtraord.map(m=>`<div class="item-row">
+      <div class="item-row-info"><div class="item-row-name">Retirada Extraordinária</div><div class="item-row-meta">${esc(m.obs||'')} · ${(m.data||'').slice(0,10)}</div></div>
+      <div class="item-row-val neg">${fmtBRL(Math.abs(m.valor||0))}</div>
+    </div>`).join('') || '<div class="info-box">Nenhuma retirada extraordinária registrada.</div>';
+  el.innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Retirada Extraordinária</div></div>
+      <div class="info-box" style="margin-bottom:10px">Para quando você precisa tirar dinheiro do escritório além do repasse planejado — fica identificada separadamente, nunca como salário ou repasse normal.</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Valor (R$)</label><input type="number" id="retiradaValor" placeholder="0,00" min="0" step="0.01"></div>
+        <div class="form-group"><label>Data</label><input type="date" id="retiradaData" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="form-group full"><label>Conta empresarial de origem</label><select id="retiradaContaOrigem">${officeContaOpts}</select></div>
+        <div class="form-group full"><label>Conta pessoal de destino</label><select id="retiradaContaDestino">${personalContaOpts}</select></div>
+        <div class="form-group full"><label>Motivo (opcional)</label><input type="text" id="retiradaObs" placeholder="Ex: cobrir despesas pessoais do mês"></div>
+      </div>
+      <button class="btn btn-primary mt-16" onclick="registrarRetiradaExtraordinaria()">Registrar Retirada</button>
+    </div>
+    <div class="card" style="margin-bottom:16px"><div class="card-header"><div class="card-title">Repasses Planejados</div></div><div class="item-list">${rows}</div></div>
+    <div class="card"><div class="card-header"><div class="card-title">Retiradas Extraordinárias</div></div><div class="item-list">${rowsRetiradas}</div></div>`;
+}
+function openRealizarOfficeRepasse(repasseId){
+  const rp=(state.office.repasses||[]).find(x=>x.id===repasseId); if(!rp) return;
+  const officeContaOpts=(state.office.contas||[]).length
+    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
+  const personalContaOpts=(state.contas||[]).length
+    ? state.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
+  document.getElementById('modalTitle').textContent='Realizar Repasse';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Valor: <strong>${fmtBRL(rp.valor||0)}</strong>. Ao confirmar, sai do caixa do escritório e entra no caixa pessoal na data informada — a receita pessoal prevista correspondente passa a recebida (nenhuma segunda receita é criada).</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Data real</label><input type="date" id="realizRepasseData" value="${new Date().toISOString().slice(0,10)}"></div>
+      <div class="form-group full"><label>Conta empresarial de origem</label><select id="realizRepasseContaOrigem">${officeContaOpts}</select></div>
+      <div class="form-group full"><label>Conta pessoal de destino</label><select id="realizRepasseContaDestino">${personalContaOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarRealizarOfficeRepasse('${repasseId}')">Confirmar Repasse</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarRealizarOfficeRepasse(repasseId){
+  const dataReal=document.getElementById('realizRepasseData').value;
+  const officeContaId=document.getElementById('realizRepasseContaOrigem')?.value;
+  const personalContaId=document.getElementById('realizRepasseContaDestino')?.value;
+  if(!dataReal){toast('Informe a data');return;}
+  if(!officeContaId){toast('Cadastre e selecione a conta empresarial de origem');return;}
+  if(!personalContaId){toast('Cadastre e selecione a conta pessoal de destino');return;}
+  const ok=realizeOfficeTransfer(repasseId,dataReal,officeContaId,personalContaId);
+  if(!ok){toast('Este repasse já havia sido realizado');closeModal();return;}
+  scheduleSave();closeModal();renderOfficeRepassesTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='dashboard') renderDashboard();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Repasse realizado! Já creditado no caixa pessoal.');
+}
+function registrarRetiradaExtraordinaria(){
+  const valor=parseFloat(document.getElementById('retiradaValor').value);
+  const data=document.getElementById('retiradaData').value;
+  const officeContaId=document.getElementById('retiradaContaOrigem')?.value;
+  const personalContaId=document.getElementById('retiradaContaDestino')?.value;
+  const obs=document.getElementById('retiradaObs').value.trim();
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  if(!data){toast('Informe a data');return;}
+  if(!officeContaId){toast('Cadastre e selecione a conta empresarial de origem');return;}
+  if(!personalContaId){toast('Cadastre e selecione a conta pessoal de destino');return;}
+  createExtraordinaryWithdrawal(valor,data,officeContaId,personalContaId,obs);
+  scheduleSave();renderOfficeRepassesTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='dashboard') renderDashboard();
+  document.getElementById('retiradaValor').value=''; document.getElementById('retiradaObs').value='';
+  toast('Retirada extraordinária registrada!');
+}
+
+// ── Contas & Regras de Distribuição ──
+function renderOfficeConfigTab(){
+  const el=document.getElementById('escritorioSubContent'); if(!el) return;
+  const contas=(state.office.contas||[]);
+  const rowsContas=contas.map(c=>`<div class="item-row">
+      <div style="width:12px;height:12px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
+      <div class="item-row-info"><div class="item-row-name">${esc(c.name)}</div></div>
+      <div class="item-row-val muted">${fmtBRL(calcSaldoOfficeConta(c.id))}</div>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeConta('${c.id}')">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeConta('${c.id}')">🗑</button>
+    </div>`).join('') || '<div class="info-box">Nenhuma conta empresarial cadastrada ainda.</div>';
+  const destinoLabel={reserva:'Reserva empresarial',impostos:'Impostos',repasse_pessoal:'Repasse ao Jow'};
+  const regras=(state.office.regrasDistribuicao||[]);
+  const validacao=validateOfficeDistributionRules(regras);
+  const todasConfiguradas=validacao.configured;
+  const rowsRegras=regras.map((r,i)=>`
+    <div class="form-group"><label>${destinoLabel[r.destino]||r.destino} (%)</label><input type="number" id="regraPercentual_${i}" value="${r.percentual===null||r.percentual===undefined?'':r.percentual}" min="0" max="100" step="0.1" placeholder="não configurado"></div>`).join('');
+  el.innerHTML=`
+    <div class="two-col" style="align-items:start;margin-bottom:16px">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Nova Conta Empresarial</div></div>
+        <div class="info-box" style="margin-bottom:10px">Contas do escritório são separadas das suas contas pessoais — nunca somadas ao saldo pessoal.</div>
+        <div class="form-grid">
+          <div class="form-group full"><label>Nome</label><input type="text" id="newOContaName" placeholder="Ex: Conta PJ, Caixa do Escritório"></div>
+          <div class="form-group"><label>Cor</label><input type="color" id="newOContaColor" value="#ff9900" style="height:38px;padding:4px"></div>
+          <div class="form-group"><label>Saldo inicial</label><input type="number" id="newOContaSaldoInicial" placeholder="0,00" step="0.01"></div>
+        </div>
+        <button class="btn btn-primary mt-16" onclick="addOfficeConta()">Adicionar Conta</button>
+      </div>
+      <div class="card"><div class="card-header"><div class="card-title">Contas Empresariais</div></div><div class="item-list">${rowsContas}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">Regras de Distribuição</div></div>
+      ${todasConfiguradas
+        ? `<div class="info-box" style="margin-bottom:10px">Configuradas — usadas para sugerir o repasse previsto sempre que um recebível de um projeto contratado é cadastrado ou alterado.</div>`
+        : `<div class="info-box" style="margin-bottom:10px;border-color:var(--warn)">⚠ Nenhuma regra de distribuição foi encontrada configurada ou documentada no app até agora — não vamos inventar um percentual. Enquanto ficar em branco, nenhum repasse previsto é gerado automaticamente (DISTRIBUTION_RULES_CONFIGURATION_REQUIRED). Preencha abaixo quando quiser ativar a geração automática.</div>`}
+      <div class="form-grid">${rowsRegras}</div>
+      <div class="item-row-meta" style="margin-top:8px">Total da distribuição: <strong>${validacao.totalPercent===null?'—':validacao.totalPercent+'%'}</strong></div>
+      ${(!validacao.valid) ? `<div class="info-box" style="margin-top:8px;border-color:var(--warn)">⚠ ${validacao.reason==='total_diferente_de_100' ? 'A distribuição precisa totalizar exatamente 100%.' : 'Há um percentual inválido — use apenas valores numéricos entre 0 e 100.'} Uma configuração assim nunca é salva nem usada para gerar repasse.</div>` : ''}
+      <button class="btn btn-primary mt-16" onclick="saveOfficeRegrasDistribuicao()">Salvar Regras</button>
+    </div>`;
+}
+function addOfficeConta(){
+  const name=document.getElementById('newOContaName').value.trim();
+  if(!name){toast('Informe o nome');return;}
+  const color=document.getElementById('newOContaColor').value;
+  const saldoInicial=parseFloat(document.getElementById('newOContaSaldoInicial').value)||0;
+  const id='oconta_'+name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'')+'_'+uid().slice(-4);
+  state.office.contas.push({id,name,color,saldoInicial});
+  scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();
+  document.getElementById('newOContaName').value=''; document.getElementById('newOContaSaldoInicial').value='';
+  toast('Conta empresarial adicionada!');
+}
+function delOfficeConta(id){
+  // Gate 3.2 (seção 7-9): a checagem original só olhava recebíveis/despesas
+  // — uma conta com movimentacoesContas (aplicação/resgate de reserva,
+  // repasse realizado, retirada extraordinária, ajustes) passava batido e
+  // suas movimentações eram apagadas junto, destruindo rastreabilidade e
+  // alterando o patrimônio calculado. canDeleteOfficeAccount cobre as 3
+  // estruturas reais que guardam conta empresarial (ver mapa de referências
+  // no comentário de canDeleteOfficeAccount) — bloqueia sem tocar em nada.
+  // Gate 3.3 (seção 12): saldo e referência são conceitos diferentes — mensagens
+  // distintas para cada motivo de bloqueio (nunca um "está em uso" genérico).
+  const check=canDeleteOfficeAccount(id);
+  if(!check.allowed){
+    if(check.reason==='has_nonzero_balance') toast('Esta conta possui saldo e não pode ser excluída.');
+    else if(check.reason==='not_found') toast('Conta não encontrada.');
+    else toast('Esta conta possui lançamentos ou movimentações vinculadas e não pode ser excluída.');
+    return;
+  }
+  // Sem nenhuma referência e com saldo efetivo zero (garantido pelo guard
+  // acima) — só o registro da conta em si é removido; NUNCA apagar
+  // movimentacoesContas como forma de "liberar" a exclusão (isso apagaria
+  // histórico financeiro realizado).
+  state.office.contas=(state.office.contas||[]).filter(c=>c.id!==id);
+  scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta removida');
+}
+function openEditOfficeConta(id){
+  const c=(state.office.contas||[]).find(x=>x.id===id);if(!c)return;
+  document.getElementById('modalTitle').textContent='Editar Conta Empresarial';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Nome</label><input type="text" id="eOContaName" value="${esc(c.name)}"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="eOContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Saldo inicial</label><input type="number" id="eOContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="saveEditOfficeConta('${id}')">Salvar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function saveEditOfficeConta(id){
+  const c=(state.office.contas||[]).find(x=>x.id===id);if(!c)return;
+  c.name=document.getElementById('eOContaName').value.trim()||c.name;
+  c.color=document.getElementById('eOContaColor').value;
+  c.saldoInicial=parseFloat(document.getElementById('eOContaSaldoInicial').value)||0;
+  scheduleSave();closeModal();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta atualizada!');
+}
+function saveOfficeRegrasDistribuicao(){
+  const regras=(state.office.regrasDistribuicao||[]);
+  // Gate 3.1 (seção 10-12): valida ANTES de gravar qualquer coisa em
+  // state.office.regrasDistribuicao. Uma tentativa inválida nunca altera a
+  // configuração anterior (mesmo que ela estivesse válida) nem os repasses já
+  // derivados dela (OD09/OD10) — o array real só é tocado depois do "return".
+  const candidatos=regras.map((r,i)=>{
+    const val=document.getElementById('regraPercentual_'+i)?.value;
+    const percentual=(val===''||val===undefined||val===null)?null:parseFloat(val);
+    return { destino:r.destino, percentual };
+  });
+  const validacao=validateOfficeDistributionRules(candidatos);
+  if(!validacao.valid){
+    toast('Distribuição inválida — '+(validacao.reason==='total_diferente_de_100'
+      ? `total=${validacao.totalPercent}% (precisa ser exatamente 100%)`
+      : 'use apenas valores numéricos entre 0 e 100')+'. Nada foi salvo.');
+    renderOfficeConfigTab();
+    return;
+  }
+  regras.forEach((r,i)=>{ r.percentual=candidatos[i].percentual; });
+  // Recalcula todos os repasses previstos derivados (nunca duplica — mesma
+  // chave officeTransferId — e nunca sobrescreve repasse já realizado).
+  (state.office.recebiveis||[]).forEach(r=>syncDerivedPersonalTransfer(r.id));
+  scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+  toast('Regras de distribuição salvas!');
 }
 </script>
 <div id="printReportArea"></div>
