@@ -99,6 +99,68 @@ Saída vazia, exit code 0 — sem erros de espaço em branco.
 - `delivery/index.html` não foi tocado (fora do escopo, conforme instrução vigente do repositório) — ele não recebeu nenhuma das quatro correções.
 - Achados fora do escopo autorizado não foram corrigidos nem procurados ativamente; nenhum foi encontrado incidentalmente durante esta implementação além dos dois já descritos acima como parte do achado 4 (o toast de falso sucesso em `forceSave()` é uma consequência direta e no mesmo arquivo/função da correção pedida pro Risco 1, não uma correção oportunista fora de escopo).
 
+## Correções após auditoria Codex
+
+Auditoria: `docs/audits/GATE-5-UAT-CORRECTIONS-CODEX.md`, commit `c4f8d39` — resultado **FAIL corretivo**, três achados [P2], nenhum aprovado sem correção. Patch restrito exatamente a esses três achados, sem refatoração oportunista, sobre a implementação auditada `4ae015ee5a3cce94c1e79cb3a27084111fa9a683`.
+
+- Hash inicial deste patch (HEAD no momento em que a correção começou): `c4f8d39fcf8fe9ae7a7c6768f0d091f30ab3ef47`
+- Hash final: o commit desta entrega (informado no handoff ao final da sessão) — descendente direto de `c4f8d39`, sem alterar nem fazer squash de `4ae015e` ou `c4f8d39`.
+
+### Achado 1 — entrada prevista sem data
+
+**Reprodução do Codex** (formulário real): entrada de R$500 num contrato de R$500 marcada como não recebida, sem data prevista, era aceita — `{"created":true,"dataPrevista":null}`. `getOfficeReceivables()` exclui qualquer recebível sem data de referência (`dataPrevista`/`dataRecebimento`), então essa entrada nunca aparecia em `getOfficeReceivablesPrevistoTotal(mes,ano)` — o contrato existia, o dinheiro previsto não aparecia em planejamento nenhum.
+
+**Correção**: em `addOfficeProjeto()`, nova validação logo após a checagem de entrada recebida: quando `entradaCent>0 && !entradaRecebida`, exige `dataEntradaPrevista` truthy **e** válida via `isValidISODateString()` (helper já existente no projeto, usado sem duplicar lógica de validação de data). Falha bloqueia o cadastro com toast claro, antes de qualquer `push` em `state.office.projetos`/`state.office.recebiveis` — a ordem de validações no código já garante isso (todas as validações, incluindo a nova, ficam antes do primeiro `state.office.projetos.push(projeto)` do branch `contratado`). Não há fallback silencioso para a data do contrato em nenhum ponto do código — a variável `dataEntradaPrevista` só é lida do campo do formulário. Entrada já recebida continua exigindo `dataEntradaReal` (validação pré-existente, inalterada); quando a entrada recebida também tem `dataEntradaPrevista` preenchida, os dois valores continuam persistidos separadamente no recebível (`dataPrevista` e `dataRecebimento`). Entrada zero (`entradaCent===0`) não passa pela nova condição — continua sem exigir data.
+
+**Reprodução depois da correção**: o mesmo cenário do Codex (entrada 500, contrato 500, sem data, não recebida) agora é rejeitado antes de qualquer `push` — testado em OF16.
+
+**Testes adicionados** (`gate5-office-contrato.test.mjs`, OF16-OF21, 6 casos): entrada prevista sem data bloqueia (OF16); data prevista textualmente inválida (`2026-13-40`) bloqueia (OF17); rejeição não cria receita pessoal nem repasse, reforçando ausência total de mutação (OF18); entrada prevista válida aparece exatamente no mês certo em `getOfficeReceivablesPrevistoTotal()` e não no mês anterior (OF19); entrada prevista não conta em `getOfficeReceivedCash()`, entrada recebida conta exatamente uma vez no mês da data real (OF20); entrada zero continua sem exigir data (OF21).
+
+### Achado 2 — valores com mais de duas casas
+
+**Reprodução do Codex**: contrato digitado como `100.005`, entrada zero, três parcelas — `projeto.valorContrato` ficava com o valor bruto (`100.005`), enquanto a soma dos recebíveis (gerados a partir de `contratoCent/100`) dava `100.00999999999999`. `storedContract !== receivablesSum` exatamente.
+
+**Correção**: depois de todas as validações passarem (nenhuma validação nova aqui, só persistência), `addOfficeProjeto()` passou a gravar `projeto.valorContrato = contratoCent/100` e `projeto.valorEntrada = entradaCent/100` — os mesmos centavos inteiros (`Math.round(valor*100)`) já usados para gerar os recebíveis em `gerarRecebiveisContratoOffice()`, nunca mais os valores brutos de `parseFloat`. Isso vale tanto para valores digitados com mais de duas casas quanto para valores "colados" que ignoram o `step="0.01"` do campo HTML (o `step` é só uma dica de UI, nunca validação) — a normalização acontece no handler, não depende do navegador. Sem comparação direta de float em nenhuma invariante: a igualdade contrato==soma-dos-recebíveis é garantida por construção (mesma fonte `contratoCent`/`entradaCent` para ambos), não checada com `===`. Projetos antigos (campo `valorContrato`/`valorEntrada` já gravado antes desta correção, possivelmente com mais de duas casas) não são tocados — a normalização só roda na validação de um cadastro novo, nunca varre nem reescreve `state.office.projetos` existente.
+
+**Reprodução depois da correção**: contrato `100.005` → `Math.round(100.005*100)` = `10001` centavos (`100.005*100` vale `10000.5` em ponto flutuante; `Math.round` de `.5` arredonda pra cima) → `projeto.valorContrato` gravado como `100.01`, e a soma dos recebíveis bate com esse mesmo valor por construção — testado em OF22.
+
+**Testes adicionados** (`gate5-office-contrato.test.mjs`, OF22-OF26, 5 casos): contrato `100.005` normalizado e igual à soma dos recebíveis (OF22); entrada `50.004` normalizada (OF23); valor "colado" com mais casas que o `step` permitiria (`333.336`) normalizado do mesmo jeito (OF24); round-trip de `buildSaveObject()`/`migrateAppData()` preserva os valores já normalizados sem reintroduzir imprecisão (OF25); projeto antigo criado com valores não normalizados (`100.00999999999999`) permanece bit-a-bit inalterado depois de um `renderOfficeProjetosTab()` (OF26) — prova que a correção não reescreve histórico.
+
+### Achado 3 — `initApp()` ainda rejeita após falha inicial do Drive
+
+**Reprodução do Codex**: com `finflow_unsynced==='1'` e sem `finflow_drive_file_id` em cache, `initApp()` chamava `await findDataFile()` **fora** de qualquer `try/catch`. `findDataFile()` só evita rede quando o ID já está em cache — sem cache, ela precisa consultar a API de busca do Drive, e essa chamada usa o `fetch()` global normalmente. Com o `fetch` rejeitando (`TypeError: Failed to fetch`), a exceção subia direto, `initApp()` nunca chegava em `saveToDrive()` nem no `renderAll()` final — a inicialização inteira travava.
+
+**Decisão sobre manter ou remover a pré-busca**: mantida. `findDataFile()` existe justamente para achar um arquivo remoto já existente antes de decidir entre `updateDataFile()` (PATCH) e `createDataFile()` (POST, cria um arquivo novo) dentro de `saveToDrive()` — removê-la reabriria o risco de duplicar o arquivo `finflow_data.json` no Drive sempre que o ID ainda não estivesse em cache local (primeira tentativa de salvar depois de qualquer falha, dispositivo novo, cache limpo etc.). Em vez de remover, sua falha passou a ser tratada explicitamente.
+
+**Correção**: `findDataFile()` e `saveToDrive()` passaram a rodar dentro do mesmo bloco protegido, cada uma com seu próprio `try/catch`:
+
+```js
+try { await findDataFile(); } catch(e) {}
+try { await saveToDrive(); } catch(e) {}
+```
+
+Se `findDataFile()` falhar, o erro é engolido silenciosamente (ela não atualiza o indicador nem mostra toast — nunca atualizou, antes ou depois desta correção) e o código segue para `saveToDrive()` de qualquer forma; como a mesma falha de rede tende a afetar as duas chamadas, é `saveToDrive()` quem acaba assumindo a comunicação com o usuário — ela já propaga a falha (correção do achado 4/Risco 1 do patch anterior) e, no seu próprio `catch`, chama `setDriveStatus('error',...)` e `toast(friendlyDriveErrorMessage(e))` antes de relançar. O `try/catch` externo ao redor de `saveToDrive()` garante que essa relançada não derruba `initApp()` — a função sempre chega ao `renderAll()` final, usando o que já está em memória (carregado do cache local no início da própria `initApp()`, antes de qualquer tentativa de rede). `finflow_drive_file_id` não é apagado por esse caminho: a única linha que o remove fica depois do `await driveRequest(...)` dentro de `findDataFile()`, nunca alcançada quando o `fetch` rejeita antes de qualquer resposta.
+
+**Reprodução depois da correção**: o mesmo cenário do Codex (`finflow_unsynced='1'`, sem `finflow_drive_file_id`, `fetch` rejeitando com `TypeError('Failed to fetch')`) — `initApp()` completa sem rejeitar, `finflow_unsynced` permanece `'1'`, nenhum dado local é substituído, `renderAll()` é alcançado, o indicador mostra erro com a mensagem amigável, nenhum toast de sucesso aparece — testado em D14/D15.
+
+**Testes adicionados** (`gate5-drive-sync-safety.test.mjs`, D14-D19, 6 casos): fluxo completo e real de `initApp()` (não só as funções isoladas) cobrindo os 7 primeiros itens exigidos — não rejeita, cache local carregado (um marcador exclusivo em `state.despesas` sobrevive ao ciclo completo), `finflow_unsynced` continua `'1'`, nenhum `syncFromDrive()`/download, nenhum dado substituído, `renderAll()` alcançado, `appShell` continua visível (D14); ausência de toast de sucesso, presença da mensagem amigável, ausência de token/Client ID/dado financeiro em qualquer toast ou chamada de `setDriveStatus` (D15); ID de arquivo já em cache faz `findDataFile()` pular a rede — só 1 chamada de `fetch` no total, mesmo assim sem rejeitar (D16); recuperação: depois de uma falha que mantém `finflow_unsynced`, uma nova tentativa com rede disponível limpa a pendência (D17); `initApp()` completo com rede disponível conclui o upload e remove `finflow_unsynced` (D18); com ID já conhecido, `saveToDrive()` sempre atualiza (PATCH) o arquivo existente e nunca dispara uma chamada de criação (`uploadType=multipart`) — ausência de duplicação comprovada dentro do que os mocks permitem, já que não há Drive real nesta suíte (D19).
+
+### Resultado das duas execuções completas pós-patch
+
+```
+cd tests/financial-engine && npm test
+```
+
+Executado duas vezes: ambas `FINFLOW FINANCIAL-ENGINE SUITE: TOTAL_PASS=364 TOTAL_FAIL=0` (347 anteriores + 17 novos: 11 em `gate5-office-contrato.test.mjs` [OF16-OF26] + 6 em `gate5-drive-sync-safety.test.mjs` [D14-D19]). Nenhum `[FAIL]` em nenhuma das duas execuções, sem reprodução de nenhum flake.
+
+### `git diff --check`
+
+Saída vazia (só avisos padrão de normalização de fim de linha LF→CRLF do Git no Windows, não erros), exit code 0.
+
+### Limitações ambientais do Drive (reafirmadas)
+
+Assim como no relatório original: os três achados corrigidos aqui são comportamento de código, verificado com `fetch` mockado em nível de página — nunca contra o Google real. Nenhuma correção deste patch resolve nem afirma resolver um bloqueio ambiental real (rede da Prefeitura, proxy/firewall, origem do Live Server não autorizada no cliente OAuth, ou o app aberto via `file://`). O que este patch garante é que, mesmo sob essas condições, `initApp()` nunca mais trava a inicialização, o app permanece utilizável com o cache local, e a comunicação de erro ao usuário é honesta e específica.
+
 ## Entrega
 
-Commit único sobre `1d8e4577763447393d4a3e4ea5a612b3955805a9`, branch `gate/5-uat-corrections`. Sem push, sem merge, sem rebase. Edição encerrada nesta entrega — aguardando auditoria independente do Codex.
+Dois commits sobre `1d8e4577763447393d4a3e4ea5a612b3955805a9`, branch `gate/5-uat-corrections`: `4ae015e` (implementação original) e o commit desta entrega (patch corretivo restrito aos três achados da auditoria Codex `c4f8d39`, sem alterar nem fazer squash de nenhum commit anterior). Sem push, sem merge, sem rebase. Edição encerrada nesta entrega — aguardando nova auditoria independente do Codex.

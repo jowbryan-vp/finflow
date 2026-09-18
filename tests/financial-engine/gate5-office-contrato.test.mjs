@@ -81,7 +81,7 @@ await check('OF02', async () => {
 await check('OF03', async () => {
   const r = await fillAndSubmit({
     nome: 'Projeto Pago na Entrada', cliente: 'C', valorContrato: 500, status: 'contratado',
-    valorEntrada: 500, qtdParcelas: 0, contaDestino: 'oc1',
+    valorEntrada: 500, dataEntradaPrevista: '2026-09-15', qtdParcelas: 0, contaDestino: 'oc1',
   });
   const entrada = r.recebiveis.find((x) => x.descricao === 'Entrada');
   const parcelas = r.recebiveis.filter((x) => x.descricao.startsWith('Parcela'));
@@ -303,6 +303,183 @@ await check('OF15', async () => {
   const ok = !r.algumaComValorCheio;
   return { ok, detail: `receitas pessoais derivadas do escritório=${r.qtdReceitasDerivadas}, alguma com valor cheio do contrato=${r.algumaComValorCheio} (esp. false — nunca contamina com o valor bruto)` };
 }, 'Caixa do Escritório nunca contamina o caixa pessoal com o valor bruto do contrato');
+
+// ── Correções pós-auditoria Codex (docs/audits/GATE-5-UAT-CORRECTIONS-CODEX.md) ──
+
+// OF16 (achado 1, caso 1): entrada prevista > 0, não recebida, sem data
+// prevista bloqueia o cadastro antes de qualquer mutação.
+await check('OF16', async () => {
+  const antes = await page.evaluate(() => ({ p: state.office.projetos.length, r: state.office.recebiveis.length }));
+  const r = await fillAndSubmit({
+    nome: 'Projeto Entrada Sem Data', cliente: 'N', valorContrato: 500, status: 'contratado',
+    valorEntrada: 500, dataEntradaPrevista: '', entradaRecebida: false, qtdParcelas: 0, contaDestino: 'oc1',
+  });
+  const depois = await page.evaluate(() => ({ p: state.office.projetos.length, r: state.office.recebiveis.length }));
+  const ok = !r.criouProjeto && antes.p === depois.p && antes.r === depois.r;
+  return { ok, detail: `criouProjeto=${r.criouProjeto} projetos antes/depois=${antes.p}/${depois.p} recebíveis antes/depois=${antes.r}/${depois.r} (esp. false, sem mutação)` };
+}, 'achado 1: entrada prevista >0 sem data prevista bloqueia o cadastro, sem mutação');
+
+// OF17 (achado 1, caso 2): data prevista inválida também bloqueia.
+await check('OF17', async () => {
+  const antes = await page.evaluate(() => ({ p: state.office.projetos.length, r: state.office.recebiveis.length }));
+  const r = await fillAndSubmit({
+    nome: 'Projeto Entrada Data Invalida', cliente: 'O', valorContrato: 500, status: 'contratado',
+    valorEntrada: 500, dataEntradaPrevista: '2026-13-40', entradaRecebida: false, qtdParcelas: 0, contaDestino: 'oc1',
+  });
+  const depois = await page.evaluate(() => ({ p: state.office.projetos.length, r: state.office.recebiveis.length }));
+  const ok = !r.criouProjeto && antes.p === depois.p && antes.r === depois.r;
+  return { ok, detail: `criouProjeto=${r.criouProjeto} projetos antes/depois=${antes.p}/${depois.p} recebíveis antes/depois=${antes.r}/${depois.r} (esp. false, sem mutação)` };
+}, 'achado 1: data prevista inválida (2026-13-40) bloqueia o cadastro, sem mutação');
+
+// OF18 (achado 1, caso 3, reforço explícito): a rejeição não cria projeto,
+// recebível, receita pessoal nem repasse.
+await check('OF18', async () => {
+  const r = await page.evaluate(() => {
+    const antesReceitas = state.receitas.length;
+    const antesRepasses = (state.office.repasses || []).length;
+    return { antesReceitas, antesRepasses };
+  });
+  await fillAndSubmit({
+    nome: 'Projeto Rejeitado Sem Efeitos', cliente: 'P', valorContrato: 300, status: 'contratado',
+    valorEntrada: 300, dataEntradaPrevista: '', entradaRecebida: false, qtdParcelas: 0, contaDestino: 'oc1',
+  });
+  const depois = await page.evaluate(() => ({
+    receitas: state.receitas.length, repasses: (state.office.repasses || []).length,
+  }));
+  const ok = r.antesReceitas === depois.receitas && r.antesRepasses === depois.repasses;
+  return { ok, detail: `receitas antes/depois=${r.antesReceitas}/${depois.receitas} repasses antes/depois=${r.antesRepasses}/${depois.repasses} (esp. iguais)` };
+}, 'achado 1: rejeição por falta de data não cria receita pessoal nem repasse');
+
+// OF19 (achado 1, caso 4): entrada prevista válida aparece no mês correto
+// em getOfficeReceivablesPrevistoTotal().
+await check('OF19', async () => {
+  const r = await fillAndSubmit({
+    nome: 'Projeto Entrada Prevista Mes Certo', cliente: 'Q', valorContrato: 700, status: 'contratado',
+    valorEntrada: 700, dataEntradaPrevista: '2027-05-10', entradaRecebida: false, qtdParcelas: 0, contaDestino: 'oc1',
+  });
+  const totais = await page.evaluate(() => ({
+    mesCerto: getOfficeReceivablesPrevistoTotal(5, 2027),
+    mesErrado: getOfficeReceivablesPrevistoTotal(4, 2027),
+  }));
+  const ok = r.criouProjeto && totais.mesCerto >= 700 && totais.mesErrado === 0;
+  return { ok, detail: `criouProjeto=${r.criouProjeto} previstoMaio2027=${totais.mesCerto} previstoAbril2027=${totais.mesErrado} (esp. true, >=700, 0)` };
+}, 'achado 1: entrada prevista válida aparece em getOfficeReceivablesPrevistoTotal() no mês certo, e só nele');
+
+// OF20 (achado 1, casos 5/6): entrada prevista não entra no caixa real;
+// entrada recebida entra só pela data real, exatamente uma vez.
+await check('OF20', async () => {
+  const r = await page.evaluate(() => ({
+    caixaMesPrevisto: getOfficeReceivedCash(5, 2027), // mesmo mês da OF19: só previsto, não deve contar como recebido
+  }));
+  const recebidaR = await fillAndSubmit({
+    nome: 'Projeto Entrada Recebida Caixa Unico', cliente: 'R', valorContrato: 250, status: 'contratado',
+    valorEntrada: 250, dataEntradaPrevista: '2027-06-01', entradaRecebida: true, dataEntradaReal: '2027-06-05',
+    qtdParcelas: 0, contaDestino: 'oc1',
+  });
+  const caixaR = await page.evaluate(() => ({
+    junho2027: getOfficeReceivedCash(6, 2027),
+    maio2027: getOfficeReceivedCash(5, 2027),
+  }));
+  const ok = r.caixaMesPrevisto === 0 && recebidaR.criouProjeto && caixaR.junho2027 === 250 && caixaR.maio2027 === 0;
+  return { ok, detail: `caixaPrevistoMaio=${r.caixaMesPrevisto} caixaJunhoPosRecebido=${caixaR.junho2027} caixaMaioPosRecebido=${caixaR.maio2027} (esp. 0, 250, 0)` };
+}, 'achado 1: entrada prevista não entra no caixa real; entrada recebida entra uma única vez, pela data real');
+
+// OF21 (achado 1, caso 7): entrada zero continua não exigindo data.
+await check('OF21', async () => {
+  const r = await fillAndSubmit({
+    nome: 'Projeto Entrada Zero Sem Data', cliente: 'S', valorContrato: 600, status: 'contratado',
+    valorEntrada: 0, dataEntradaPrevista: '', qtdParcelas: 2, dataPrimeiraParcela: '2027-07-01', contaDestino: 'oc1',
+  });
+  const ok = r.criouProjeto && !r.recebiveis.some((x) => x.descricao === 'Entrada');
+  return { ok, detail: `criouProjeto=${r.criouProjeto} temEntrada=${r.recebiveis.some((x) => x.descricao === 'Entrada')} (esp. true, false)` };
+}, 'achado 1: entrada zero continua sem exigir data prevista');
+
+// OF22 (achado 2): contrato com mais de duas casas (100.005) é normalizado
+// para centavos inteiros — o projeto armazena o valor arredondado (a mesma
+// fonte de verdade usada pra gerar os recebíveis), não o bruto de parseFloat.
+await check('OF22', async () => {
+  const r = await fillAndSubmit({
+    nome: 'Projeto Subcentavo', cliente: 'T', valorContrato: 100.005, status: 'contratado',
+    valorEntrada: 0, qtdParcelas: 3, dataPrimeiraParcela: '2027-08-01', contaDestino: 'oc1',
+  });
+  const soma = r.recebiveis.reduce((s, x) => s + x.valor, 0);
+  const projetoSalvo = await page.evaluate((id) => {
+    const p = state.office.projetos.find((x) => x.id === id);
+    return { valorContrato: p.valorContrato };
+  }, r.projetoId);
+  // 100.005*100 = 10000.5 em ponto flutuante — Math.round arredonda pra
+  // cima (10001 centavos = 100.01), igual ao arredondamento padrão "meio
+  // pra cima". O que importa pra invariante financeira não é qual direção o
+  // arredondamento escolhe, e sim que o valor gravado seja o MESMO usado
+  // pra gerar os recebíveis — nunca o bruto 100.005 preservado à parte.
+  const ok = r.criouProjeto && Math.abs(projetoSalvo.valorContrato - 100.01) < 0.001 &&
+    Math.abs(soma - projetoSalvo.valorContrato) < 0.001;
+  return { ok, detail: `valorContrato salvo=${projetoSalvo.valorContrato} somaRecebiveis=${soma} (esp. 100.01 — arredondado de 100.005 — soma exatamente igual, nunca preservando o bruto)` };
+}, 'achado 2: contrato digitado como 100.005 é persistido normalizado em centavos, igual à soma dos recebíveis (nunca o valor bruto)');
+
+// OF23 (achado 2): entrada com mais de duas casas também é normalizada.
+await check('OF23', async () => {
+  const r = await fillAndSubmit({
+    nome: 'Projeto Entrada Subcentavo', cliente: 'U', valorContrato: 200, status: 'contratado',
+    valorEntrada: 50.004, dataEntradaPrevista: '2027-09-01', entradaRecebida: false,
+    qtdParcelas: 3, dataPrimeiraParcela: '2027-09-10', contaDestino: 'oc1',
+  });
+  const projetoSalvo = await page.evaluate((id) => {
+    const p = state.office.projetos.find((x) => x.id === id);
+    return { valorEntrada: p.valorEntrada };
+  }, r.projetoId);
+  const entrada = r.recebiveis.find((x) => x.descricao === 'Entrada');
+  const ok = r.criouProjeto && Math.abs(projetoSalvo.valorEntrada - 50) < 0.001 &&
+    Math.abs(entrada.valor - projetoSalvo.valorEntrada) < 0.001;
+  return { ok, detail: `valorEntrada salvo=${projetoSalvo.valorEntrada} recebívelEntrada=${entrada.valor} (esp. ambos 50.00)` };
+}, 'achado 2: entrada digitada como 50.004 é persistida normalizada (50.00 = 5000 centavos)');
+
+// OF24 (achado 2): valor "colado" fora do passo do campo HTML (mais casas
+// decimais que step="0.01" permitiria digitando) é normalizado do mesmo jeito.
+await check('OF24', async () => {
+  const r = await fillAndSubmit({
+    nome: 'Projeto Valor Colado', cliente: 'V', valorContrato: 333.336, status: 'contratado',
+    valorEntrada: 0, qtdParcelas: 3, dataPrimeiraParcela: '2027-10-01', contaDestino: 'oc1',
+  });
+  const soma = r.recebiveis.reduce((s, x) => s + x.valor, 0);
+  const projetoSalvo = await page.evaluate((id) => state.office.projetos.find((x) => x.id === id).valorContrato, r.projetoId);
+  const ok = r.criouProjeto && Math.abs(projetoSalvo - 333.34) < 0.001 && Math.abs(soma - projetoSalvo) < 0.001;
+  return { ok, detail: `valorContrato salvo=${projetoSalvo} somaRecebiveis=${soma} (esp. 333.34, soma exata)` };
+}, 'achado 2: valor com precisão além do step do campo HTML (333.336) é normalizado do mesmo jeito, nunca depende só do step');
+
+// OF25 (achado 2): round-trip de exportação/importação preserva os valores
+// normalizados (não reintroduz nem acumula erro de ponto flutuante).
+await check('OF25', async () => {
+  const r = await page.evaluate((id) => {
+    const antes = state.office.projetos.find((x) => x.id === id);
+    const antesValores = { valorContrato: antes.valorContrato, valorEntrada: antes.valorEntrada };
+    const saved = buildSaveObject();
+    const copia = JSON.parse(JSON.stringify(saved));
+    migrateAppData(copia);
+    const depois = state.office.projetos.find((x) => x.id === id);
+    return { antesValores, depoisValores: { valorContrato: depois.valorContrato, valorEntrada: depois.valorEntrada } };
+  }, (await page.evaluate(() => state.office.projetos.find((p) => p.nome === 'Projeto Subcentavo').id)));
+  const ok = r.antesValores.valorContrato === r.depoisValores.valorContrato &&
+    r.antesValores.valorEntrada === r.depoisValores.valorEntrada;
+  return { ok, detail: `antes=${JSON.stringify(r.antesValores)} depois=${JSON.stringify(r.depoisValores)} (esp. idênticos)` };
+}, 'achado 2: round-trip de export/import preserva os valores normalizados, sem reintroduzir imprecisão');
+
+// OF26 (achado 2): projetos antigos (criados antes desta correção, com
+// valores possivelmente não normalizados) permanecem inalterados — a
+// normalização só se aplica no cadastro, nunca reescreve histórico.
+await check('OF26', async () => {
+  const r = await page.evaluate(() => {
+    const antigo = { id: 'pAntigoValorBruto', nome: 'Projeto Antigo Valor Bruto', cliente: 'W',
+      valorContrato: 100.00999999999999, valorEntrada: 33.336, status: 'contratado',
+      dataContrato: '2025-02-01', observacao: '', createdAt: 'pAntigoValorBruto' };
+    state.office.projetos.push(antigo);
+    renderOfficeProjetosTab();
+    const aindaExiste = state.office.projetos.find((x) => x.id === 'pAntigoValorBruto');
+    return { valorContrato: aindaExiste.valorContrato, valorEntrada: aindaExiste.valorEntrada };
+  });
+  const ok = r.valorContrato === 100.00999999999999 && r.valorEntrada === 33.336;
+  return { ok, detail: `valorContrato=${r.valorContrato} valorEntrada=${r.valorEntrada} (esp. inalterados — nada reescreve histórico antigo)` };
+}, 'achado 2: projeto antigo com valores não normalizados permanece inalterado (correção só se aplica no cadastro)');
 
 await close();
 

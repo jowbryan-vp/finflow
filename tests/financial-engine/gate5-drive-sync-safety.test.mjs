@@ -193,6 +193,157 @@ await check('D12_D13', async () => {
   return { ok, detail: `semToken=${semToken} mensagemAmigavelPresente=${mensagemAmigavelPresente} toasts=${JSON.stringify(spy.toasts)}` };
 }, 'mensagem amigável de "Failed to fetch" exibida ao usuário, sem token/Client ID em toast ou indicador');
 
+// ── Correções pós-auditoria Codex, achado 3 (docs/audits/GATE-5-UAT-CORRECTIONS-CODEX.md) ──
+// findDataFile() só evita ir à rede quando finflow_drive_file_id já está em
+// cache. Sem esse cache (cenário comum na primeira tentativa depois de uma
+// falha), ela ia à rede FORA de qualquer try/catch dentro de initApp() — um
+// fetch rejeitado ali derrubava a inicialização inteira antes do
+// renderAll() final. A correção envolve findDataFile() no mesmo bloco
+// protegido que saveToDrive().
+
+// D14: fluxo real de initApp() — cache local existente, finflow_unsynced=1,
+// SEM finflow_drive_file_id em cache, fetch rejeitando com 'Failed to
+// fetch'. Confirma os itens 1-7 do achado 3 numa única execução real.
+await check('D14', async () => {
+  await installSpies();
+  const r = await withFailingFetch(() => page.evaluate(async () => {
+    window.__spy.renderAllCalls = 0;
+    window.__origRenderAll = window.renderAll;
+    window.renderAll = (...args) => { window.__spy.renderAllCalls++; return window.__origRenderAll(...args); };
+
+    // Cache local "real": o estado atual (com um marcador exclusivo desta
+    // checagem) serializado como se fosse a última sessão salva.
+    state.despesas.push({ id: 'marcadorD14', desc: 'marcador cache local D14', cat: 'geral', subcat: 'Geral',
+      cartao: 'dinheiro', conta: 'c1', valor: 77, parcelas: 1, mesInicio: 9, anoInicio: 2026,
+      dataCompra: '2026-09-01', fixa: false, diaVencimento: null, debitoAutomatico: false,
+      pagoMeses: {}, split: [], repasses: {}, createdAt: 'marcadorD14' });
+    localStorage.setItem('finflow_local_cache', JSON.stringify(buildSaveObject()));
+    localStorage.removeItem('finflow_drive_file_id');
+    localStorage.setItem('finflow_unsynced', '1');
+
+    let rejected = false, rejMsg = null;
+    try { await initApp(); } catch (e) { rejected = true; rejMsg = e && e.message; }
+
+    const marcador = state.despesas.find((d) => d.id === 'marcadorD14');
+    const out = {
+      rejected, rejMsg,
+      unsynced: localStorage.getItem('finflow_unsynced'),
+      renderAllCalls: window.__spy.renderAllCalls,
+      syncFromDriveCalls: window.__spy.syncFromDriveCalls,
+      migrateAppDataCalls: window.__spy.migrateAppDataCalls,
+      marcadorPreservado: !!marcador && marcador.valor === 77,
+      appShellVisivel: document.getElementById('appShell').style.display === 'flex',
+    };
+    window.renderAll = window.__origRenderAll; delete window.__origRenderAll;
+    return out;
+  }));
+  await restoreSpies();
+  // 1) não rejeita; 2) cache local carregado (o próprio marcador prova isso,
+  // já que initApp() recarrega o estado a partir do cache no início);
+  // 3) unsynced continua '1'; 4) nenhum download (syncFromDriveCalls=0);
+  // 5) nada foi substituído (marcador sobrevive); 6) renderAll() alcançado;
+  // migrateAppDataCalls===1 é só a carga do cache LOCAL, nunca dados remotos.
+  const ok = !r.rejected && r.unsynced === '1' && r.syncFromDriveCalls === 0 &&
+    r.marcadorPreservado && r.renderAllCalls >= 1 && r.migrateAppDataCalls === 1 && r.appShellVisivel;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado 3: initApp() com pendência local, sem ID de arquivo em cache e fetch falhando não rejeita, preserva tudo e alcança renderAll()');
+
+// D15: dentro do mesmo cenário do D14, nenhum toast de sucesso aparece, a
+// mensagem amigável de "Failed to fetch" aparece, e nenhum toast/indicador
+// contém token, Client ID ou dado financeiro.
+await check('D15', async () => {
+  await installSpies();
+  await withFailingFetch(() => page.evaluate(async () => {
+    localStorage.setItem('finflow_unsynced', '1');
+    localStorage.removeItem('finflow_drive_file_id');
+    try { await initApp(); } catch (e) {}
+  }));
+  const spy = await readSpy();
+  await restoreSpies();
+  const token = 'test-token-not-a-real-credential';
+  const semSucesso = !spy.toasts.some((t) => t.includes('Dados atualizados a partir do Drive') || t.includes('Salvo no Google Drive') || t.includes('enviadas ao Google Drive'));
+  const mensagemAmigavelPresente = spy.toasts.some((t) => t.includes('Não foi possível conectar ao Google Drive'));
+  const textoCompleto = JSON.stringify(spy.toasts) + JSON.stringify(spy.driveStatusCalls);
+  const semDadoSensivel = !textoCompleto.includes(token) && !textoCompleto.includes('Bearer') &&
+    !textoCompleto.includes('marcadorD14') && !textoCompleto.includes('77');
+  const ok = semSucesso && mensagemAmigavelPresente && semDadoSensivel;
+  return { ok, detail: `semSucesso=${semSucesso} mensagemAmigavelPresente=${mensagemAmigavelPresente} semDadoSensivel=${semDadoSensivel} toasts=${JSON.stringify(spy.toasts)}` };
+}, 'achado 3: nenhum toast de sucesso, mensagem amigável presente, sem token/Client ID/dado financeiro em toast ou indicador');
+
+// D16: caso adicional — com finflow_drive_file_id JÁ em cache, findDataFile()
+// não vai à rede (fast path); só a tentativa de upload gera 1 chamada de
+// fetch, e initApp() ainda assim não rejeita quando essa chamada falha.
+await check('D16', async () => {
+  const r = await withFailingFetch(() => page.evaluate(async () => {
+    let fetchCalls = 0;
+    const wrapped = window.fetch;
+    window.fetch = (...args) => { fetchCalls++; return wrapped(...args); };
+    localStorage.setItem('finflow_drive_file_id', 'cached-file-id');
+    localStorage.setItem('finflow_unsynced', '1');
+    let rejected = false;
+    try { await initApp(); } catch (e) { rejected = true; }
+    return { rejected, fetchCalls, unsynced: localStorage.getItem('finflow_unsynced'), fileId: localStorage.getItem('finflow_drive_file_id') };
+  }));
+  const ok = !r.rejected && r.fetchCalls === 1 && r.unsynced === '1' && r.fileId === 'cached-file-id';
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado 3, caso adicional: com ID de arquivo já em cache, findDataFile() não vai à rede — só o upload (1 fetch) roda, e initApp() não rejeita mesmo assim');
+
+// D17: recuperação posterior quando a rede volta — depois de uma falha que
+// mantém finflow_unsynced=1, uma nova tentativa com fetch funcionando limpa
+// a pendência local.
+await check('D17', async () => {
+  await withFailingFetch(() => page.evaluate(async () => {
+    localStorage.setItem('finflow_unsynced', '1');
+    try { await sincronizarAgora(); } catch (e) {}
+  }));
+  const durante = await page.evaluate(() => localStorage.getItem('finflow_unsynced'));
+  const depois = await withSucceedingFetch(() => page.evaluate(async () => {
+    await sincronizarAgora();
+    return localStorage.getItem('finflow_unsynced');
+  }));
+  const ok = durante === '1' && depois === null;
+  return { ok, detail: `durante a falha=${durante} depois da rede voltar=${depois} (esp. 1, null)` };
+}, 'achado 3, caso adicional: recuperação posterior — quando a rede volta, uma nova tentativa limpa finflow_unsynced');
+
+// D18: upload bem-sucedido dentro do próprio fluxo de initApp() (não só
+// saveToDrive() isolado) remove finflow_unsynced.
+await check('D18', async () => {
+  const r = await withSucceedingFetch(() => page.evaluate(async () => {
+    localStorage.removeItem('finflow_drive_file_id');
+    localStorage.setItem('finflow_unsynced', '1');
+    let rejected = false;
+    try { await initApp(); } catch (e) { rejected = true; }
+    return { rejected, unsynced: localStorage.getItem('finflow_unsynced') };
+  }));
+  const ok = !r.rejected && r.unsynced === null;
+  return { ok, detail: JSON.stringify(r) };
+}, 'achado 3, caso adicional: initApp() com rede disponível conclui o upload e remove finflow_unsynced');
+
+// D19: ausência de duplicação do arquivo remoto — com um ID já conhecido,
+// saveToDrive() sempre atualiza (PATCH) o arquivo existente, nunca tenta
+// criar um segundo (create usa multipart/related), dentro do que os mocks
+// desta suíte conseguem comprovar (sem Drive real).
+await check('D19', async () => {
+  const r = await page.evaluate(async () => {
+    const orig = window.fetch;
+    const calls = [];
+    window.fetch = (url, opts) => {
+      calls.push({ url: String(url), method: (opts && opts.method) || 'GET' });
+      return Promise.resolve({ ok: true, status: 200, statusText: 'OK', json: async () => ({ id: 'existing-file-id' }), clone() { return this; } });
+    };
+    localStorage.setItem('finflow_drive_file_id', 'existing-file-id');
+    localStorage.setItem('finflow_unsynced', '1');
+    await findDataFile(); // fast path: lê do cache local, sem ir à rede
+    await saveToDrive();
+    window.fetch = orig;
+    return { calls, unsynced: localStorage.getItem('finflow_unsynced') };
+  });
+  const semCriacao = !r.calls.some((c) => c.url.includes('uploadType=multipart'));
+  const usouAtualizacao = r.calls.some((c) => c.method === 'PATCH');
+  const ok = semCriacao && usouAtualizacao && r.unsynced === null;
+  return { ok, detail: `calls=${JSON.stringify(r.calls)} unsynced=${r.unsynced} (esp. sem multipart/create, com PATCH, unsynced=null)` };
+}, 'achado 3, caso adicional: com ID conhecido, saveToDrive() sempre atualiza o arquivo existente — nunca cria um segundo');
+
 await close();
 
 const fails = results.filter((r) => r.status === 'FAIL').length;

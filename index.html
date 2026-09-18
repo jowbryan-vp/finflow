@@ -1949,7 +1949,18 @@ async function initApp() {
   // indicador já foi atualizado dentro delas, e o que já está em memória
   // (cache local) continua sendo renderizado normalmente.
   if (localStorage.getItem('finflow_unsynced') === '1') {
-    await findDataFile(); // só lê o id do arquivo do cache local, sem ir à rede
+    // findDataFile() só é "sem rede" quando finflow_drive_file_id já está em
+    // cache. Na primeira tentativa depois de uma falha (cenário comum —
+    // nunca chegou a salvar no Drive ainda) esse cache não existe, e
+    // findDataFile() PRECISA ir à rede pra não criar um arquivo duplicado
+    // (ver createDataFile() dentro de saveToDrive()). Por isso ela mora
+    // dentro do mesmo bloco protegido que saveToDrive(): se a rede falhar
+    // aqui, o erro é engolido silenciosamente (sem indicador próprio) e
+    // saveToDrive() tenta mesmo assim — como o mesmo fetch quebrado afeta
+    // as duas, é saveToDrive() quem acaba mostrando o indicador de erro e a
+    // mensagem amigável (ela já propaga e trata isso). Mantida por ora:
+    // removê-la reabriria o risco de arquivo duplicado no Drive.
+    try { await findDataFile(); } catch(e) {}
     try { await saveToDrive(); } catch(e) {}
   } else {
     // Sem alterações pendentes: seguro sincronizar a partir do Drive
@@ -7860,12 +7871,28 @@ function addOfficeProjeto(){
     if(entradaCent>contratoCent){toast('A entrada não pode ser maior que o valor do contrato');return;}
     if(!Number.isInteger(qtdParcelas)||qtdParcelas<0){toast('Quantidade de parcelas inválida');return;}
     if(entradaRecebida && !dataEntradaReal){toast('Informe a data real do recebimento da entrada');return;}
+    // Entrada prevista (>0, ainda não recebida) precisa de uma data prevista
+    // válida — sem isso o recebível "Entrada" nasce com dataPrevista:null e
+    // getOfficeReceivables() o exclui de toda projeção mensal (ele existe no
+    // banco de dados mas nunca aparece em getOfficeReceivablesPrevistoTotal).
+    // Nunca inventa a data nem cai pra data do contrato como fallback.
+    if(entradaCent>0 && !entradaRecebida && (!dataEntradaPrevista||!isValidISODateString(dataEntradaPrevista))){
+      toast('Informe uma data prevista válida para a entrada');return;
+    }
     const saldoCent=contratoCent-entradaCent;
     if(saldoCent>0 && qtdParcelas===0){toast('Informe a quantidade de parcelas para o saldo restante (ou ajuste a entrada para igualar o contrato)');return;}
     if(saldoCent>0 && !dataPrimeiraParcela){toast('Informe a data prevista da 1ª parcela');return;}
     if(!contaDestino){toast('Selecione a conta empresarial de destino');return;}
 
-    projeto.valorEntrada=valorEntrada;
+    // A partir daqui os centavos inteiros (contratoCent/entradaCent) são a
+    // única fonte de verdade monetária — persistidos de volta em reais só
+    // depois de arredondados, nunca os valores brutos de parseFloat (que
+    // podem chegar com mais de duas casas via colar/estado programático,
+    // apesar do step="0.01" do campo HTML). Isso garante que a soma de
+    // entrada + recebíveis bate exatamente com o contrato em centavos,
+    // sem depender de comparação direta de float.
+    projeto.valorContrato=contratoCent/100;
+    projeto.valorEntrada=entradaCent/100;
     projeto.dataEntradaPrevista=dataEntradaPrevista;
     projeto.entradaRecebida=entradaRecebida;
     projeto.dataEntradaReal=dataEntradaReal;
