@@ -18,3 +18,8 @@ Branch final: gate/4.3, descendente da baseline remota e do workspace local. Mai
 O arquivo atual do app é index.html na raiz. delivery/index.html continua histórico. Limites: projeção parte do saldo registrado atual; eventos sem dia afetam totais, não uma data inventada de insuficiência; estimativas têm hipótese proporcional explícita; simulador mensal separado. Backup real e Drive autenticado não testados.
 
 A automação deve ser pausada ao concluir esta entrega, conforme instrução recebida. Retomar só para correção solicitada ou próximo escopo aprovado.
+
+## Fluxo restaurado
+Por nova solicitação do usuário: Claude Code implementa/corrige; Codex coordena e audita. Não executar novos gates com autorrevisão substituindo essa separação. Histórico e resultados anteriores permanecem atribuídos ao Codex. Automação continua pausada; nenhum gate novo autorizado por esta alteração.
+
+Verificação do Claude Code: execução real de leitura concluída sem permissões negadas; sessão 8da144b2-09db-4a4c-8a40-60e2e41fe1e1. Claude leu as instruções e confirmou papel de implementador, sem editar código.

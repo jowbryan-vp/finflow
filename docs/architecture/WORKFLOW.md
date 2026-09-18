@@ -15,7 +15,7 @@ Os dois históricos não têm ancestral comum. Foram preservados por branches se
 
 ## Trabalho sequencial
 
-1. Partir de workspace/local com status limpo e criar gate/<numero> apenas para um escopo solicitado.
+1. Partir da última branch aprovada com status limpo (atualmente gate/4.3); não voltar à versão antiga workspace/local para novos gates. Criar gate/<numero> apenas para escopo solicitado.
 2. Registrar especificação em docs/gates/. Claude implementa e executa a suíte.
 3. Claude faz commit e entrega hashes inicial/final, alterações e testes; encerra sua edição.
 4. Codex revisa diff e código relacionado, testa e registra PASS/FAIL em docs/audits/.
@@ -24,5 +24,14 @@ Os dois históricos não têm ancestral comum. Foram preservados por branches se
 
 Relatórios originais permanecem na raiz para preservar referências. Novos documentos ficam em docs/. Extensões Claude Code e Codex já instaladas; autenticação, se necessária, é feita pelo usuário no editor.
 
-## Atualização — execução autônoma autorizada
-Gates 4.1–4.3 concluídos na branch gate/4.3. Codex implementou e fez autorrevisões sequenciais por autorização posterior do usuário. Consulte docs/PROGRESS.md; a sequência Claude→Codex acima é uma opção de divisão de trabalho, não bloqueio para o escopo já autorizado.
+## Fluxo original restaurado por solicitação do usuário
+
+Claude Code implementa → commit e handoff → Codex audita → PASS ou devolução ao Claude. Os papéis estão definidos em AGENTS.md e CLAUDE.md. A autorização anterior para execução pelo Codex não deve ser usada como exceção a essa instrução mais recente.
+
+O Claude Code local está instalado e autenticado. Executável verificado: C:\Users\jowbr\.local\bin\claude.exe. Pode ser acionado no terminal do VS Code ou pelo coordenador no mesmo repositório. Uma execução via terminal/processo não implica que a conversa apareça automaticamente no painel da extensão. Não prometer digitação ou acompanhamento visual no painel quando a execução ocorrer em segundo plano.
+
+Para execução coordenada: fornecer o escopo em arquivo, verificar checkout limpo e branch, executar Claude com permissões específicas ao escopo (sem bypass global), guardar identificação da sessão e resultado, aguardar término antes de auditar e conferir o diff real. Se faltar permissão/autenticação/cota, solicitar intervenção em vez de Codex implementar.
+
+A automação anterior permanece pausada. Sua reativação deve obedecer a estes papéis e não iniciar Gate 5 sem escopo novo.
+
+Histórico: Gates 4.1–4.3 foram implementados e autorrevisados pelo Codex. Isso continua registrado; não existe auditoria independente retroativa desses commits.
