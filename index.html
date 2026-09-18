@@ -821,6 +821,7 @@ select option{background:var(--card)}
 
       <!-- E SE... SIMULADOR -->
       <div id="page-eSe" class="page">
+        <div class="info-box">Simulação mensal com hipóteses próprias. Para planejar o caixa por data, usando salário principal e estimativas por categoria, consulte o Dashboard.</div>
         <!-- Formulário de itens simulados -->
         <div class="card" style="margin-bottom:20px">
           <div class="card-header">
@@ -2465,7 +2466,7 @@ function getChronologicalProjection(referenceDate,endDate){
   const contracted=events.filter(e=>e.kind==='income').reduce((s,e)=>s+e.amount,0);
   const potentials=all.filter(e=>e.kind==='potential').reduce((s,e)=>s+e.amount,0);
   events.sort((a,b)=>a.date.localeCompare(b.date)||a.id.localeCompare(b.id));
-  const timeline=[]; let running=available,minimum=available,firstShortfall=null;
+  const timeline=[]; let running=available,minimum=available,firstShortfall=available<0?referenceDate:null;
   for(const date of [...new Set(events.map(e=>e.date))]){
     const dayEvents=events.filter(e=>e.date===date);
     running+=dayEvents.filter(e=>e.kind!=='potential').reduce((s,e)=>s+e.amount,0);
@@ -3460,52 +3461,73 @@ function renderProjecaoFinanceira(t){
   });
 }
 
+function setFinancialPreference(key,value){
+  if(key==='primarySalaryId'&&value&&!(state.receitas||[]).some(r=>r.id===value&&r.tipo==='salario'&&r.certeza!==undefined&&r.recorrencia)) return;
+  if(key==='variableMethod'&&!['weighted','simple'].includes(value))return;
+  if(key==='projectionEndDate'&&value){
+    const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+    if(getChronologicalProjection(today,value).unavailable){toast('Escolha uma data de hoje até os próximos 12 meses');return;}
+  }
+  if(!['primarySalaryId','variableMethod','projectionEndDate'].includes(key))return;
+  state.financialPreferences={...(state.financialPreferences||{}),[key]:value};
+  scheduleSave();renderFinancialOutlook();
+}
+function renderFinancialOutlook(){
+  const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+  const preferences=state.financialPreferences||{},cycle=getCurrentFinancialCycle(today);
+  const fallback=projectionDate(now.getFullYear(),now.getMonth()+1,31);
+  let end=preferences.projectionEndDate||cycle.endDate||fallback;
+  if(!isValidISODateString(end)||end<today)end=cycle.endDate&&cycle.endDate>=today?cycle.endDate:fallback;
+  let p=getFinancialOutlook(today,end);
+  if(p.unavailable){end=fallback;p=getFinancialOutlook(today,end);}
+  const salaries=(state.receitas||[]).filter(r=>r.tipo==='salario'&&r.certeza!==undefined&&r.recorrencia);
+  const primary=preferences.primarySalaryId||(salaries.length===1?salaries[0].id:'');
+  const dateLabel=date=>isValidISODateString(date)?date.split('-').reverse().join('/'):'Sem data';
+  const metric=(id,title,value,note)=>`<div class="hero-tile"><div class="hero-label">${title}</div><div id="${id}" class="hero-value ${value<0?'red':'blue'}">${fmtBRL(value)}</div><div class="hero-sub">${note}</div></div>`;
+  document.getElementById('dashHero').innerHTML=`
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div><div class="card-title">Seu planejamento a partir de hoje</div><div class="card-sub">${dateLabel(today)} até ${dateLabel(end)} · os relatórios mensais continuam abaixo</div></div></div>
+      <div class="form-grid">
+        <div class="form-group"><label for="primarySalarySelect">Salário principal do ciclo</label><select id="primarySalarySelect" onchange="setFinancialPreference('primarySalaryId',this.value)"><option value="">${salaries.length?'Escolha o salário principal':'Nenhum salário recorrente cadastrado'}</option>${salaries.map(r=>`<option value="${esc(r.id)}" ${r.id===primary?'selected':''}>${esc(r.nome||'Salário')}</option>`).join('')}</select></div>
+        <div class="form-group"><label for="projectionEndDate">Planejar até</label><input id="projectionEndDate" type="date" min="${today}" value="${end}" onchange="setFinancialPreference('projectionEndDate',this.value)"></div>
+        <div class="form-group"><label for="variableMethodSelect">Estimativa dos últimos 3 meses</label><select id="variableMethodSelect" onchange="setFinancialPreference('variableMethod',this.value)"><option value="weighted" ${preferences.variableMethod!=='simple'?'selected':''}>Mais peso ao recente (1, 2, 3)</option><option value="simple" ${preferences.variableMethod==='simple'?'selected':''}>Média simples</option></select></div>
+        <div class="form-group"><label>Ciclo do salário principal</label><div id="financialCycleLabel" class="info-box">${cycle.cycleUnavailable?(cycle.selectionRequired?'Escolha um salário principal para definir o ciclo.':'Ainda não há recebimento real para definir o ciclo.'):`${dateLabel(cycle.startDate)} → ${cycle.endDate?dateLabel(cycle.endDate):'fim ainda desconhecido'}${cycle.endSource==='expected_salary'?' (fim estimado)':''}`}</div><button class="btn btn-ghost btn-sm" onclick="setFinancialPreference('projectionEndDate','')">Usar fim do ciclo</button></div>
+      </div>
+    </div>
+    <div class="hero-grid">
+      ${metric('outlookAvailable','Disponível agora',p.available,'Saldo registrado nas contas pessoais. Reservas e escritório ficam separados.')}
+      ${metric('outlookCommitted','Após obrigações',p.committed,`Disponível menos ${fmtBRL(p.obligations)} a pagar. Não inclui receitas pendentes.`)}
+      ${metric('outlookProjected','Saldo projetado',p.projected,`Inclui ${fmtBRL(p.contracted)} a receber e desconta ${fmtBRL(p.variable.total)} de estimativa variável.`)}
+    </div>
+    <div class="info-box" id="outlookQuality">${!state.contas.length?'Cadastre contas pessoais para ter um saldo inicial. ':''}${p.incomplete?'Projeção incompleta: confira datas, cadastros e histórico abaixo.':'Projeção baseada nos lançamentos registrados e na hipótese de gastos indicada abaixo.'} O saldo inicial é o registrado agora; não é uma reconstrução do saldo diário histórico.</div>
+    <div class="card" style="margin-top:16px"><div class="card-title">Receitas potenciais: <span id="outlookPotentials">${fmtBRL(p.potentials)}</span></div><p class="card-sub">Apresentadas separadamente. Não aumentam o disponível nem o saldo projetado.</p></div>`;
+  const risk=p.firstShortfall?`Os lançamentos com data indicam saldo negativo em ${dateLabel(p.firstShortfall)}.`:
+    p.projected<0?'O saldo final projetado é negativo. Confira as obrigações e a estimativa.':
+    'Não foi identificado saldo negativo nos lançamentos com data. Isso não garante suficiência para gastos sem data ou ainda desconhecidos.';
+  const issueNames={missing_personal_account:'Receita sem conta pessoal válida',missing_revenue_date:'Receita sem data prevista válida',invalid_received_date:'Recebimento com data real inválida',missing_card:'Despesa com cartão não encontrado',invalid_amount:'Valor inválido',history_limited:'Histórico de atrasos limitado a 240 meses'};
+  document.getElementById('dashProjecaoFinanceira').innerHTML=`<div class="card"><div class="card-title">Linha do tempo dos lançamentos conhecidos</div><p id="outlookRisk">${risk}</p><p class="card-sub">${p.undated.length} lançamento(s) sem data ficam fora desta sequência. A estimativa variável também não tem dia de pagamento definido. Eventos do mesmo dia são somados, sem presumir a ordem dentro do dia.</p>
+    <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Data</th><th>Lançamentos</th><th>Saldo após o dia</th></tr></thead><tbody>${p.timeline.length?p.timeline.map(day=>`<tr><td>${dateLabel(day.date)}</td><td>${day.events.map(e=>`${esc(e.label)}: ${fmtBRL(e.amount)}${e.kind==='potential'?' (potencial; fora do saldo)':''}${e.overdue?` (atrasado desde ${dateLabel(e.originalDate)})`:''}`).join('<br>')}</td><td class="mono ${day.balance<0?'red':''}">${fmtBRL(day.balance)}</td></tr>`).join(''):'<tr><td colspan="3">Nenhum lançamento pendente com data neste período.</td></tr>'}</tbody></table></div>
+    ${p.undated.length?`<details><summary>Ver lançamentos sem data definida (${p.undated.length})</summary>${p.undated.map(e=>`<p>${esc(e.label)} · ${esc(e.month)} · ${fmtBRL(e.amount)}${e.kind==='potential'?' · potencial; fora do saldo':''}</p>`).join('')}<p>Obrigações incluídas no saldo final de forma conservadora; o dia de pagamento precisa ser confirmado.</p></details>`:''}
+    ${p.issues.length?`<details open><summary>Cadastros para conferir (${p.issues.length})</summary>${[...new Set(p.issues.map(i=>issueNames[i.reason]||'Cadastro incompleto'))].map(label=>`<p>${esc(label)}</p>`).join('')}</details>`:''}</div>`;
+  document.getElementById('dashPrevisaoMedia').innerHTML=`<div class="card"><div class="card-title">Gastos variáveis ainda estimados: ${fmtBRL(p.variable.total)}</div><p class="card-sub">${p.variable.unavailable?'Histórico insuficiente: são necessários lançamentos nos três meses completos anteriores. Não foi adicionada estimativa.':'Média por categoria, descontando tudo o que já foi lançado no mês. Para períodos parciais, o restante é distribuído proporcionalmente pelos dias restantes; é uma hipótese de planejamento.'}</p>${(p.variable.months||[]).map(m=>`<details><summary>${esc(m.month)} · ${fmtBRL(m.total)}</summary>${m.categories.map(c=>`<p>${esc(state.categories.find(cat=>cat.id===c.category)?.name||c.category)}: média ${fmtBRL(c.expected)} · lançado ${fmtBRL(c.registered)} · restante no período ${fmtBRL(c.remaining)}</p>`).join('')}</details>`).join('')}</div>`;
+}
+
 function renderDashboard(){
   const t=getTotalsForMonth(currentMonth,currentYear);
   const{previstoEntradas,emCaixaEntradas,totalDespPrevisao,emCaixaSaidas,
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
-  renderResumoPagar(t);
-  renderProjecaoFinanceira(t);
+  // Replaced by one consistent planning summary; monthly details remain below.
+  document.getElementById('dashResumoPagar').innerHTML='';
+  // Daily planning is rendered by renderFinancialOutlook.
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
   const contribuicaoAjustada=state.contribuicaoAjustes?.[k]!==undefined;
   const pendentesCount=getReceitasPrevistasForMonth(currentMonth,currentYear).length;
 
-  // ── Hero: os 3 números que mais importam (Caixa / Pior / Melhor) ──
-  document.getElementById('dashHero').innerHTML=`
-    <div class="hero-grid">
-      <div class="hero-tile t-accent" style="cursor:pointer" onclick="navigateReceitasFiltro('recebidas')" title="Saldo efetivo atual incluindo meses anteriores">
-        <div class="hero-label" style="color:var(--accent)">🏦 Em Caixa Agora</div>
-        <div class="hero-value ${emCaixaDisponivel>=0?'blue':'red'}">${fmtBRL(emCaixaDisponivel)}</div>
-        <div class="hero-sub">${usaContasComoFonte
-          ? 'Soma do saldo de todas as Contas Bancárias'
-          : isProjecaoFutura
-            ? 'Projeção (Pior Cenário) a partir do saldo atual das contas'
-            : `Mês: ${fmtBRL(emCaixaLiquido)}${excedentAcum>0?` · Anterior: <span style="color:var(--accent2)">+${fmtBRL(excedentAcum)}</span>`:''}`}</div>
-      </div>
-      <div class="hero-tile t-warn" title="${isMesAtualReal(currentMonth,currentYear)?'Paga tudo, não recebe nada pendente':(isProjecaoFutura?'Caixa atual, projetado mês a mês até aqui, sem repasses de terceiros':'Sem repasses de terceiros, mês isolado (sem caixa atual)')}">
-        <div class="hero-label" style="color:var(--warn)">📉 Pior Cenário</div>
-        <div class="hero-value ${saldoPiorCenario>=0?'blue':'red'}">${fmtBRL(saldoPiorCenario)}</div>
-        <div class="hero-sub">${isMesAtualReal(currentMonth,currentYear)?'Entrada real − previsto saídas':(isProjecaoFutura?'Caixa atual − despesas previstas até aqui':'Salário previsto (sem repasses) − saídas')}</div>
-      </div>
-      <div class="hero-tile t-ok" title="${isMesAtualReal(currentMonth,currentYear)?'Recebe tudo pendente, paga tudo':(isProjecaoFutura?'Caixa atual, projetado mês a mês até aqui, somando repasses no caminho':'Salário + repasses do mês, mês isolado (sem caixa atual)')}">
-        <div class="hero-label" style="color:var(--accent2)">📈 Melhor Cenário</div>
-        <div class="hero-value ${saldoMelhorCenario>=0?'green':'red'}">${fmtBRL(saldoMelhorCenario)}</div>
-        <div class="hero-sub">${isMesAtualReal(currentMonth,currentYear)
-          ? ((totalRecPrevisto+repassesPendentes)>0?`+${fmtBRL(totalRecPrevisto+repassesPendentes)} pendentes a receber`:'Nenhum pendente')
-          : (isProjecaoFutura?'Caixa atual + repasses − despesas até aqui':(repassesPendentes>0?`+${fmtBRL(repassesPendentes)} de repasses no mês`:'Sem repasses previstos'))}</div>
-      </div>
-    </div>
-    <div class="tip" style="font-size:11px;color:var(--muted);margin:-10px 0 4px">
-      ${isMesAtualReal(currentMonth,currentYear)
-        ? '💡 Cenários do mês corrente incluem o caixa atual e o saldo acumulado de meses anteriores.'
-        : (isProjecaoFutura
-          ? '💡 Projeção: parte do seu caixa atual (soma das Contas Bancárias) e acumula, mês a mês, o resultado previsto de cada mês até o mês navegado.'
-          : '💡 Mês fora do período atual: cenários calculados de forma isolada, sem considerar o caixa de hoje (sobra/falta não atravessa meses).')}
-    </div>`;
+  renderFinancialOutlook();
 
   // ── Detalhamento do mês: previsto x real, lado a lado ──
   document.getElementById('dashDetalhamento').innerHTML=`
@@ -3676,7 +3698,7 @@ function renderDashboard(){
   });
 
   // ── Previsão de gastos variáveis por média histórica ──
-  renderPrevisaoMediaHistorica();
+  // Variable estimates are included in the planning panel.
 
   // ── Recent table ──
   if(!desps.length){

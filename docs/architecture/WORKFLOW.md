@@ -23,3 +23,6 @@ Os dois históricos não têm ancestral comum. Foram preservados por branches se
 6. Integração/publicação somente no escopo autorizado. Não fazer push automático ou sobrescrever main remoto.
 
 Relatórios originais permanecem na raiz para preservar referências. Novos documentos ficam em docs/. Extensões Claude Code e Codex já instaladas; autenticação, se necessária, é feita pelo usuário no editor.
+
+## Atualização — execução autônoma autorizada
+Gates 4.1–4.3 concluídos na branch gate/4.3. Codex implementou e fez autorrevisões sequenciais por autorização posterior do usuário. Consulte docs/PROGRESS.md; a sequência Claude→Codex acima é uma opção de divisão de trabalho, não bloqueio para o escopo já autorizado.

@@ -1,14 +1,20 @@
-# Execução autônoma
+# Execução autônoma — etapa concluída
 
-Autorização atual: usuário solicitou execução imediata e sequencial dos gates e auditorias pelo Codex. Isso substitui a exigência operacional anterior de aguardar o Claude remoto. Não publicar ou alterar main antigo.
+Autorização do usuário: auditoria/correção Gate 2.2 e implementação/revisão sequencial Gates 4.1–4.3 pelo Codex. Etapas concluídas; não iniciar Gate 5 ou publicar sem novo escopo.
 
-- Auditoria Gate 2.2: falhas reproduzidas e corrigidas em 764636a; 267/267 testes.
-- Gate 4.1: motor e principal selecionável no estado; 279/279 testes; autorrevisão documentada.
-- Próximo: Gate 4.2; aguarda preferência solicitada ao usuário sobre média variável (ponderada 1/2/3 ou simples).
-- Gate 4.3: integração visual, escolha persistida de salário principal e explicação de limites.
+| Etapa | Resultado | Evidência |
+|---|---|---|
+| Auditoria Gate 2.2 | FAIL inicial corrigido; PASS | 764636a; 267 testes |
+| Gate 4.1 | PASS | e140588 + 9de6454; 279 testes |
+| Gate 4.2 | PASS | ae2139e; 289 testes |
+| Gate 4.3 | PASS | commit da etapa; 300 testes |
 
-Decisão confirmada: salário principal escolhido deve definir o ciclo; não misturar todos os salários.
+Relatórios detalhados em docs/audits/GATE-*.md, especificações em docs/gates/. Implementação e revisão realizadas pelo mesmo Codex, em etapas separadas; não houve segundo revisor independente.
 
-Antes de retomar, conferir branch e status para não sobrepor execução em curso. Branch de trabalho atual gate/4.1. Nunca concluir que passou somente porque relatório remoto afirma PASS; executar verificações apropriadas.
+Decisão confirmada pelo usuário: salário principal escolhido define o ciclo. A média ponderada 1/2/3 foi adotada como padrão ajustável após consulta opcional sem resposta; média simples disponível na interface. Preferências por perfil persistem no mecanismo existente.
 
-Gate 4.2: motor implementado com ambos os métodos; 289/289 PASS. Média ponderada usada como padrão ajustável na ausência de preferência. Próximo Gate 4.3.
+Branch final: gate/4.3, descendente da baseline remota e do workspace local. Main antigo, histórico remoto, tags de baseline e arquivos de exportação preservados. Sem push, merge em main ou uso de dados reais.
+
+O arquivo atual do app é index.html na raiz. delivery/index.html continua histórico. Limites: projeção parte do saldo registrado atual; eventos sem dia afetam totais, não uma data inventada de insuficiência; estimativas têm hipótese proporcional explícita; simulador mensal separado. Backup real e Drive autenticado não testados.
+
+A automação deve ser pausada ao concluir esta entrega, conforme instrução recebida. Retomar só para correção solicitada ou próximo escopo aprovado.
