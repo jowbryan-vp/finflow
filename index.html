@@ -3436,6 +3436,13 @@ function openPagarFaturaModal(cardId,mesParam,anoParam){
   const card=state.cards.find(c=>c.id===cardId);
   const t=getTotalsForMonth(mes,ano);
   const valor=(t.byCard&&t.byCard[cardId])||0;
+  // Achado 4: fatura com valor zero não tem o que pagar — abrir esse modal
+  // deixaria "paga" uma fatura vazia e, se uma compra chegasse depois nesse
+  // mesmo mês/cartão, o saldo da conta cairia sozinho sem um novo ato de
+  // pagamento (byCard é recalculado a cada render, nunca congelado). Marcar
+  // como paga um estado antigo continua possível pra permitir DESMARCAR
+  // (ver toggleFaturaPaga) — só o pagamento de uma fatura vazia é bloqueado.
+  if(!(valor>0)){ toast('Não há valor nessa fatura para pagar'); return; }
   const contaOpts = state.contas.length
     ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
@@ -3455,6 +3462,10 @@ function confirmarPagamentoFatura(cardId,mesParam,anoParam){
   const mes=mesParam||currentMonth, ano=anoParam||currentYear;
   const contaId=document.getElementById('pagarFaturaConta')?.value;
   if(!contaId){toast('Cadastre e selecione a conta bancária de origem');return;}
+  // Guard de defesa: mesmo chamado diretamente (sem passar pelo modal, que já
+  // bloqueia em openPagarFaturaModal), fatura vazia nunca vira paga (achado 4).
+  const valorAtual=(getTotalsForMonth(mes,ano).byCard||{})[cardId]||0;
+  if(!(valorAtual>0)){ toast('Não há valor nessa fatura para pagar'); closeModal(); return; }
   const k=faturaKey(cardId,mes,ano);
   if(!state.faturasPagas) state.faturasPagas={};
   if(!state.faturasContas) state.faturasContas={};
@@ -5076,34 +5087,39 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
     </div>`;
   }
 
-  // Render each card group as accordion
+  // Render each card group. Dinheiro/PIX continua com o accordion completo
+  // (itens, editar, excluir, pago/previsto) — é o que Despesas agora foca.
+  // Cartão de crédito vira um RESUMO (total e status visíveis, nada
+  // escondido) com um único link pra Cartões / Faturas: compras, parcelas,
+  // pagar/desmarcar/ajustar são ações concentradas lá, não duplicadas aqui
+  // (achado 1 da auditoria — docs/audits/CARDS-INVOICES-UI-REVIEW.md).
   Object.values(grupos).forEach(g=>{
     if(!g.items.length) return;
     const isCC=isCartaoDeCredito(g.card.id);
-    const paga=isCC&&isFaturaPaga(g.card.id,currentMonth,currentYear);
-    const statusBadge=isCC
-      ?(paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>')
-      :'';
-    const faturaBtn=isCC
-      ?(paga
-        ?`<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">Desmarcar</button>`
-        :`<button class="btn btn-ok btn-sm" onclick="event.stopPropagation();toggleFaturaPaga('${g.card.id}')">✓ Pagar fatura</button>
-          <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openAjustarFaturaModal('${g.card.id}')" title="Ajustar Fatura">⚖</button>`)
-      :'';
+    if(isCC){
+      const paga=isFaturaPaga(g.card.id,currentMonth,currentYear);
+      const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
+      html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${g.card.id}')">
+        <div style="width:14px;height:14px;border-radius:50%;background:${g.card.color};flex-shrink:0"></div>
+        <div class="item-row-info">
+          <div class="item-row-name">${esc(g.card.name)} ${statusBadge}</div>
+          <div class="item-row-meta">${g.items.length} compra${g.items.length>1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
+        </div>
+        <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(g.total)}</span>
+        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao('${g.card.id}')">Ver fatura →</button>
+      </div>`;
+      return;
+    }
     const accId=g.card.id.replace(/[^a-z0-9]/gi,'_');
     html+=`<div class="accordion">
       <div class="accordion-head" onclick="toggleAccordion('${accId}')">
         <div style="width:14px;height:14px;border-radius:50%;background:${g.card.color};flex-shrink:0"></div>
         <div class="accordion-head-info">
-          <div class="accordion-head-name">
-            ${g.card.name}
-            ${statusBadge}
-          </div>
+          <div class="accordion-head-name">${g.card.name}</div>
           <div class="accordion-head-sub">${g.items.length} lançamento${g.items.length>1?'s':''} · clique para expandir</div>
         </div>
         <div class="accordion-head-right">
-          ${faturaBtn}
-          <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(g.total)}</span>
+          <span class="mono" style="font-size:15px;font-weight:600;color:var(--danger)">${fmtBRL(g.total)}</span>
           <span class="accordion-chevron" id="acc-chev-${accId}">▶</span>
         </div>
       </div>
@@ -5128,7 +5144,31 @@ function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard){
       <div class="item-row-val neg">${fmtBRL(contrib)}</div>
     </div>`;
   }
-  despsFiltradas.forEach(d=>{ html+=despItemHTML(d); });
+  // Pagamento direto: item por item, igual sempre foi. Cartão de crédito
+  // (ex: filtro "pagas"/"pendentes", que soma os dois) vira um resumo por
+  // cartão com link pra Cartões / Faturas — mesmo total, sem duplicar
+  // compra/parcela/pagar aqui (achado 1 da auditoria).
+  const creditoPorCartao={};
+  despsFiltradas.forEach(d=>{
+    if(!isCartaoDeCredito(d.cartao)){ html+=despItemHTML(d); return; }
+    if(!creditoPorCartao[d.cartao]) creditoPorCartao[d.cartao]={items:[],total:0};
+    creditoPorCartao[d.cartao].items.push(d);
+    creditoPorCartao[d.cartao].total+=(d._valorParcela||0);
+  });
+  Object.entries(creditoPorCartao).forEach(([cardId,g])=>{
+    const card=state.cards.find(c=>c.id===cardId)||{id:cardId,name:cardId,color:'#94a3b8'};
+    const paga=isFaturaPaga(cardId,currentMonth,currentYear);
+    const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
+    html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${cardId}')">
+      <div style="width:14px;height:14px;border-radius:50%;background:${card.color};flex-shrink:0"></div>
+      <div class="item-row-info">
+        <div class="item-row-name">${esc(card.name)} ${statusBadge}</div>
+        <div class="item-row-meta">${g.items.length} compra${g.items.length>1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
+      </div>
+      <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(g.total)}</span>
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao('${cardId}')">Ver fatura →</button>
+    </div>`;
+  });
   html+='</div>';
   document.getElementById('despesasList').innerHTML=html;
 }
@@ -5694,10 +5734,17 @@ function renderFaturaCartoes(){
   const itens=getDespesasForMonth(currentMonth,currentYear).filter(d=>d.cartao===cardId);
 
   const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
+  // Achado 4: sem valor, não há o que pagar — "Marcar como Paga" some (nunca
+  // grava um pagamento de R$0), mas "Desmarcar" continua disponível se um
+  // estado antigo já estiver marcado como pago, e "Ajustar Fatura" continua
+  // acessível (é o jeito de corrigir um total que a compra ainda não reflete).
   const acaoBtn=paga
     ?`<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga('${cardId}')">Desmarcar</button>`
-    :`<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${cardId}')">✓ Marcar como Paga</button>
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`;
+    :(total>0
+      ?`<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${cardId}')">✓ Marcar como Paga</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`
+      :`<span style="font-size:12px;color:var(--muted)">Sem valor a pagar</span>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`);
   document.getElementById('cartaoFaturaResumo').innerHTML=`
     <div class="mini-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="mini-tile">
@@ -5749,7 +5796,7 @@ function openNovaCompraCartao(){
         <input type="date" id="nDespDataCompra" value="${dataHoje}">
         <div style="font-size:10px;color:var(--muted);margin-top:3px">Usada pra calcular em qual fatura a compra cai, considerando o dia de fechamento do cartão.</div>
       </div>
-      <div class="checkbox-row form-group full"><input type="checkbox" id="nDespFixa" style="width:auto"><label for="nDespFixa">Despesa fixa (recorrente)</label></div>
+      <div class="checkbox-row form-group full"><input type="checkbox" id="nDespFixa" style="width:auto" onchange="nOnFixaChange()"><label for="nDespFixa">Despesa fixa (recorrente)</label></div>
     </div>
     <div class="info-box mt-16">Compras compartilhadas com outras pessoas ou parcelamentos já lançados: use "Editar" na lista da fatura depois de criar a compra.</div>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -5763,6 +5810,14 @@ function nUpdateSubcats(){
   const sub=document.getElementById('nDespSubcat');
   if(sub) sub.innerHTML=(cat?.subs||[]).map(s=>`<option value="${s}">${esc(s)}</option>`).join('');
 }
+// Fixa e parcelada são mutuamente exclusivas (mesma regra do formulário
+// legado de Despesas, onDespFixaChange) — achado 2 da auditoria.
+function nOnFixaChange(){
+  const fixa=document.getElementById('nDespFixa').checked;
+  const parcelasInput=document.getElementById('nDespParcelas');
+  if(fixa) parcelasInput.value='1';
+  parcelasInput.disabled=fixa;
+}
 function salvarNovaCompraCartao(){
   const desc=document.getElementById('nDespDesc').value.trim();
   const cat=document.getElementById('nDespCat').value;
@@ -5771,20 +5826,24 @@ function salvarNovaCompraCartao(){
   if(!isCartaoDeCredito(cartao)){ toast('Selecione um cartão de crédito'); return; }
   const valor=parseFloat(document.getElementById('nDespValor').value);
   const parcelas=parseInt(document.getElementById('nDespParcelas').value)||1;
-  const dataCompraRaw=document.getElementById('nDespDataCompra').value||'';
-  const partesData=dataCompraRaw.split('-').map(Number);
-  let mesI,anoI,dataCompra=null;
-  if(dataCompraRaw&&partesData[0]&&partesData[1]){
-    dataCompra=dataCompraRaw; anoI=partesData[0]; mesI=partesData[1];
-  } else {
-    const hoje=new Date(); mesI=hoje.getMonth()+1; anoI=hoje.getFullYear();
-  }
   const fixa=document.getElementById('nDespFixa').checked;
+  // Achado 2: mesmo com o campo desabilitado pela UI, uma chamada direta (ou
+  // um valor deixado de outra interação) nunca pode gravar fixa+parcelado —
+  // getDespesasForMonth só estende despesa fixa quando parcelas===1.
+  if(fixa&&parcelas>1){ toast('Despesa fixa não pode ter mais de 1 parcela'); return; }
+  // Achado 3: compra NOVA sempre exige data de compra válida — o fallback
+  // "mês atual, sem dataCompra" só é aceitável pra registros antigos/
+  // importação existente (ver getCompetenciaFatura), nunca pra cadastro novo,
+  // senão a fatura muda de mês silenciosamente sem o usuário perceber.
+  const dataCompraRaw=document.getElementById('nDespDataCompra').value||'';
+  if(!isValidISODateString(dataCompraRaw)){ toast('Informe a data da compra'); return; }
   if(!desc){toast('Informe a descrição');return;}
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  const partesData=dataCompraRaw.split('-').map(Number);
+  const anoI=partesData[0], mesI=partesData[1];
   window._faturaCartaoSelecionado=cartao;
   state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta:null,valor,parcelas,mesInicio:mesI,anoInicio:anoI,
-    dataCompra,fixa,diaVencimento:null,debitoAutomatico:false,pagoMeses:{},split:[],repasses:{},createdAt:uid()});
+    dataCompra:dataCompraRaw,fixa,diaVencimento:null,debitoAutomatico:false,pagoMeses:{},split:[],repasses:{},createdAt:uid()});
   scheduleSave();closeModal();
   const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
   if(paginaAtiva==='despesas') renderDespesas();

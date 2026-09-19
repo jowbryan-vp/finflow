@@ -94,6 +94,13 @@ const FILES = [
   // volta a focar pagamento direto; navegação do Dashboard/busca/PDF/E-se
   // corrigida para não levar compra no crédito pra Despesas.
   'gate5-cards-invoices-ui.test.mjs',
+  // Gate 5 (UAT) — correção dos 4 achados da auditoria Codex sobre Cartões /
+  // Faturas (docs/audits/CARDS-INVOICES-UI-REVIEW.md): Despesas resume (não
+  // lista) compra no crédito, sem esconder o total; nova compra no cartão
+  // não pode ser fixa+parcelada nem sem data de compra válida; fatura sem
+  // valor não pode ser marcada como paga, mas desmarcar um estado legado
+  // continua possível.
+  'gate5-cards-invoices-audit-fixes.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
