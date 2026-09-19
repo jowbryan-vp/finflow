@@ -3841,12 +3841,18 @@ function renderDashboard(){
             <button class="btn btn-warn btn-sm" style="flex:1" onclick="navigate('cofrinho')">&#8617; Resgatar</button>
           </div>
         </div>
+        ${(state.contas&&state.contas.length>0)?`
+        <div class="mini-tile" title="Informativo: já está incluído no saldo das contas, não soma de novo">
+          <div class="mini-label">Saldo que permanece nas contas</div>
+          <div class="mini-value" style="font-size:18px">${fmtBRL(emCaixaDisponivel)}</div>
+          <div class="mini-note">${isProjecaoFutura?'Projeção a partir do saldo atual das contas':'Já incluído no saldo das contas — não é um lançamento'}</div>
+        </div>` : `
         <div class="mini-tile">
           <div class="mini-label">Guardar em Caixa</div>
           <div class="mini-value" style="font-size:18px">${fmtBRL(excedenteMes)}</div>
           <div class="mini-note">Total acumulado: ${fmtBRL(excedentAcum+excedenteMes)}</div>
           <button class="btn btn-success btn-sm" style="margin-top:8px;width:100%" onclick="openExcedenteCaixa()">+ Guardar</button>
-        </div>
+        </div>`}
       </div>
     </div>`;
 
@@ -7184,6 +7190,10 @@ function renderCofrinho(){
 // EXCEDENTE DE CAIXA
 // ════════════════════════════════════════════════
 function openExcedenteCaixa(){
+  // Com contas cadastradas, o saldo real das contas já é a fonte de verdade
+  // (ver getTotalsForMonth) — o modal legado de "Guardar em Caixa" não pode
+  // abrir nem gravar state.excedentes nesse caso, mesmo chamado diretamente.
+  if(state.contas&&state.contas.length>0) return;
   const k=mesKey(currentMonth,currentYear);
   const atual=state.excedentes?.[k]||0;
   const{saldo,contrib}=getTotalsForMonth(currentMonth,currentYear);
@@ -7214,6 +7224,9 @@ function openExcedenteCaixa(){
 }
 
 function confirmarExcedente(){
+  // Guard de defesa: com contas cadastradas, nenhuma chamada — pelo botão
+  // (já removido do Dashboard) ou direta — pode gravar state.excedentes.
+  if(state.contas&&state.contas.length>0) return;
   const valor=parseFloat(document.getElementById('excedValor').value)||0;
   if(!state.excedentes) state.excedentes={};
   state.excedentes[mesKey(currentMonth,currentYear)]=valor;
@@ -7222,6 +7235,7 @@ function confirmarExcedente(){
 }
 
 function limparExcedente(){
+  if(state.contas&&state.contas.length>0) return;
   if(state.excedentes) delete state.excedentes[mesKey(currentMonth,currentYear)];
   scheduleSave();closeModal();renderDashboard();
   toast('Excedente removido');

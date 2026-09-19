@@ -79,6 +79,13 @@ const FILES = [
   // mesmo registro (sem duplicar, sem inventar datas) e vira elegível ao
   // seletor de salário principal.
   'gate5-salario-legacy-conversion.test.mjs',
+  // Gate 5 (UAT) — patch "Saldo que permanece nas contas" (docs/gates/
+  // CASH-BALANCE-UI.md): com contas cadastradas, o Dashboard substitui o
+  // bloco "Guardar em Caixa" por um informativo somando a mesma fonte que
+  // já alimenta o saldo real; sem contas, o mecanismo legado continua
+  // intacto; o modal/confirmador legado nunca grava state.excedentes com
+  // contas presentes, mesmo chamado diretamente.
+  'gate5-cash-balance-ui.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
