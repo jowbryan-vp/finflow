@@ -20,7 +20,12 @@ async function setPeriodoERenderiza(mes, ano) {
 }
 
 function visivel(html, despesaId) {
-  return html.includes(`openEditDespesa('${despesaId}')`);
+  // O botão de editar passou a chamar abrirEdicaoDespesaNaAreaCerta() (ajuste
+  // Cartões / Faturas — docs/gates/CARDS-INVOICES-UI.md), que decide entre
+  // Cartões/Faturas e Despesas conforme d.cartao e então abre o mesmo
+  // openEditDespesa(). A regra de PERÍODO testada aqui (achado 1) não muda —
+  // só o destino da edição, verificado à parte em gate5-cards-invoices-ui.test.mjs.
+  return html.includes(`abrirEdicaoDespesaNaAreaCerta('${despesaId}')`);
 }
 
 // P5-01: título do card atualizado

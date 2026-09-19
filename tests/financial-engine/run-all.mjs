@@ -86,6 +86,14 @@ const FILES = [
   // intacto; o modal/confirmador legado nunca grava state.excedentes com
   // contas presentes, mesmo chamado diretamente.
   'gate5-cash-balance-ui.test.mjs',
+  // Gate 5 (UAT) — ajuste de interface "Cartões / Faturas" (docs/gates/
+  // CARDS-INVOICES-UI.md): concentra registro/edição/fatura de compras no
+  // crédito numa única área nova, reusando state.despesas/state.cards/
+  // state.faturasPagas e os cálculos existentes (getDespesasForMonth,
+  // getCompetenciaFatura, calcByCardForMonth, toggleFaturaPaga); Despesas
+  // volta a focar pagamento direto; navegação do Dashboard/busca/PDF/E-se
+  // corrigida para não levar compra no crédito pra Despesas.
+  'gate5-cards-invoices-ui.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

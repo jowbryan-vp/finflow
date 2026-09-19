@@ -479,6 +479,10 @@ select option{background:var(--card)}
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
         Parcelamentos
       </div>
+      <div class="nav-item" data-page="cartoes" onclick="navigate('cartoes')">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+        Cartões / Faturas
+      </div>
       <div class="nav-section-label" style="margin-top:8px">Configuração</div>
       <div class="nav-item" data-page="pessoas" onclick="navigate('pessoas')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -487,10 +491,6 @@ select option{background:var(--card)}
       <div class="nav-item" data-page="categorias" onclick="navigate('categorias')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h8M4 18h5"/></svg>
         Categorias
-      </div>
-      <div class="nav-item" data-page="cartoes" onclick="navigate('cartoes')">
-        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-        Cartões
       </div>
       <div class="nav-item" data-page="contas" onclick="navigate('contas')">
         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="14" rx="2"/><path d="M3 10h18"/><circle cx="7" cy="15" r="1"/></svg>
@@ -1057,6 +1057,23 @@ select option{background:var(--card)}
 
       <!-- CARTÕES -->
       <div id="page-cartoes" class="page">
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-header" style="flex-wrap:wrap;gap:10px">
+            <div>
+              <div class="card-title">Fatura</div>
+              <div class="card-sub" id="cartaoFaturaPeriodo">—</div>
+            </div>
+            <div class="form-group" style="margin:0;width:100%;max-width:220px">
+              <select id="cartaoFaturaSelect" onchange="selecionarFaturaCartao(this.value)" style="width:100%"></select>
+            </div>
+          </div>
+          <div id="cartaoFaturaResumo"></div>
+          <button class="btn btn-danger mt-16" onclick="openNovaCompraCartao()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Nova compra no cartão
+          </button>
+          <div id="cartaoFaturaItens" class="mt-16"></div>
+        </div>
         <div class="two-col" style="align-items:start">
           <div class="card">
             <div class="card-header"><div class="card-title">Novo Cartão / Origem</div></div>
@@ -2168,7 +2185,7 @@ function importData(e) {
 // ════════════════════════════════════════════════
 // NAVIGATION
 // ════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Reembolsos / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões',contas:'Contas Bancárias',pessoas:'Pessoas',escritorio:'Caixa do Escritório'};
+const PAGE_TITLES={dashboard:'Dashboard',relatorio:'Relatório Mensal',analise:'Análise / Filtros',eSe:'E se...',cofrinho:'Cofrinho',relatorioPessoas:'Reembolsos / Pessoas',receitas:'Receitas',despesas:'Despesas',parcelamentos:'Parcelamentos',categorias:'Categorias',cartoes:'Cartões / Faturas',contas:'Contas Bancárias',pessoas:'Pessoas',escritorio:'Caixa do Escritório'};
 function toggleMobileMenu(){
   document.getElementById('sidebar').classList.toggle('open');
   document.getElementById('sidebarOverlay').classList.toggle('open');
@@ -3404,7 +3421,11 @@ function toggleFaturaPaga(cardId,mesParam,anoParam){
     state.faturasPagas[k]=false;
     if(state.faturasContas) delete state.faturasContas[k];
     scheduleSave(); renderDashboard();
-    if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+    {
+      const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+      if(paginaAtiva==='despesas') renderDespesas();
+      if(paginaAtiva==='cartoes') renderCartoes();
+    }
     toast('Fatura desmarcada — voltou para previsão');
     return;
   }
@@ -3440,7 +3461,11 @@ function confirmarPagamentoFatura(cardId,mesParam,anoParam){
   state.faturasPagas[k]=true;
   state.faturasContas[k]=contaId;
   scheduleSave(); closeModal(); renderDashboard();
-  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  {
+    const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+    if(paginaAtiva==='despesas') renderDespesas();
+    if(paginaAtiva==='cartoes') renderCartoes();
+  }
   toast('Fatura marcada como paga — saiu do caixa!');
 }
 
@@ -3481,13 +3506,21 @@ function confirmarAjusteFatura(cardId,mes,ano){
   if(!state.faturasAjustes) state.faturasAjustes={};
   state.faturasAjustes[faturaKey(cardId,mes,ano)]=valor;
   scheduleSave(); closeModal(); renderDashboard();
-  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  {
+    const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+    if(paginaAtiva==='despesas') renderDespesas();
+    if(paginaAtiva==='cartoes') renderCartoes();
+  }
   toast('Fatura ajustada!');
 }
 function removerAjusteFatura(cardId,mes,ano){
   if(state.faturasAjustes) delete state.faturasAjustes[faturaKey(cardId,mes,ano)];
   scheduleSave(); closeModal(); renderDashboard();
-  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  {
+    const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+    if(paginaAtiva==='despesas') renderDespesas();
+    if(paginaAtiva==='cartoes') renderCartoes();
+  }
   toast('Ajuste removido — voltou ao valor calculado pelo app');
 }
 
@@ -4679,9 +4712,31 @@ function saveEditReceitaNovoModelo(id){
 // ════════════════════════════════════════════════
 // DESPESAS
 // ════════════════════════════════════════════════
+// Abre a edição de uma despesa na área correta: compra no crédito vai pra
+// Cartões / Faturas (com o cartão certo já selecionado), pagamento direto
+// continua indo pra Despesas — usado pela busca de lançamentos e por
+// qualquer outro ponto de entrada que precise abrir "editar" sem saber de
+// antemão se a despesa é de cartão ou não.
+function abrirEdicaoDespesaNaAreaCerta(id){
+  const d=state.despesas.find(x=>x.id===id);
+  const paginaCerta=(d&&isCartaoDeCredito(d.cartao))?'cartoes':'despesas';
+  if(d&&paginaCerta==='cartoes') window._faturaCartaoSelecionado=d.cartao;
+  const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+  if(paginaAtiva===paginaCerta){ openEditDespesa(id); return; }
+  navigate(paginaCerta);
+  setTimeout(()=>openEditDespesa(id),150);
+}
 function navigateToDespesasCartao(cartaoId){
-  despCartaoFiltro=cartaoId;
-  navigate('despesas');
+  // Pagamento direto (Dinheiro/PIX) continua indo pra Despesas; compra no
+  // crédito vai pra Cartões / Faturas, já com o cartão certo selecionado —
+  // nunca mais leva fatura de cartão pra dentro de Despesas.
+  if(!isCartaoDeCredito(cartaoId)){
+    despCartaoFiltro=cartaoId;
+    navigate('despesas');
+    return;
+  }
+  window._faturaCartaoSelecionado=cartaoId;
+  navigate('cartoes');
 }
 
 function populateDespForma(){
@@ -4689,9 +4744,13 @@ function populateDespForma(){
   if(catSel){catSel.innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');updateSubcats();}
   const cardSel=document.getElementById('despCartao');
   if(cardSel){
-    cardSel.innerHTML=state.cards.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
-    // Pre-select card if coming from dashboard
-    if(despCartaoFiltro) cardSel.value=despCartaoFiltro;
+    // Despesas foca pagamentos diretos (PIX/dinheiro/débito) — compra no
+    // crédito tem seu próprio ponto de entrada em Cartões / Faturas
+    // (openNovaCompraCartao). Editar uma despesa existente continua
+    // mostrando todos os cartões (ver openEditDespesa), só o cadastro NOVO
+    // por aqui é restrito.
+    const diretos=state.cards.filter(c=>!isCartaoDeCredito(c.id));
+    cardSel.innerHTML=diretos.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   }
   const contaSel=document.getElementById('despConta');
   if(contaSel){
@@ -4814,7 +4873,7 @@ function renderResultadoPesquisaLancamentos(){
           <div class="item-row-meta">${esc(cat?.name||'')} · ${esc(card?.name||d.cartao)} · ${MONTHS[d.mesInicio-1]} ${d.anoInicio} · ${jaPago?'<span style="color:var(--accent2)">Pago</span>':'<span style="color:var(--warn)">Previsto</span>'}</div>
         </div>
         <div class="item-row-val neg">${fmtBRL(d.valor)}</div>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();navigate('despesas');setTimeout(()=>openEditDespesa('${d.id}'),150)" title="Editar">✎</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();abrirEdicaoDespesaNaAreaCerta('${d.id}')" title="Editar">✎</button>
       </div>`;
     }).join('');
   }
@@ -4982,7 +5041,7 @@ function despItemHTML(d){
     </div>
     <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
     ${actions}
-    <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditDespesa('${d.id}')" title="Editar">✎</button>
+    <button class="btn btn-ghost btn-icon btn-sm" onclick="abrirEdicaoDespesaNaAreaCerta('${d.id}')" title="Editar">✎</button>
     <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa('${d.id}')">✕</button>
   </div>`;
 }
@@ -5083,7 +5142,10 @@ function delDespesa(id){
   // Limpa receitas órfãs geradas a partir dessa despesa (repasses de terceiros
   // já registrados "como receita"), pra não deixar lançamento fantasma no caixa.
   state.receitas=state.receitas.filter(r=>r.fromDespesaId!==id);
-  scheduleSave();renderDespesas();toast('Despesa removida');
+  scheduleSave();
+  renderDespesas();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='cartoes') renderCartoes();
+  toast('Despesa removida');
 }
 
 function openEditDespesa(id){
@@ -5293,7 +5355,10 @@ function saveEditDespesa(id){
   const dividida=document.getElementById('eDespDividida').checked;
   d.split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
   aplicarDebitosAutomaticos(); // se acabou de virar débito automático e o dia já passou nesse mês, já dá baixa
-  scheduleSave();closeModal();renderDespesas();toast('Despesa atualizada!');
+  scheduleSave();closeModal();
+  renderDespesas();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='cartoes') renderCartoes();
+  toast('Despesa atualizada!');
 }
 
 // ════════════════════════════════════════════════
@@ -5350,7 +5415,7 @@ function renderParcelamentos(){
       <td style="min-width:100px"><div style="font-size:11px;color:var(--muted)">${pct}%</div><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div></td>
       <td class="mono" style="color:var(--danger)">${fmtBRL(d.valor/d.parcelas)}</td>
       <td style="display:flex;gap:6px">
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditDespesa('${d.id}')">✎</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="abrirEdicaoDespesaNaAreaCerta('${d.id}')">✎</button>
         <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa('${d.id}')">✕</button>
       </td>
     </tr>`;
@@ -5593,6 +5658,138 @@ function renderCartoes(){
     </div>`;
   });
   html+='</div>';document.getElementById('cartoesList').innerHTML=html;
+  renderFaturaCartoes();
+}
+
+// ════════════════════════════════════════════════
+// FATURA — área "Cartões / Faturas": única visão de fatura por cartão/mês,
+// reusando os mesmos cálculos e o mesmo state.despesas já usados em
+// Despesas/Dashboard/Próximos Vencimentos (nenhum segundo cadastro de
+// compras, nenhuma regra financeira nova aqui).
+function selecionarFaturaCartao(cardId){
+  window._faturaCartaoSelecionado=cardId;
+  renderFaturaCartoes();
+}
+function renderFaturaCartoes(){
+  const sel=document.getElementById('cartaoFaturaSelect');
+  const cartoesCredito=state.cards.filter(c=>isCartaoDeCredito(c.id));
+  if(!cartoesCredito.length){
+    if(sel) sel.innerHTML='<option value="">— Cadastre um cartão de crédito —</option>';
+    document.getElementById('cartaoFaturaPeriodo').textContent='—';
+    document.getElementById('cartaoFaturaResumo').innerHTML='<div class="empty-state">Cadastre um cartão de crédito para ver a fatura aqui.</div>';
+    document.getElementById('cartaoFaturaItens').innerHTML='';
+    return;
+  }
+  if(!window._faturaCartaoSelecionado||!cartoesCredito.some(c=>c.id===window._faturaCartaoSelecionado)){
+    window._faturaCartaoSelecionado=cartoesCredito[0].id;
+  }
+  const cardId=window._faturaCartaoSelecionado;
+  const card=cartoesCredito.find(c=>c.id===cardId);
+  if(sel) sel.innerHTML=cartoesCredito.map(c=>`<option value="${c.id}" ${c.id===cardId?'selected':''}>${esc(c.name)}</option>`).join('');
+  document.getElementById('cartaoFaturaPeriodo').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
+
+  const byCard=calcByCardForMonth(currentMonth,currentYear);
+  const total=byCard[cardId]||0;
+  const paga=isFaturaPaga(cardId,currentMonth,currentYear);
+  const itens=getDespesasForMonth(currentMonth,currentYear).filter(d=>d.cartao===cardId);
+
+  const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
+  const acaoBtn=paga
+    ?`<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga('${cardId}')">Desmarcar</button>`
+    :`<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${cardId}')">✓ Marcar como Paga</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`;
+  document.getElementById('cartaoFaturaResumo').innerHTML=`
+    <div class="mini-grid" style="grid-template-columns:repeat(3,1fr)">
+      <div class="mini-tile">
+        <div class="mini-label">Total da fatura</div>
+        <div class="mini-value" style="color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(total)}</div>
+        ${statusBadge}
+      </div>
+      <div class="mini-tile">
+        <div class="mini-label">Fechamento / Vencimento</div>
+        <div class="mini-value" style="font-size:16px">${card.fecha?`Dia ${card.fecha}`:'—'} / ${card.paga?`Dia ${card.paga}`:'—'}</div>
+      </div>
+      <div class="mini-tile">
+        <div class="mini-label">Ações</div>
+        <div style="display:flex;gap:6px;margin-top:4px">${acaoBtn}</div>
+      </div>
+    </div>`;
+  document.getElementById('cartaoFaturaItens').innerHTML = itens.length
+    ? `<div class="card-title" style="font-size:13px;margin-bottom:8px">Compras e parcelas desta fatura</div><div class="item-list">${itens.map(d=>despItemHTML(d)).join('')}</div>`
+    : '<div class="empty-state">Nenhuma compra nesta fatura ainda.</div>';
+}
+
+// Compra nova no cartão: mesmo state.despesas, mesmo modelo de dados de
+// addDespesa() (Gate 1 em diante) — só um segundo ponto de entrada de UI,
+// restrito a cartão de crédito (nunca 'dinheiro'), sem duplicar cadastro.
+// Campos exclusivos de pagamento direto (conta, vencimento, débito
+// automático, status pago/previsto) não existem aqui porque nunca se
+// aplicam a uma compra no crédito (mesma regra de onCartaoChange()).
+function openNovaCompraCartao(){
+  const cartoesCredito=state.cards.filter(c=>isCartaoDeCredito(c.id));
+  if(!cartoesCredito.length){ toast('Cadastre um cartão de crédito primeiro'); return; }
+  const cartaoPreferido=cartoesCredito.some(c=>c.id===window._faturaCartaoSelecionado)?window._faturaCartaoSelecionado:cartoesCredito[0].id;
+  const catOpts=state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const cardOpts=cartoesCredito.map(c=>`<option value="${c.id}" ${c.id===cartaoPreferido?'selected':''}>${esc(c.name)}</option>`).join('');
+  const primeiraCat=state.categories[0];
+  const subOpts=(primeiraCat?.subs||[]).map(s=>`<option value="${s}">${esc(s)}</option>`).join('');
+  const hoje=new Date();
+  const dataHoje=`${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-${String(hoje.getDate()).padStart(2,'0')}`;
+  document.getElementById('modalTitle').textContent='Nova compra no cartão';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="form-grid">
+      <div class="form-group full"><label>Descrição</label><input type="text" id="nDespDesc" placeholder="Descrição da compra"></div>
+      <div class="form-group"><label>Categoria</label><select id="nDespCat" onchange="nUpdateSubcats()">${catOpts}</select></div>
+      <div class="form-group"><label>Subcategoria</label><select id="nDespSubcat">${subOpts}</select></div>
+      <div class="form-group"><label>Cartão</label><select id="nDespCartao">${cardOpts}</select></div>
+      <div class="form-group"><label>Valor Total (R$)</label><input type="number" id="nDespValor" placeholder="0,00" min="0" step="0.01"></div>
+      <div class="form-group"><label>Nº de Parcelas</label><input type="number" id="nDespParcelas" value="1" min="1" max="120"></div>
+      <div class="form-group full">
+        <label>Data da compra</label>
+        <input type="date" id="nDespDataCompra" value="${dataHoje}">
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Usada pra calcular em qual fatura a compra cai, considerando o dia de fechamento do cartão.</div>
+      </div>
+      <div class="checkbox-row form-group full"><input type="checkbox" id="nDespFixa" style="width:auto"><label for="nDespFixa">Despesa fixa (recorrente)</label></div>
+    </div>
+    <div class="info-box mt-16">Compras compartilhadas com outras pessoas ou parcelamentos já lançados: use "Editar" na lista da fatura depois de criar a compra.</div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="salvarNovaCompraCartao()">Adicionar</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function nUpdateSubcats(){
+  const cat=state.categories.find(c=>c.id===document.getElementById('nDespCat').value);
+  const sub=document.getElementById('nDespSubcat');
+  if(sub) sub.innerHTML=(cat?.subs||[]).map(s=>`<option value="${s}">${esc(s)}</option>`).join('');
+}
+function salvarNovaCompraCartao(){
+  const desc=document.getElementById('nDespDesc').value.trim();
+  const cat=document.getElementById('nDespCat').value;
+  const subcat=document.getElementById('nDespSubcat').value;
+  const cartao=document.getElementById('nDespCartao').value;
+  if(!isCartaoDeCredito(cartao)){ toast('Selecione um cartão de crédito'); return; }
+  const valor=parseFloat(document.getElementById('nDespValor').value);
+  const parcelas=parseInt(document.getElementById('nDespParcelas').value)||1;
+  const dataCompraRaw=document.getElementById('nDespDataCompra').value||'';
+  const partesData=dataCompraRaw.split('-').map(Number);
+  let mesI,anoI,dataCompra=null;
+  if(dataCompraRaw&&partesData[0]&&partesData[1]){
+    dataCompra=dataCompraRaw; anoI=partesData[0]; mesI=partesData[1];
+  } else {
+    const hoje=new Date(); mesI=hoje.getMonth()+1; anoI=hoje.getFullYear();
+  }
+  const fixa=document.getElementById('nDespFixa').checked;
+  if(!desc){toast('Informe a descrição');return;}
+  if(!valor||valor<=0){toast('Informe um valor válido');return;}
+  window._faturaCartaoSelecionado=cartao;
+  state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta:null,valor,parcelas,mesInicio:mesI,anoInicio:anoI,
+    dataCompra,fixa,diaVencimento:null,debitoAutomatico:false,pagoMeses:{},split:[],repasses:{},createdAt:uid()});
+  scheduleSave();closeModal();
+  const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+  if(paginaAtiva==='despesas') renderDespesas();
+  if(paginaAtiva==='cartoes') renderCartoes();
+  toast('Compra adicionada!');
 }
 
 // ════════════════════════════════════════════════
@@ -5732,7 +5929,9 @@ function confirmarLancamentosFatura(cartaoId){
   scheduleSave(); closeModal();
   const statusEl=document.getElementById('faturaPdfStatus');
   if(statusEl) statusEl.textContent=selecionados.length+' lançamento(s) importado(s) com sucesso!';
-  if(document.querySelector('.nav-item.active')?.dataset?.page==='despesas') renderDespesas();
+  const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+  if(paginaAtiva==='despesas') renderDespesas();
+  if(paginaAtiva==='cartoes'){ window._faturaCartaoSelecionado=cartaoId; renderCartoes(); }
   toast(selecionados.length+' despesa(s) importada(s)!');
 }
 
@@ -7546,6 +7745,8 @@ function rodarSimulacao(){
 function eseConverterParaReal(){
   if(!eseItens.length)return;
   // Add all simulated items as real despesas
+  const todosNoCredito=eseItens.every(item=>isCartaoDeCredito(item.cartao));
+  const ultimoCartao=eseItens[eseItens.length-1].cartao;
   eseItens.forEach(item=>{
     state.despesas.push({
       id:uid(), desc:item.desc+'  ✦ (simulado → real)',
@@ -7558,7 +7759,16 @@ function eseConverterParaReal(){
   scheduleSave();
   toast(`${eseItens.length} compra${eseItens.length>1?'s':''} lançada${eseItens.length>1?'s':''} como despesa real!`);
   eseItens=[];
-  navigate('despesas');
+  // Todos os itens convertidos eram compra no crédito: leva pra Cartões /
+  // Faturas, já com o cartão certo — nunca joga fatura de cartão em
+  // Despesas. Lote misto ou só dinheiro continua indo pra Despesas, que já
+  // mostra os dois tipos juntos.
+  if(todosNoCredito){
+    window._faturaCartaoSelecionado=ultimoCartao;
+    navigate('cartoes');
+  } else {
+    navigate('despesas');
+  }
 }
 
 function openDetalheExcedente(){
