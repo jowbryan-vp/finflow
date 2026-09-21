@@ -5006,7 +5006,24 @@ function renderDespesas(){
     });
   }
 
-  if(!despsFiltradas.length&&!contrib){
+  // Total efetivo por cartão (mesma fonte que Cartões/Faturas e o pagamento —
+  // calcByCardForMonth já aplica o ajuste manual de fatura). Uma fatura pode
+  // ter ajuste positivo sem nenhuma compra lançada; nesse caso despsFiltradas
+  // fica vazio mas ainda há fatura a mostrar/pagar, então a tela não pode
+  // cair no "Nenhuma despesa neste mês" nem sumir com o resumo do cartão.
+  const byCardEfetivo=calcByCardForMonth(currentMonth,currentYear);
+  const hasFaturaAExibir = filtCard
+    ? isCartaoDeCredito(filtCard.id) && (byCardEfetivo[filtCard.id]||0)!==0
+    : state.cards.some(c=>{
+        if(!isCartaoDeCredito(c.id)) return false;
+        const efetivo=byCardEfetivo[c.id]||0;
+        if(efetivo===0) return false;
+        if(statusFiltro==='pagas') return isFaturaPaga(c.id,currentMonth,currentYear);
+        if(statusFiltro==='pendentes') return !isFaturaPaga(c.id,currentMonth,currentYear);
+        return true;
+      });
+
+  if(!despsFiltradas.length&&!contrib&&!hasFaturaAExibir){
     document.getElementById('despesasList').innerHTML='<div class="empty-state">Nenhuma despesa neste mês'+(filtCard?` no cartão ${filtCard.name}`:'')+`</div>`;
     return;
   }
@@ -5015,9 +5032,9 @@ function renderDespesas(){
   const modoAgrupado = !filtCard && (statusFiltro==='todas');
 
   if(modoAgrupado){
-    renderDespesasAgrupadas(despsFiltradas,contrib);
+    renderDespesasAgrupadas(despsFiltradas,contrib,byCardEfetivo);
   } else {
-    renderDespesasDetalhadas(despsFiltradas,contrib,filtCard);
+    renderDespesasDetalhadas(despsFiltradas,contrib,filtCard,byCardEfetivo);
   }
 }
 
@@ -5057,7 +5074,7 @@ function despItemHTML(d){
   </div>`;
 }
 
-function renderDespesasAgrupadas(despsFiltradas, contrib){
+function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
   // Group by card
   const grupos={};
   state.cards.forEach(c=>{ grupos[c.id]={card:c,items:[],total:0}; });
@@ -5094,8 +5111,13 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
   // pagar/desmarcar/ajustar são ações concentradas lá, não duplicadas aqui
   // (achado 1 da auditoria — docs/audits/CARDS-INVOICES-UI-REVIEW.md).
   Object.values(grupos).forEach(g=>{
-    if(!g.items.length) return;
     const isCC=isCartaoDeCredito(g.card.id);
+    // Total efetivo do cartão = mesma fonte de Cartões/Faturas e do pagamento
+    // (calcByCardForMonth, que já aplica o ajuste manual de fatura). Uma
+    // fatura ajustada e sem nenhuma compra lançada ainda precisa aparecer
+    // aqui — senão o resumo "esconde" uma fatura a pagar.
+    const totalEfetivo = isCC ? (byCardEfetivo[g.card.id]||0) : g.total;
+    if(!g.items.length && !(isCC && totalEfetivo!==0)) return;
     if(isCC){
       const paga=isFaturaPaga(g.card.id,currentMonth,currentYear);
       const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
@@ -5103,13 +5125,14 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
         <div style="width:14px;height:14px;border-radius:50%;background:${g.card.color};flex-shrink:0"></div>
         <div class="item-row-info">
           <div class="item-row-name">${esc(g.card.name)} ${statusBadge}</div>
-          <div class="item-row-meta">${g.items.length} compra${g.items.length>1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
+          <div class="item-row-meta">${g.items.length} compra${g.items.length!==1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
         </div>
-        <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(g.total)}</span>
+        <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(totalEfetivo)}</span>
         <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao('${g.card.id}')">Ver fatura →</button>
       </div>`;
       return;
     }
+    if(!g.items.length) return;
     const accId=g.card.id.replace(/[^a-z0-9]/gi,'_');
     html+=`<div class="accordion">
       <div class="accordion-head" onclick="toggleAccordion('${accId}')">
@@ -5132,7 +5155,8 @@ function renderDespesasAgrupadas(despsFiltradas, contrib){
   document.getElementById('despesasList').innerHTML=html||'<div class="empty-state">Nenhuma despesa neste mês</div>';
 }
 
-function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard){
+function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard, byCardEfetivo){
+  const statusFiltro = filtCard ? null : (window._despFiltro||'todas');
   let html='<div class="item-list">';
   if(contrib>0&&!filtCard){
     const base=getReceitasContribuiveisPrevisao(currentMonth,currentYear).reduce((s,r)=>s+valorReceita(r),0);
@@ -5155,17 +5179,35 @@ function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard){
     creditoPorCartao[d.cartao].items.push(d);
     creditoPorCartao[d.cartao].total+=(d._valorParcela||0);
   });
+  // Uma fatura ajustada sem nenhuma compra lançada não aparece no loop acima
+  // (não há despesa pra agrupar), mas ainda precisa ser mostrada — senão o
+  // filtro atual (cartão específico, ou pagas/pendentes) informa "sem
+  // despesa" enquanto existe fatura a pagar.
+  state.cards.forEach(c=>{
+    if(!isCartaoDeCredito(c.id)) return;
+    if(filtCard && filtCard.id!==c.id) return;
+    if(creditoPorCartao[c.id]) return;
+    const efetivo=(byCardEfetivo&&byCardEfetivo[c.id])||0;
+    if(efetivo===0) return;
+    const paga=isFaturaPaga(c.id,currentMonth,currentYear);
+    if(!filtCard){
+      if(statusFiltro==='pagas' && !paga) return;
+      if(statusFiltro==='pendentes' && paga) return;
+    }
+    creditoPorCartao[c.id]={items:[],total:0};
+  });
   Object.entries(creditoPorCartao).forEach(([cardId,g])=>{
     const card=state.cards.find(c=>c.id===cardId)||{id:cardId,name:cardId,color:'#94a3b8'};
     const paga=isFaturaPaga(cardId,currentMonth,currentYear);
     const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
+    const totalEfetivo=(byCardEfetivo&&byCardEfetivo[cardId]!==undefined)?byCardEfetivo[cardId]:g.total;
     html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${cardId}')">
       <div style="width:14px;height:14px;border-radius:50%;background:${card.color};flex-shrink:0"></div>
       <div class="item-row-info">
         <div class="item-row-name">${esc(card.name)} ${statusBadge}</div>
-        <div class="item-row-meta">${g.items.length} compra${g.items.length>1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
+        <div class="item-row-meta">${g.items.length} compra${g.items.length!==1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
       </div>
-      <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(g.total)}</span>
+      <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(totalEfetivo)}</span>
       <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao('${cardId}')">Ver fatura →</button>
     </div>`;
   });

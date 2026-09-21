@@ -101,6 +101,14 @@ const FILES = [
   // valor não pode ser marcada como paga, mas desmarcar um estado legado
   // continua possível.
   'gate5-cards-invoices-audit-fixes.test.mjs',
+  // Gate 5 (UAT) — correção do achado impeditivo da segunda rodada de
+  // auditoria (docs/audits/CARDS-INVOICES-UI-AUDIT-FIXES-REVIEW.md, base
+  // 2074d42): o resumo de cartão em Despesas mostrava a soma bruta das
+  // compras (_valorParcela) em vez do total efetivo pós-ajuste manual de
+  // fatura que Cartões / Faturas e o pagamento usam (calcByCardForMonth).
+  // Cobre as visões agrupada e filtrada, e o caso de fatura com ajuste
+  // positivo e nenhuma compra lançada.
+  'gate5-cards-invoices-adjusted-total.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
