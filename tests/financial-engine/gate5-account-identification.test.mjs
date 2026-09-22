@@ -313,6 +313,54 @@ await check('STRINGS_ARE_ESCAPED_ON_DISPLAY', async () => {
   return { ok, detail: `nome, agência e conta com caracteres HTML/aspas (dados sintéticos, nunca reais) precisam sair escapados na lista de contas, nunca como marcação crua — obtido=${JSON.stringify(r)}` };
 }, 'strings de identificação (nome, agência, conta) são escapadas na exibição, usando só fixtures sintéticas');
 
+// ── 12. Transferência distingue contas homônimas no modal e no histórico ─
+// Achado [P2] da auditoria (docs/audits/ACCOUNT-IDENTIFICATION-REVIEW.md):
+// openTransferenciaModal()/renderTransferencias() montavam origem/destino só
+// com o nome (esc(x.name)), então duas contas "Sicoob" ficavam
+// indistinguíveis tanto nos seletores quanto no histórico. Correção usa
+// contaLabelHTML nos dois lugares, mantendo o saldo exibido no modal.
+await check('TRANSFER_MODAL_AND_HISTORY_DISTINGUISH_HOMONYM_ACCOUNTS', async () => {
+  await loadState(baseSyntheticState({
+    contas: [
+      { id: 'sicoobT1', name: 'Sicoob', color: '#5b7fff', saldoInicial: 50, agencia: '0001', numeroConta: '001234-5' },
+      { id: 'sicoobT2', name: 'Sicoob', color: '#38e2b4', saldoInicial: 250, agencia: '0007', numeroConta: '007654-3' },
+    ],
+  }));
+  const r = await page.evaluate(() => {
+    navigate('contas');
+    const idPessoalAntesSicoob1 = state.contas.find(c => c.id === 'sicoobT1').id;
+    const idPessoalAntesSicoob2 = state.contas.find(c => c.id === 'sicoobT2').id;
+    const saldoAntesSicoob1 = calcSaldoConta('sicoobT1');
+    const saldoAntesSicoob2 = calcSaldoConta('sicoobT2');
+
+    openTransferenciaModal();
+    const htmlOrigem = document.getElementById('transfOrigem').innerHTML;
+    const htmlDestino = document.getElementById('transfDestino').innerHTML;
+    const origemDistingue = htmlOrigem.includes('Ag 0001') && htmlOrigem.includes('Ag 0007');
+    const destinoDistingue = htmlDestino.includes('Ag 0001') && htmlDestino.includes('Ag 0007');
+    const saldoAindaExibidoNoModal = htmlOrigem.includes(fmtBRL(50)) && htmlOrigem.includes(fmtBRL(250));
+
+    document.getElementById('transfOrigem').value = 'sicoobT1';
+    document.getElementById('transfDestino').value = 'sicoobT2';
+    document.getElementById('transfValor').value = '30';
+    document.getElementById('transfData').value = '2026-09-17';
+    salvarTransferencia(null);
+
+    const htmlHistorico = document.getElementById('transferenciasList').innerHTML;
+    const historicoDistingue = htmlHistorico.includes('Ag 0001') && htmlHistorico.includes('Ag 0007');
+
+    return {
+      origemDistingue, destinoDistingue, saldoAindaExibidoNoModal, historicoDistingue,
+      idsInalterados: idPessoalAntesSicoob1 === 'sicoobT1' && idPessoalAntesSicoob2 === 'sicoobT2',
+      saldoSicoob1Correto: calcSaldoConta('sicoobT1') === saldoAntesSicoob1 - 30,
+      saldoSicoob2Correto: calcSaldoConta('sicoobT2') === saldoAntesSicoob2 + 30,
+    };
+  });
+  const ok = r.origemDistingue && r.destinoDistingue && r.saldoAindaExibidoNoModal && r.historicoDistingue
+    && r.idsInalterados && r.saldoSicoob1Correto && r.saldoSicoob2Correto;
+  return { ok, detail: `duas contas pessoais "Sicoob" com agências/números diferentes precisam ficar distinguíveis nos dois seletores do modal de transferência (com o saldo ainda visível) e no histórico de transferências, sem mudar id ou saldo além do valor transferido — obtido=${JSON.stringify(r)}` };
+}, 'transferência entre contas homônimas fica distinguível no modal (origem/destino) e no histórico, preservando saldo exibido e sem afetar ID/saldo além do valor transferido');
+
 await check('NO_SCRIPT_ERRORS', async () => ({ ok: consoleErrors.length === 0, detail: `erros de console acumulados: ${JSON.stringify(consoleErrors)}` }), 'nenhum erro de execução ao longo do fluxo de identificação bancária e consulta unificada');
 
 } finally {

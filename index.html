@@ -6380,7 +6380,7 @@ function openTransferenciaModal(editId){
       existente={origemId:saida.contaId,destinoId:entrada.contaId,valor:Math.abs(saida.valor),data:saida.data,obs:obsLimpa};
     }
   }
-  const opts=c=>state.contas.map(x=>`<option value="${x.id}" ${x.id===c?'selected':''}>${esc(x.name)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
+  const opts=c=>state.contas.map(x=>`<option value="${x.id}" ${x.id===c?'selected':''}>${contaLabelHTML(x)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
   document.getElementById('modalTitle').textContent=existente?'Editar Transferência':'Transferir entre Contas';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
@@ -6639,7 +6639,7 @@ function renderTransferencias(){
     const obsLimpa=(t.obs||'').replace(/^Transferência para [^—]+(—\s*)?/,'');
     html+=`<div class="item-row">
       <div class="item-row-info">
-        <div class="item-row-name">${esc(origem?.name||'?')} → ${esc(destino?.name||'?')}</div>
+        <div class="item-row-name">${origem?contaLabelHTML(origem):'?'} → ${destino?contaLabelHTML(destino):'?'}</div>
         <div class="item-row-meta">${dataFmt}${obsLimpa?' · '+esc(obsLimpa):''}</div>
       </div>
       <div class="item-row-val" style="font-size:15px">${fmtBRL(t.valor)}</div>
