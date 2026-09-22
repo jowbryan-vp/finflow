@@ -156,6 +156,20 @@ const FILES = [
   // crescente e os históricos de transferências/cofrinho continuam
   // decrescentes.
   'gate5-history-cutoff-pdf-invoice-order.test.mjs',
+  // Gate 5 — correção dos três achados da auditoria Codex (docs/audits/
+  // HISTORY-CUTOFF-PDF-INVOICE-ORDER-REVIEW.md, documentação vigente
+  // ca9bb4d, entrega anterior 62dcbef): (1) seção 4 do gate (Descoberta do
+  // parcelamento no Caixa do Escritório) não estava implementada — "Entrada
+  // e parcelamento" agora fica sempre visível, desabilitada fora de
+  // Contratado, habilita imediatamente ao selecionar Contratado, e sair de
+  // Contratado antes do cadastro não persiste valores nem gera recebível;
+  // (2) o laço global de avisos sobre state.receitas (missing_revenue_date/
+  // invalid_received_date) agora também respeita historyStartMonth pra
+  // itens únicos com competência (mes/ano) comprovadamente anterior ao
+  // corte; (3) ordenarItensFaturaDesc ganhou desempate final por `id` depois
+  // de dataCompra/createdAt, garantindo o mesmo resultado com a entrada
+  // invertida.
+  'gate5-audit-fixes-office-cutoff-order.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

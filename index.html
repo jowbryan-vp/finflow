@@ -2742,10 +2742,18 @@ function getChronologicalProjection(referenceDate,endDate){
     }
   }
   // New one-off receipts with no planned date never materialize in the monthly helper.
+  // Corte de histórico (Gate 5, seção 2): um item único cuja competência
+  // conhecida (r.mes/r.ano) seja comprovadamente anterior ao corte não pode
+  // gerar aviso de pendência aqui — o scan mensal já não o encontra, mas
+  // esses dois avisos vêm de um laço global sobre TODO state.receitas,
+  // sem passar pelo piso `first`. Sem competência determinável (sem
+  // r.mes/r.ano), o item continua flagado normalmente — nunca inventamos
+  // uma competência pra decidir ocultar.
   for(const r of state.receitas||[]){
-    if(r.certeza!==undefined&&!r.recorrencia&&r.estado!=='recebido'&&!isValidISODateString(r.dataPrevista))
+    const competenciaAntesDoCorte=cutoffSerial!==null&&r.ano&&r.mes&&(r.ano*12+r.mes-1)<cutoffSerial;
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado!=='recebido'&&!isValidISODateString(r.dataPrevista)&&!competenciaAntesDoCorte)
       issues.push({id:r.id,reason:'missing_revenue_date'});
-    if(r.certeza!==undefined&&!r.recorrencia&&r.estado==='recebido'&&!isValidISODateString(r.dataRecebimento))
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado==='recebido'&&!isValidISODateString(r.dataRecebimento)&&!competenciaAntesDoCorte)
       issues.push({id:r.id,reason:'invalid_received_date'});
     if(r.recorrencia) for(const [key,receipt] of Object.entries(r.recebidoPorMes||{})){
       if(receipt?.estado==='recebido'&&!getRecurringRevenueCashDate(r,key)) issues.push({id:`${r.id}:${key}`,reason:'invalid_received_date'});
@@ -5922,12 +5930,17 @@ function renderCartoes(){
 function ordenarItensFaturaDesc(itens){
   return itens.slice().sort((a,b)=>{
     const aTemData=isValidISODateString(a.dataCompra), bTemData=isValidISODateString(b.dataCompra);
-    if(aTemData&&bTemData){
-      if(a.dataCompra!==b.dataCompra) return b.dataCompra.localeCompare(a.dataCompra);
-      return (b.createdAt||'').localeCompare(a.createdAt||''); // empate no mesmo dia: desempate estável
-    }
+    if(aTemData&&bTemData && a.dataCompra!==b.dataCompra) return b.dataCompra.localeCompare(a.dataCompra);
     if(aTemData!==bTemData) return aTemData?-1:1; // data válida sempre antes de legado sem data
-    return (b.createdAt||'').localeCompare(a.createdAt||''); // os dois sem data válida
+    // Empate em dataCompra (ou os dois sem data válida): createdAt decrescente
+    // e, só se createdAt também empatar, `id` como desempate final —
+    // determinístico independente da ordem de entrada do array (achado da
+    // auditoria: Array.sort só é estável quando já não há mais critério,
+    // então sem esse último desempate por id o resultado podia mudar
+    // conforme a ordem de state.despesas).
+    const createdAtDiff=(b.createdAt||'').localeCompare(a.createdAt||'');
+    if(createdAtDiff!==0) return createdAtDiff;
+    return (b.id||'').localeCompare(a.id||'');
   });
 }
 
@@ -8538,18 +8551,20 @@ function renderOfficeProjetosTab(){
           <div class="form-group full"><label>Data do contrato</label><input type="date" id="newProjData"></div>
           <div class="form-group full"><label>Observações</label><input type="text" id="newProjObs" placeholder="opcional"></div>
         </div>
-        <div id="newProjContratadoFields" class="form-grid" style="display:none;margin-top:10px">
-          <div class="form-group"><label>Valor da entrada (R$)</label><input type="number" id="newProjEntradaValor" placeholder="0,00" min="0" step="0.01"></div>
-          <div class="form-group"><label>Data prevista da entrada</label><input type="date" id="newProjEntradaData"></div>
+        <div class="card-title" style="font-size:14px;margin-top:14px">Entrada e parcelamento</div>
+        <div id="newProjContratadoHint" class="info-box" style="margin-top:6px">Selecione Contratado para configurar entrada e parcelamento</div>
+        <div id="newProjContratadoFields" class="form-grid" style="margin-top:10px">
+          <div class="form-group"><label>Valor da entrada (R$)</label><input type="number" id="newProjEntradaValor" placeholder="0,00" min="0" step="0.01" disabled></div>
+          <div class="form-group"><label>Data prevista da entrada</label><input type="date" id="newProjEntradaData" disabled></div>
           <div class="form-group full">
-            <label><input type="checkbox" id="newProjEntradaRecebida" onchange="onNewProjEntradaRecebidaChange()"> Entrada já recebida</label>
+            <label><input type="checkbox" id="newProjEntradaRecebida" onchange="onNewProjEntradaRecebidaChange()" disabled> Entrada já recebida</label>
           </div>
           <div class="form-group full" id="newProjEntradaDataRealWrap" style="display:none">
-            <label>Data real do recebimento da entrada</label><input type="date" id="newProjEntradaDataReal">
+            <label>Data real do recebimento da entrada</label><input type="date" id="newProjEntradaDataReal" disabled>
           </div>
-          <div class="form-group"><label>Parcelas do saldo restante</label><input type="number" id="newProjParcelasQtd" placeholder="0" min="0" step="1" value="0"></div>
-          <div class="form-group"><label>Data prevista da 1ª parcela</label><input type="date" id="newProjParcelaData"></div>
-          <div class="form-group full"><label>Conta empresarial de destino</label><select id="newProjConta">${contaOptsProj}</select></div>
+          <div class="form-group"><label>Parcelas do saldo restante</label><input type="number" id="newProjParcelasQtd" placeholder="0" min="0" step="1" value="0" disabled></div>
+          <div class="form-group"><label>Data prevista da 1ª parcela</label><input type="date" id="newProjParcelaData" disabled></div>
+          <div class="form-group full"><label>Conta empresarial de destino</label><select id="newProjConta" disabled>${contaOptsProj}</select></div>
         </div>
         <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>. Ao cadastrar já como <strong>contratado</strong>, a entrada e as parcelas do saldo geram os recebíveis automaticamente, uma única vez.</div>
         <button class="btn btn-primary mt-16" onclick="addOfficeProjeto()">Adicionar Projeto</button>
@@ -8557,9 +8572,20 @@ function renderOfficeProjetosTab(){
       <div class="card"><div class="card-header"><div class="card-title">Projetos Cadastrados</div></div><div class="item-list">${rows}</div></div>
     </div>`;
 }
+// Gate 5, seção 4 (docs/gates/GATE-5-HISTORY-CUTOFF-PDF-AND-INVOICE-ORDER.md):
+// a seção "Entrada e parcelamento" fica sempre visível (nunca escondida por
+// completo, que era o achado da auditoria — parecia versão antiga do app) —
+// só os controles ficam desabilitados fora de Contratado, com uma indicação
+// direta no lugar. addOfficeProjeto() só lê esses campos quando o status no
+// momento do cadastro é 'contratado' (guarda já existente, inalterada), então
+// nada digitado aqui persiste em state nem gera recebível se o usuário sair
+// de Contratado antes de salvar — este toggle é só apresentação.
 function onNewProjStatusChange(){
-  const el=document.getElementById('newProjContratadoFields'); if(!el) return;
-  el.style.display = document.getElementById('newProjStatus').value==='contratado' ? 'grid' : 'none';
+  const fieldsEl=document.getElementById('newProjContratadoFields'); if(!fieldsEl) return;
+  const hintEl=document.getElementById('newProjContratadoHint');
+  const contratado=document.getElementById('newProjStatus').value==='contratado';
+  fieldsEl.querySelectorAll('input,select').forEach(el=>{ el.disabled=!contratado; });
+  if(hintEl) hintEl.style.display=contratado?'none':'block';
 }
 function onNewProjEntradaRecebidaChange(){
   const el=document.getElementById('newProjEntradaDataRealWrap'); if(!el) return;
