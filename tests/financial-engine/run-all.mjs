@@ -128,6 +128,18 @@ const FILES = [
   // qualquer vínculo em state.despesas/faturasPagas/faturasContas/
   // faturasAjustes; só cartão vazio e sem histórico continua excluível.
   'gate5-cards-delete-integrity.test.mjs',
+  // Gate 5 (UAT) — imutabilidade de fatura paga (docs/audits/
+  // CARDS-DELETE-INTEGRITY-REVIEW.md, "Limite ainda pendente"): uma fatura
+  // marcada como paga continuava ligada ao total dinâmico das compras — criar,
+  // editar, excluir ou importar uma compra pra essa fatura mudava o valor
+  // debitado sem novo pagamento. despesaTocaFaturaPaga (helper central e puro
+  // em index.html) agora é checado antes de qualquer mutação em
+  // salvarNovaCompraCartao, addDespesa, saveEditDespesa, delDespesa,
+  // confirmarLancamentosFatura (PDF, tudo ou nada), eseConverterParaReal
+  // ("E se...", tudo ou nada), confirmarAjusteFatura e removerAjusteFatura.
+  // Desmarcar a fatura continua sempre permitido e libera as operações de
+  // novo; dinheiro/PIX nunca é afetado.
+  'gate5-paid-invoice-immutability.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

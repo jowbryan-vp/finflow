@@ -3090,6 +3090,68 @@ function calcContribuicaoBase(mes,ano){
 function faturaKey(cardId,mes,ano){ return `${cardId}_${mesKey(mes,ano)}`; }
 function isFaturaPaga(cardId,mes,ano){ return !!(state.faturasPagas&&state.faturasPagas[faturaKey(cardId,mes,ano)]); }
 
+// Regra de imutabilidade de fatura paga (docs/audits/
+// CARDS-DELETE-INTEGRITY-REVIEW.md — "Limite ainda pendente"): depois que uma
+// fatura é marcada como paga, nenhuma operação pode mudar seu total ou
+// composição — o usuário precisa desmarcar, editar, e marcar de novo. Este
+// helper é o ponto único de verdade pra "essa despesa (real ou candidata)
+// toca alguma fatura já paga do cartão dela?" — puro, sem ler nem escrever
+// nada em document/DOM, sem mutar state.
+//
+// Aceita um objeto despesa-like {cartao,dataCompra,mesInicio,anoInicio,
+// parcelas,fixa,ignorarAntes}: tanto um registro já gravado em
+// state.despesas (pra bloquear editar/excluir o que já compõe uma fatura
+// paga) quanto um candidato ainda não gravado (pra bloquear uma compra nova,
+// um item de importação de PDF ou de conversão do "E se..." antes de
+// qualquer mutação).
+//
+// Em vez de simular a mutação e chamar getDespesasForMonth mês a mês (o que
+// exigiria estado temporário e não cobre recorrência indefinida de despesa
+// fixa), o caminho é o oposto: state.faturasPagas já é a lista FINITA de
+// competências que importam. Pra cada chave paga desse cartão, pergunta se
+// esta despesa geraria uma parcela (ou, se for fixa recorrente, se aquela
+// competência já começou) naquele mês/ano — exatamente a mesma regra de
+// competência/parcelamento/recorrência de getDespesasForMonth, só que
+// percorrida a partir das faturas pagas em vez do calendário.
+function despesaTocaFaturaPaga(d){
+  if(!d || !isCartaoDeCredito(d.cartao)) return false; // dinheiro/PIX nunca compõe fatura de cartão
+  if(!state.faturasPagas) return false;
+  const cartaoId=d.cartao;
+  // O sufixo de uma faturaKey é sempre "_AAAA-MM" (ver mesKey/faturaKey) —
+  // remover só esse sufixo (nunca um split ingênuo por "_") preserva
+  // identificadores de cartão que já contenham sublinhado.
+  const pertenceAoCartao=(k)=>k.replace(/_\d{4}-\d{2}$/,'')===cartaoId;
+  const chavesPagas=Object.keys(state.faturasPagas).filter(k=>state.faturasPagas[k]&&pertenceAoCartao(k));
+  if(!chavesPagas.length) return false;
+  const card=state.cards.find(c=>c.id===cartaoId);
+  // getCompetenciaFatura já resolve corretamente: com dataCompra+dia de
+  // fechamento cadastrado, usa a competência real (inclusive virada de ano
+  // via addMonths); sem uma das duas (registro legado sem dataCompra, ou
+  // cartão sem dia de fechamento), cai no modo legado "mês da compra + 1" —
+  // o mesmo fallback que getDespesasForMonth usa em todo o app.
+  const {mes:mIni,ano:yIni}=getCompetenciaFatura(d.dataCompra,card,d.mesInicio,d.anoInicio);
+  const parcelas=d.parcelas||1;
+  const bloqueada=(m,y)=>d.ignorarAntes&&(y<d.ignorarAntes.ano||(y===d.ignorarAntes.ano&&m<d.ignorarAntes.mes));
+  for(const k of chavesPagas){
+    const match=k.match(/_(\d{4})-(\d{2})$/);
+    if(!match) continue;
+    const y=parseInt(match[1],10), m=parseInt(match[2],10);
+    if(bloqueada(m,y)) continue;
+    if(d.fixa&&parcelas===1){
+      // Despesa fixa em cartão (1 parcela só, recorrente indefinidamente a
+      // partir de mIni/yIni) — mesmo teste "started" de getDespesasForMonth.
+      if(yIni<y||(yIni===y&&mIni<=m)) return true;
+    } else {
+      for(let i=0;i<parcelas;i++){
+        const mm=(mIni-1)+i, yy=yIni+Math.floor(mm/12), mN=(mm%12)+1;
+        if(mN===m&&yy===y) return true;
+      }
+    }
+  }
+  return false;
+}
+const MSG_FATURA_PAGA_IMUTAVEL='Esta fatura já foi paga. Desmarque o pagamento antes de alterar suas compras.';
+
 // Soma das parcelas de despesas por cartão nesse mês — versão "leve", sem
 // cenários nem saldo de contas. Usada por getTotalsForMonth e por calcSaldoConta;
 // mantê-la separada evita uma dependência circular (calcSaldoConta precisa do
@@ -3512,6 +3574,10 @@ function openAjustarFaturaModal(cardId,mesParam,anoParam){
   document.getElementById('modalOverlay').classList.add('open');
 }
 function confirmarAjusteFatura(cardId,mes,ano){
+  // Regra de imutabilidade de fatura paga: um ajuste manual muda o total da
+  // fatura, então nunca pode ser aplicado a uma fatura já paga — mesmo
+  // chamando esta função diretamente, sem passar pelo modal.
+  if(isFaturaPaga(cardId,mes,ano)){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
   const valor=parseFloat(document.getElementById('ajusteFaturaValor')?.value);
   if(isNaN(valor)||valor<0){toast('Informe um valor válido');return;}
   if(!state.faturasAjustes) state.faturasAjustes={};
@@ -3525,6 +3591,8 @@ function confirmarAjusteFatura(cardId,mes,ano){
   toast('Fatura ajustada!');
 }
 function removerAjusteFatura(cardId,mes,ano){
+  // Mesma regra: remover o ajuste também muda o total da fatura.
+  if(isFaturaPaga(cardId,mes,ano)){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
   if(state.faturasAjustes) delete state.faturasAjustes[faturaKey(cardId,mes,ano)];
   scheduleSave(); closeModal(); renderDashboard();
   {
@@ -4940,6 +5008,12 @@ function addDespesa(){
   if(!desc){toast('Informe a descrição');return;}
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   if(isDinheiro&&!conta){toast('Cadastre e selecione a conta bancária de onde sai o dinheiro');return;}
+  // Este formulário só oferece cartão direto (ver populateDespForma), mas
+  // uma chamada direta com cartao de crédito não pode escapar da regra de
+  // imutabilidade de fatura paga — dinheiro/PIX (isDinheiro) nunca é afetado.
+  if(!isDinheiro && despesaTocaFaturaPaga({cartao,dataCompra,mesInicio:mesI,anoInicio:anoI,parcelas,fixa})){
+    toast(MSG_FATURA_PAGA_IMUTAVEL); return;
+  }
   const pagoMeses={};
   if(statusInicial==='pago') pagoMeses[mesKey(mesI,anoI)]=true;
   const dividida=document.getElementById('despDividida').checked;
@@ -5225,6 +5299,8 @@ function clearDespCartaoFiltro(){
   renderDespesas();
 }
 function delDespesa(id){
+  const alvo=state.despesas.find(d=>d.id===id);
+  if(alvo && despesaTocaFaturaPaga(alvo)){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
   state.despesas=state.despesas.filter(d=>d.id!==id);
   // Limpa receitas órfãs geradas a partir dessa despesa (repasses de terceiros
   // já registrados "como receita"), pra não deixar lançamento fantasma no caixa.
@@ -5412,31 +5488,46 @@ function saveEditDespesa(id){
     toast('Confirme a mudança de fatura antes de salvar (veja o aviso na Data da compra)');
     return;
   }
+  // Lê todos os valores do formulário num candidato ANTES de mutar `d` —
+  // regra de imutabilidade de fatura paga: bloqueia tanto editar algo que já
+  // compõe uma fatura paga (estado atual de `d`) quanto uma edição que
+  // moveria a compra/parcela pra dentro de uma fatura paga (candidato). Só
+  // depois dos dois testes passarem é que `d` é efetivamente mutado.
+  const novoCartao=document.getElementById('eDespCartao').value;
+  const isDinheiro=novoCartao==='dinheiro';
+  const novoValor=parseFloat(document.getElementById('eDespValor').value)||0;
+  const novasParcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
+  const ignorarCheck=document.getElementById('eDespIgnorarCheck')?.checked;
+  const novoIgnorarAntes=(ignorarCheck&&novasParcelas>1)?{mes:parseInt(document.getElementById('eDespIgnorarMes').value),ano:parseInt(document.getElementById('eDespIgnorarAno').value)}:null;
+  const novoFixa=document.getElementById('eDespFixa').checked;
+  let novoMesInicio,novoAnoInicio;
+  if(novaDataCompra){
+    const partes=novaDataCompra.split('-').map(Number);
+    novoMesInicio=partes[1]; novoAnoInicio=partes[0];
+  } else {
+    novoMesInicio=parseInt(document.getElementById('eDespMes').value);
+    novoAnoInicio=parseInt(document.getElementById('eDespAno').value);
+  }
+  if(despesaTocaFaturaPaga(d)){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
+  const candidato={cartao:novoCartao,dataCompra:novaDataCompra,mesInicio:novoMesInicio,anoInicio:novoAnoInicio,parcelas:novasParcelas,fixa:novoFixa,ignorarAntes:novoIgnorarAntes};
+  if(despesaTocaFaturaPaga(candidato)){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
   d.desc=document.getElementById('eDespDesc').value.trim();
   d.cat=document.getElementById('eDespCat').value;
   d.subcat=document.getElementById('eDespSubcat').value;
-  d.cartao=document.getElementById('eDespCartao').value;
-  const isDinheiro=d.cartao==='dinheiro';
+  d.cartao=novoCartao;
   const contaSelecionadaDesp=document.getElementById('eDespConta')?.value;
   d.conta=isDinheiro?(contaSelecionadaDesp!==undefined?(contaSelecionadaDesp||null):(d.conta||null)):null;
-  d.valor=parseFloat(document.getElementById('eDespValor').value)||0;
-  d.parcelas=parseInt(document.getElementById('eDespParcelas').value)||1;
-  const ignorarCheck=document.getElementById('eDespIgnorarCheck')?.checked;
-  d.ignorarAntes=(ignorarCheck&&d.parcelas>1)?{mes:parseInt(document.getElementById('eDespIgnorarMes').value),ano:parseInt(document.getElementById('eDespIgnorarAno').value)}:null;
+  d.valor=novoValor;
+  d.parcelas=novasParcelas;
+  d.ignorarAntes=novoIgnorarAntes;
   d.dataCompra=novaDataCompra;
-  if(novaDataCompra){
-    // dataCompra é a fonte primária assim que existir — mesInicio/anoInicio
-    // passam a ser sempre derivados dela, nunca lidos direto dos selects
-    // (evita os dois campos divergirem silenciosamente, ver seção 7 da auditoria).
-    const partes=novaDataCompra.split('-').map(Number);
-    d.mesInicio=partes[1]; d.anoInicio=partes[0];
-  } else {
-    // Sem data real (registro continua/volta a ser legado): Mês/Ano Início
-    // seguem exatamente como o formulário sempre permitiu editar.
-    d.mesInicio=parseInt(document.getElementById('eDespMes').value);
-    d.anoInicio=parseInt(document.getElementById('eDespAno').value);
-  }
-  d.fixa=document.getElementById('eDespFixa').checked;
+  // dataCompra é a fonte primária assim que existir — mesInicio/anoInicio
+  // passam a ser sempre derivados dela, nunca lidos direto dos selects
+  // (evita os dois campos divergirem silenciosamente, ver seção 7 da auditoria).
+  // Sem data real (registro continua/volta a ser legado): Mês/Ano Início
+  // seguem exatamente como o formulário sempre permitiu editar.
+  d.mesInicio=novoMesInicio; d.anoInicio=novoAnoInicio;
+  d.fixa=novoFixa;
   d.diaVencimento=(isDinheiro&&d.fixa)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
   d.debitoAutomatico=(isDinheiro&&d.fixa)?!!document.getElementById('eDespDebitoAutomatico')?.checked:false;
   const dividida=document.getElementById('eDespDividida').checked;
@@ -5904,6 +5995,13 @@ function salvarNovaCompraCartao(){
   if(!valor||valor<=0){toast('Informe um valor válido');return;}
   const partesData=dataCompraRaw.split('-').map(Number);
   const anoI=partesData[0], mesI=partesData[1];
+  // Regra de imutabilidade de fatura paga: uma compra nova (avulsa,
+  // parcelada — qualquer parcela — ou fixa recorrente atingindo uma
+  // competência já paga) nunca pode mudar o total de uma fatura já marcada
+  // como paga. Checagem ANTES de qualquer mutação, modal continua aberto.
+  if(despesaTocaFaturaPaga({cartao,dataCompra:dataCompraRaw,mesInicio:mesI,anoInicio:anoI,parcelas,fixa})){
+    toast(MSG_FATURA_PAGA_IMUTAVEL); return;
+  }
   window._faturaCartaoSelecionado=cartao;
   state.despesas.push({id:uid(),desc,cat,subcat,cartao,conta:null,valor,parcelas,mesInicio:mesI,anoInicio:anoI,
     dataCompra:dataCompraRaw,fixa,diaVencimento:null,debitoAutomatico:false,pagoMeses:{},split:[],repasses:{},createdAt:uid()});
@@ -6036,10 +6134,19 @@ function renderModalFaturaTabela(cartaoId){
 function confirmarLancamentosFatura(cartaoId){
   const selecionados=faturaPdfItensExtraidos.filter(it=>it.incluir&&it.valor>0);
   if(!selecionados.length){ toast('Nenhum lançamento selecionado'); return; }
-  selecionados.forEach(it=>{
+  // Cada item vira uma despesa avulsa (1 parcela, sem dataCompra — mesmo
+  // fallback legado "mês da compra + 1" de qualquer registro sem data real).
+  const candidatos=selecionados.map(it=>{
     const [,mesStr]=it.data.split('/');
-    const mesInicio=parseInt(mesStr)||currentMonth;
-    const anoInicio=currentYear;
+    return {it, mesInicio:parseInt(mesStr)||currentMonth, anoInicio:currentYear};
+  });
+  // Regra de imutabilidade de fatura paga: se QUALQUER lançamento importado
+  // cair numa fatura já paga, a importação inteira é bloqueada — nunca
+  // parcial (o usuário não teria como saber quais entraram e quais não).
+  const algumTocaFaturaPaga=candidatos.some(({mesInicio,anoInicio})=>
+    despesaTocaFaturaPaga({cartao:cartaoId,dataCompra:null,mesInicio,anoInicio,parcelas:1,fixa:false}));
+  if(algumTocaFaturaPaga){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
+  candidatos.forEach(({it,mesInicio,anoInicio})=>{
     state.despesas.push({
       id:uid(), desc:it.desc, cat:it.cat||'outros', subcat:it.subcat||'',
       cartao:cartaoId, conta:null, valor:it.valor, parcelas:1,
@@ -7866,6 +7973,15 @@ function rodarSimulacao(){
 
 function eseConverterParaReal(){
   if(!eseItens.length)return;
+  // Regra de imutabilidade de fatura paga: se QUALQUER item simulado cair
+  // numa fatura já paga (mesmo fallback legado, já que itens do "E se..."
+  // nunca têm dataCompra — só mesInicio/anoInicio escolhidos pelo usuário),
+  // a conversão inteira é bloqueada, nunca parcial.
+  const algumTocaFaturaPaga=eseItens.some(item=>despesaTocaFaturaPaga({
+    cartao:item.cartao, dataCompra:null, mesInicio:item.mesInicio, anoInicio:item.anoInicio,
+    parcelas:Math.max(1,item.parcelas||1), fixa:false
+  }));
+  if(algumTocaFaturaPaga){ toast(MSG_FATURA_PAGA_IMUTAVEL); return; }
   // Add all simulated items as real despesas
   const todosNoCredito=eseItens.every(item=>isCartaoDeCredito(item.cartao));
   const ultimoCartao=eseItens[eseItens.length-1].cartao;
