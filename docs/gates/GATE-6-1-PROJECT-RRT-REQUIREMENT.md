@@ -133,3 +133,68 @@ materializa, nunca COMO ela é calculada.
 casos, registrado em `run-all.mjs`). Suíte completa: 564 PASS / 0 FAIL.
 Comparação com o backup real (`compare-real-backup.mjs`): 0 diferenças em
 14 meses históricos.
+
+## Correção pós-auditoria (achados P1/P2 sobre `939294c`)
+
+A primeira reauditoria (implementação `939294c`) encontrou três caminhos
+de gravação não protegidos:
+
+**P1a — confirmação de `none` só era exigida pra status `contratado`.**
+Em `addOfficeProjeto`, a checagem do checkbox "Confirmo que este projeto
+não exige RRT" estava dentro de `if(status==='contratado')` — um projeto
+Potencial/Concluído/Cancelado podia nascer com `rrtRequirement:'none'` e
+um `rrtRequirementConfirmedAt` **falso** (sem confirmação real), e se
+depois virasse Contratado a distribuição saía liberada sem que o usuário
+jamais tivesse confirmado a ausência de RRT. **Correção:** a checagem
+roda agora ANTES de criar o objeto `projeto` ou tocar em `state`, pra
+QUALQUER status.
+
+**P1b — a confirmação só existia na UI, não na função de gravação.**
+`setProjetoRrtRequirement(id, 'none')` aceitava a decisão sem receber
+nenhuma prova de confirmação — uma chamada direta (contornando a UI)
+sempre passava. **Correção:** nova assinatura
+`setProjetoRrtRequirement(projetoId, novoRequirement, {confirmNone})`.
+`podeAlterarRrtRequirement` exige `opts.confirmNone===true` pra aceitar
+`'none'` — a mera chamada da função nunca é tratada como confirmação
+implícita. `pending`/`one`/`two` não exigem `confirmNone`. Uma tentativa
+rejeitada nunca atualiza timestamps, nunca chama `resyncProjectV2`, nunca
+chama `scheduleSave`.
+
+**P1c — registros de RRT inválidos eram ignorados nas checagens de
+satisfação e na migração.** `getProjetoRrtsValidas` FILTRA registros
+inválidos — usar só essa contagem deixava um registro corrompido
+(valor não numérico, negativo, NaN, ou tipo desconhecido) simplesmente
+ignorado: um projeto com uma RRT inválida podia passar por `'none'`
+(contagem de válidas = 0) e liberar a distribuição com dedução zero,
+mesmo com um registro real ainda em `projeto.rrts`. **Correção:**
+`projetoRrtRequirementSatisfeita`, `podeAlterarRrtRequirement` e a
+migração agora SEMPRE comparam também a contagem BRUTA
+(`projeto.rrts.length`, sem filtro) contra a contagem de válidas:
+
+```
+none: zero registros BRUTOS (nenhuma RRT, nem inválida, sobrando)
+one:  exatamente um registro bruto E esse registro é válido
+two:  exatamente dois registros brutos, os dois válidos, um de cada tipo
+pending: nunca satisfeita
+```
+
+`getProjetoRrtsValidas` também passou a exigir um `tipo` reconhecido
+(`'projeto'` ou `'execucao'`) — um registro de tipo desconhecido nunca
+conta como válido, nem pra satisfazer a decisão nem para a soma
+provisionada (`calcRrtProvisionadaCent`). A migração deixou de duplicar
+essa regra inline e passou a chamar `getProjetoRrtsValidas` diretamente,
+eliminando o risco de as duas lógicas divergirem. Nenhum registro é
+apagado ou corrigido automaticamente — a distribuição só fica bloqueada
+até uma decisão segura.
+
+**P2 — `setProjetoRrtRequirement`/`podeAlterarRrtRequirement` não
+verificavam se o projeto usa a regra v2.** Uma chamada direta sobre um
+projeto `legacy` retornava sucesso e adicionava o campo novo, contrariando
+a garantia de que projetos legados nunca recebem `rrtRequirement`.
+**Correção:** `podeAlterarRrtRequirement` rejeita com `motivo:'nao_v2'`
+ANTES de qualquer outra checagem quando `!projetoUsaRegraV2(projeto)` —
+projeto legado nunca ganha `rrtRequirement`/`confirmedAt`/`confirmedBy`,
+nunca sincroniza, nunca salva, pra nenhum dos 4 estados.
+
+22 testes novos (49 no total). Suíte completa: 586 PASS / 0 FAIL.
+Comparação com o backup real: 0 diferenças em 14 meses históricos.

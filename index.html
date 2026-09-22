@@ -1921,17 +1921,33 @@ function migrateState() {
     // decisão já registrada. Infere a partir das RRTs JÁ cadastradas — nunca
     // inventa 'none' (ausência de RRT vira 'pending', nunca "não exige"), e
     // uma RRT de valor R$0,00 continua sendo uma RRT real (conta pra 'one').
-    // Um estado antigo inconsistente (ex.: duas RRTs do mesmo tipo, o que a
-    // UI já impede desde sempre mas pode existir em dados externos/editados
-    // manualmente) cai em 'pending' — preserva os lançamentos já
-    // materializados (nunca recalculados aqui) e só bloqueia NOVAS
-    // materializações até uma decisão segura.
+    //
+    // Achado P1 da auditoria (reauditoria): a inferência original usava só
+    // a contagem de RRTs VÁLIDAS, ignorando silenciosamente registros
+    // corrompidos/incompletos — um projeto com uma RRT válida + uma
+    // inválida podia migrar pra 'two' mesmo faltando um registro de
+    // verdade. Agora exige a contagem BRUTA (todosOsRegistros) bater
+    // EXATAMENTE com a contagem de válidas em cada caso — 'one' só se o
+    // único registro bruto for válido; 'two' só se os dois registros
+    // brutos forem válidos E um de cada tipo. Qualquer combinação
+    // inconsistente (uma inválida, uma válida+uma inválida, duas
+    // inválidas, mais de duas, tipo desconhecido, tipos duplicados, valor
+    // nulo/negativo/NaN) cai em 'pending' — nunca inventa 'none' nem RRT,
+    // nunca apaga nem corrige o registro, só sinaliza que precisa de uma
+    // decisão segura. Preserva os lançamentos já materializados (nunca
+    // recalculados aqui) e só bloqueia NOVAS materializações até lá.
     if(p.regraDistribuicao==='v2' && !p.rrtRequirement){
-      const validas=p.rrts.filter(r=>r&&typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0);
+      const todosOsRegistros=p.rrts;
+      // Reaproveita getProjetoRrtsValidas (definida mais abaixo no arquivo,
+      // acessível aqui por hoisting — migrateState só EXECUTA quando
+      // chamada, depois do script inteiro já ter sido parseado) — evita
+      // duplicar a regra de validade (valor numérico + tipo reconhecido)
+      // em dois lugares que poderiam divergir.
+      const validas=getProjetoRrtsValidas(p);
       const tipos=validas.map(r=>r.tipo);
-      if(validas.length===0) p.rrtRequirement='pending';
-      else if(validas.length===1) p.rrtRequirement='one';
-      else if(validas.length===2 && tipos.includes('projeto') && tipos.includes('execucao')) p.rrtRequirement='two';
+      if(todosOsRegistros.length===0) p.rrtRequirement='pending';
+      else if(todosOsRegistros.length===1 && validas.length===1) p.rrtRequirement='one';
+      else if(todosOsRegistros.length===2 && validas.length===2 && tipos.includes('projeto') && tipos.includes('execucao')) p.rrtRequirement='two';
       else p.rrtRequirement='pending';
       if(p.rrtRequirementConfirmedAt===undefined) p.rrtRequirementConfirmedAt=null;
       if(p.rrtRequirementConfirmedBy===undefined) p.rrtRequirementConfirmedBy=null;
@@ -3150,7 +3166,11 @@ function projetoUsaRegraV2(projeto){ return !!(projeto&&projeto.regraDistribuica
 // quebra a soma nem é silenciosamente tratado como zero-e-esquecido; ele só
 // não entra na soma (mesma filosofia de "nunca inventar" do resto do app).
 function getProjetoRrtsValidas(projeto){
-  return ((projeto&&projeto.rrts)||[]).filter(r=>r&&typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0);
+  // Achado P1 (reauditoria): também exige um tipo reconhecido — um
+  // registro com tipo desconhecido (dado corrompido/editado externamente)
+  // nunca deve contar como uma RRT "de verdade" pra satisfazer 'one'/'two'
+  // nem pra entrar na soma provisionada (calcRrtProvisionadaCent).
+  return ((projeto&&projeto.rrts)||[]).filter(r=>r&&typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0&&(r.tipo==='projeto'||r.tipo==='execucao'));
 }
 function calcRrtProvisionadaCent(projeto){
   return getProjetoRrtsValidas(projeto).reduce((s,r)=>s+Math.round((r.valor||0)*100),0);
@@ -3167,17 +3187,28 @@ function getProjetoRrtRequirement(projeto){
   const r=projeto&&projeto.rrtRequirement;
   return (r==='pending'||r==='none'||r==='one'||r==='two') ? r : 'pending';
 }
-// Verdadeiro só quando a decisão de RRT está satisfeita: 'none' com zero
-// RRTs, 'one' com exatamente uma RRT válida, 'two' com exatamente duas
-// (uma de cada tipo) — 'pending' nunca é satisfeita (precisa da decisão
-// primeiro).
+// Verdadeiro só quando a decisão de RRT está satisfeita. Achado P1 da
+// auditoria (reauditoria pós-implementação): usar só getProjetoRrtsValidas
+// (que FILTRA registros inválidos) deixava um registro corrompido/
+// incompleto simplesmente ignorado — um projeto com uma RRT inválida podia
+// passar por 'none' (contagem de válidas = 0) e liberar a distribuição com
+// dedução zero, mesmo com um registro real ainda em projeto.rrts. Por isso
+// SEMPRE compara também a contagem BRUTA (todosOsRegistros, sem filtro):
+//   none: zero registros BRUTOS (nenhuma RRT, nem inválida, sobrando)
+//   one:  exatamente um registro bruto E esse registro é válido
+//   two:  exatamente dois registros brutos, os dois válidos, um de cada tipo
+//   pending: nunca satisfeita
+// Qualquer registro excedente, inválido, incompleto ou de tipo desconhecido
+// mantém a distribuição bloqueada — nunca é silenciosamente ignorado pra
+// liberar dinheiro.
 function projetoRrtRequirementSatisfeita(projeto){
   const req=getProjetoRrtRequirement(projeto);
+  const todosOsRegistros=(projeto&&projeto.rrts)||[];
   const validas=getProjetoRrtsValidas(projeto);
   if(req==='pending') return false;
-  if(req==='none') return validas.length===0;
-  if(req==='one') return validas.length===1;
-  if(req==='two') return validas.length===2 && validas.some(r=>r.tipo==='projeto') && validas.some(r=>r.tipo==='execucao');
+  if(req==='none') return todosOsRegistros.length===0;
+  if(req==='one') return todosOsRegistros.length===1 && validas.length===1;
+  if(req==='two') return todosOsRegistros.length===2 && validas.length===2 && validas.some(r=>r.tipo==='projeto') && validas.some(r=>r.tipo==='execucao');
   return false;
 }
 // Projeto contratado na regra v2 cuja decisão de RRT ainda não está
@@ -3194,6 +3225,13 @@ function projetoNecessitaConfiguracaoRRT(projeto){
 function getProjetoRrtBlockMessage(projeto){
   const req=getProjetoRrtRequirement(projeto);
   if(req==='pending') return 'Distribuição bloqueada: informe se o projeto exige RRT.';
+  if(req==='none'){
+    // Só chega aqui se sobrou algum registro de RRT (válido ou não) num
+    // projeto marcado como "não exige" — nunca deveria acontecer pelo
+    // fluxo normal (podeAlterarRrtRequirement bloqueia essa transição),
+    // mas dados importados/editados externamente podem cair aqui.
+    return 'Distribuição bloqueada: este projeto está marcado como "Não exige RRT", mas ainda tem RRT cadastrada — remova o registro antes.';
+  }
   const validas=getProjetoRrtsValidas(projeto);
   if(req==='one') return 'Distribuição bloqueada: cadastre a RRT exigida pelo projeto.';
   if(req==='two'){
@@ -3212,17 +3250,34 @@ function projetoV2TemMaterializacao(projeto){
   return (state.office.recebiveis||[]).some(r=>r.projetoId===projeto.id && recebivelV2Materializado(r));
 }
 // Regras de alteração da decisão de RRT (seção "Alteração da decisão" do
-// escopo) — nunca decide nada sozinha, só diz se uma troca é permitida:
+// escopo) — nunca decide nada sozinha, só diz se uma troca é permitida.
+// `opts.confirmNone` é a prova explícita de confirmação pra 'none' (achado
+// P1 da auditoria: a confirmação só existia na UI antes — agora é a própria
+// PROTEÇÃO DE GRAVAÇÃO que exige a prova, então uma chamada direta a
+// setProjetoRrtRequirement sem essa prova nunca passa, mesmo contornando
+// qualquer tela):
+//   - projeto não usa a regra v2 (legado): NUNCA (achado P2 — legado nunca
+//     ganha rrtRequirement, verificado ANTES de qualquer outra checagem).
 //   - projeto já materializado: NUNCA (decisão fica imutável pra sempre).
-//   - 'none' com RRT(s) já cadastrada(s): rejeitado — remova primeiro.
-//   - 'one' com duas RRTs já cadastradas: rejeitado — remova uma primeiro.
+//   - 'none' com QUALQUER registro de RRT já cadastrado (válido OU
+//     inválido — usa a contagem BRUTA, nunca só as válidas, achado P1):
+//     rejeitado — remova o(s) registro(s) primeiro.
+//   - 'none' sem opts.confirmNone===true: rejeitado — falta a confirmação
+//     explícita, mesmo sem nenhum registro de RRT.
+//   - 'one' com mais de um registro bruto já cadastrado: rejeitado —
+//     remova um primeiro.
 //   - qualquer outra combinação (inclusive 'two' e 'pending'): permitida.
-function podeAlterarRrtRequirement(projeto, novoRequirement){
+function podeAlterarRrtRequirement(projeto, novoRequirement, opts){
+  opts=opts||{};
+  if(!projeto || !projetoUsaRegraV2(projeto)) return {ok:false, motivo:'nao_v2'};
   if(!['pending','none','one','two'].includes(novoRequirement)) return {ok:false, motivo:'invalido'};
   if(projetoV2TemMaterializacao(projeto)) return {ok:false, motivo:'materializado'};
-  const validas=getProjetoRrtsValidas(projeto);
-  if(novoRequirement==='none' && validas.length>0) return {ok:false, motivo:'existem_rrts'};
-  if(novoRequirement==='one' && validas.length>1) return {ok:false, motivo:'existem_rrts_demais'};
+  const todosOsRegistros=(projeto.rrts)||[];
+  if(novoRequirement==='none'){
+    if(todosOsRegistros.length>0) return {ok:false, motivo:'existem_rrts'};
+    if(opts.confirmNone!==true) return {ok:false, motivo:'sem_confirmacao'};
+  }
+  if(novoRequirement==='one' && todosOsRegistros.length>1) return {ok:false, motivo:'existem_rrts_demais'};
   return {ok:true};
 }
 
@@ -9325,6 +9380,22 @@ function addOfficeProjeto(){
   // retroativamente a projetos já existentes com histórico realizado (ver
   // migração em migrateState).
   const rrtRequirement=document.querySelector('input[name="newProjRrtRequirement"]:checked')?.value||'pending';
+  // Achado P1 da auditoria: a confirmação de "Não exige RRT" precisa ser
+  // exigida INDEPENDENTE do status escolhido — antes, essa checagem só
+  // rodava dentro de `if(status==='contratado')`, então um projeto
+  // Potencial/Concluído/Cancelado podia nascer com rrtRequirement='none'
+  // (e um rrtRequirementConfirmedAt FALSO, sem confirmação nenhuma) e, se
+  // depois virasse Contratado, a distribuição já saía liberada sem que o
+  // usuário jamais tivesse confirmado a ausência de RRT. Roda ANTES de
+  // criar o objeto `projeto` ou tocar em `state` — rejeição aqui é zero
+  // mutation completo (nenhum projeto, nenhum recebível, nenhum
+  // agendamento de salvamento).
+  if(rrtRequirement==='none'){
+    const noneConfirmEl=document.getElementById('newProjRrtNoneConfirm');
+    if(!noneConfirmEl || !noneConfirmEl.checked){
+      toast('Confirme explicitamente que o projeto não exige RRT');return;
+    }
+  }
   const projeto={id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid(),regraDistribuicao:'v2',rrts:[],rrtRequirement};
   if(rrtRequirement==='pending'){
     projeto.rrtRequirementConfirmedAt=null;
@@ -9335,20 +9406,14 @@ function addOfficeProjeto(){
   }
 
   if(status==='contratado'){
-    // A decisão de RRT (rrtRequirement) já foi lida acima — aqui só valida/
-    // cria os REGISTROS de RRT conforme ela. RRT continua OPCIONAL no
-    // cadastro mesmo com 'one'/'two' escolhido (seção "RRT DO PROJETO" —
-    // nunca inventa; o projeto fica bloqueado até o usuário completar,
-    // editando depois). Só valida/cria RRT se o usuário realmente
-    // preencheu algum valor — campo em branco nunca bloqueia o cadastro do
-    // projeto nem gera erro de validação.
-    if(rrtRequirement==='none'){
-      // Confirmação adicional obrigatória (seção "Projeto sem RRT" do
-      // escopo) — nunca aceita "não exige RRT" sem essa marcação explícita.
-      if(!document.getElementById('newProjRrtNoneConfirm').checked){
-        toast('Confirme explicitamente que o projeto não exige RRT');return;
-      }
-    } else if(rrtRequirement==='two'){
+    // A decisão de RRT (rrtRequirement) já foi lida e confirmada acima —
+    // aqui só valida/cria os REGISTROS de RRT conforme ela. RRT continua
+    // OPCIONAL no cadastro mesmo com 'one'/'two' escolhido (seção "RRT DO
+    // PROJETO" — nunca inventa; o projeto fica bloqueado até o usuário
+    // completar, editando depois). Só valida/cria RRT se o usuário
+    // realmente preencheu algum valor — campo em branco nunca bloqueia o
+    // cadastro do projeto nem gera erro de validação.
+    if(rrtRequirement==='two'){
       const valorProjetoRrtRaw=document.getElementById('newProjRrtProjetoValor').value;
       const valorExecucaoRrtRaw=document.getElementById('newProjRrtExecucaoValor').value;
       if(valorProjetoRrtRaw!=='' || valorExecucaoRrtRaw!==''){
@@ -9497,19 +9562,17 @@ function onEProjRrtRequirementChange(){
   const wrap=document.getElementById('eProjRrtNoneConfirmWrap');
   if(wrap) wrap.style.display = val==='none' ? 'block' : 'none';
 }
-// Confirmação adicional obrigatória pra "Não exige RRT" (seção "Projeto
-// sem RRT" do escopo) — checagem de UI; a proteção real (contra RRT já
-// existente, contra materialização, etc.) está em
-// podeAlterarRrtRequirement/setProjetoRrtRequirement.
+// Lê a confirmação de "Não exige RRT" da UI e repassa pra função de
+// gravação como prova explícita (opts.confirmNone) — achado P1 da
+// auditoria: a confirmação agora é validada DENTRO de
+// setProjetoRrtRequirement/podeAlterarRrtRequirement, nunca só aqui; esta
+// function só traduz o estado do checkbox, nunca decide sozinha.
 function salvarDecisaoRrtRequirement(projetoId){
   const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
   const novo=document.querySelector('input[name="eProjRrtRequirement"]:checked')?.value;
   if(!novo) return;
-  if(novo==='none' && !document.getElementById('eProjRrtNoneConfirm')?.checked){
-    toast('Confirme explicitamente que o projeto não exige RRT');
-    return;
-  }
-  const ok=setProjetoRrtRequirement(projetoId, novo);
+  const confirmNone=novo==='none' ? !!document.getElementById('eProjRrtNoneConfirm')?.checked : false;
+  const ok=setProjetoRrtRequirement(projetoId, novo, {confirmNone});
   if(ok){ openEditOfficeProjeto(projetoId); renderOfficeProjetosTab(); renderEscritorioResumo(); toast('Decisão de RRT atualizada!'); }
 }
 function openEditOfficeProjeto(id){
@@ -9624,13 +9687,26 @@ function resyncProjectV2(projetoId){
 // grava confirmedAt/confirmedBy (ainda não é uma decisão confirmada);
 // qualquer outro valor grava os dois — confirmedBy usa o nome do perfil
 // ativo quando existir (identidade já confiável no app), nunca inventado.
-function setProjetoRrtRequirement(projetoId, novoRequirement){
+//
+// Achados P1/P2 da auditoria (reauditoria): a confirmação de 'none' e o
+// bloqueio de projeto legado agora são parte do CONTRATO desta função, não
+// só da tela que a chama — `opts.confirmNone` é a prova explícita exigida
+// por podeAlterarRrtRequirement pra aceitar 'none' (a mera CHAMADA da
+// function nunca é tratada como confirmação implícita: sem
+// `{confirmNone:true}`, 'none' é sempre rejeitado, mesmo chamando direto
+// pelo console/teste); e um projeto que não usa a regra v2 (legado) é
+// rejeitado ANTES de qualquer outra checagem, pra qualquer um dos 4
+// estados — nunca ganha rrtRequirement/confirmedAt/confirmedBy, nunca
+// sincroniza, nunca salva.
+function setProjetoRrtRequirement(projetoId, novoRequirement, opts){
   const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return false;
-  const check=podeAlterarRrtRequirement(p, novoRequirement);
+  const check=podeAlterarRrtRequirement(p, novoRequirement, opts);
   if(!check.ok){
-    if(check.motivo==='materializado') toast('Este projeto já possui distribuição financeira materializada — a exigência de RRT ficou imutável. Registre um estorno financeiro explícito para alterar.');
+    if(check.motivo==='nao_v2') toast('Este projeto usa a regra de distribuição legada — sem gestão de exigência de RRT aqui.');
+    else if(check.motivo==='materializado') toast('Este projeto já possui distribuição financeira materializada — a exigência de RRT ficou imutável. Registre um estorno financeiro explícito para alterar.');
     else if(check.motivo==='existem_rrts') toast('Este projeto já tem RRT cadastrada — remova o(s) registro(s) antes de marcar "Não exige RRT".');
     else if(check.motivo==='existem_rrts_demais') toast('Este projeto tem duas RRTs cadastradas — remova uma antes de reduzir para "Exige 1 RRT".');
+    else if(check.motivo==='sem_confirmacao') toast('Confirme explicitamente que o projeto não exige RRT');
     else toast('Decisão de RRT inválida');
     return false;
   }
