@@ -52,6 +52,21 @@ Valor ausente mantém o comportamento atual para instalações existentes. Valor
 - Preservar a linha do tempo da projeção em ordem crescente por data, pois ela calcula o saldo progressivamente.
 - Históricos de transferências e cofrinho já são apresentados do mais recente para o mais antigo e não devem regredir.
 
+## 4. Descoberta do parcelamento no Caixa do Escritório
+
+### Problema confirmado pela validação do usuário
+
+Os campos de entrada e parcelamento já existem e funcionam, mas ficam inteiramente ocultos enquanto o seletor de status está em `Potencial`, que é o valor inicial. A explicação em texto abaixo do formulário não foi suficiente: a tela parece ser a versão anterior e levou o usuário a concluir corretamente, pela apresentação disponível, que a atualização não havia sido aplicada.
+
+### Correção de interface
+
+- Manter `Potencial` como status inicial e preservar a regra de que projeto potencial não gera caixa, recebível ou repasse.
+- Exibir sempre uma seção claramente titulada **Entrada e parcelamento** no formulário de projeto.
+- Enquanto o status não for `Contratado`, apresentar os controles financeiros desabilitados e uma indicação direta: “Selecione Contratado para configurar entrada e parcelamento”. Não aceitar nem persistir valores desabilitados.
+- Ao selecionar `Contratado`, habilitar imediatamente os campos já existentes: valor e data prevista da entrada, entrada já recebida/data real, quantidade de parcelas do saldo, data da primeira parcela e conta empresarial de destino.
+- Ao sair de `Contratado` antes de cadastrar, desabilitar a seção e garantir que o projeto potencial/concluído/cancelado não grave os valores eventualmente digitados nem gere recebíveis.
+- Não alterar geração, arredondamento, datas, recebíveis, repasses, saldos, edição de projetos existentes ou qualquer outra regra já aprovada do Caixa do Escritório.
+
 ## Testes obrigatórios
 
 Adicionar testes permanentes e registrá-los em `tests/financial-engine/run-all.mjs`:
@@ -66,6 +81,8 @@ Adicionar testes permanentes e registrá-los em `tests/financial-engine/run-all.
 8. Pendência sem data e sem competência comprovadamente anterior não é ocultada.
 9. Compras com datas diferentes aparecem em ordem decrescente; registros legados usam fallback estável; o total e `state.despesas` não mudam.
 10. A linha do tempo da projeção continua em ordem crescente e os históricos de transferências/cofrinho continuam decrescentes.
+11. A seção Entrada e parcelamento é visível porém desabilitada em Potencial, habilita em Contratado e volta a desabilitar sem persistir valores nem criar recebíveis quando o status muda para outro valor.
+12. O fluxo contratado aprovado anteriormente continua gerando entrada/parcelas uma única vez e a suíte completa do Caixa do Escritório permanece íntegra.
 
 Executar primeiro um teste que reproduza os comportamentos atuais, depois a suíte completa. Entregar base/final, arquivos alterados, resultado, limitações e commit. Parar para auditoria Codex; sem push, merge ou novo gate.
 
@@ -73,5 +90,5 @@ Executar primeiro um teste que reproduza os comportamentos atuais, depois a suí
 
 - OCR ou suporte a layouts de bancos específicos.
 - Exclusão ou correção retroativa dos dados do usuário.
-- Mudança em competência, fechamento/vencimento, parcelamento, pagamento, saldos ou Caixa do Escritório.
+- Mudança nas regras financeiras de competência, fechamento/vencimento, parcelamento, pagamento, saldos ou Caixa do Escritório; neste patch, somente a descoberta visual dos campos já existentes do escritório é alterada.
 - Atualização de `delivery/index.html`, que permanece snapshot histórico.
