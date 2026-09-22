@@ -140,6 +140,22 @@ const FILES = [
   // Desmarcar a fatura continua sempre permitido e libera as operações de
   // novo; dinheiro/PIX nunca é afetado.
   'gate5-paid-invoice-immutability.test.mjs',
+  // Gate 5 — corte do histórico, importador de PDF e ordem da fatura
+  // (docs/gates/GATE-5-HISTORY-CUTOFF-PDF-AND-INVOICE-ORDER.md, base
+  // 7ccbf3c): (1) o bloco "Importar Fatura em PDF" sai da interface normal
+  // de Cartões/Faturas (parser legado, formato rígido, nunca foi uma
+  // funcionalidade nova/corrigida) — código e dados legados preservados;
+  // (2) preferência opcional por perfil financialPreferences.historyStartMonth
+  // ("AAAA-MM") corta competências anteriores só nas projeções
+  // (getChronologicalProjection) e nas duas médias históricas
+  // (getVariableExpenseEstimate "moderna" e calcPrevisaoMediaHistorica
+  // "legada"), sem apagar/migrar nenhum dado nem mudar saldo real; (3)
+  // ordenarItensFaturaDesc ordena "Compras e parcelas desta fatura" da mais
+  // recente pra mais antiga (dataCompra válida desc, fallback createdAt desc
+  // pra legado), só apresentação; a linha do tempo da projeção continua
+  // crescente e os históricos de transferências/cofrinho continuam
+  // decrescentes.
+  'gate5-history-cutoff-pdf-invoice-order.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

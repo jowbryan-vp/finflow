@@ -1087,23 +1087,18 @@ select option{background:var(--card)}
           </div>
           <div class="card"><div class="card-header"><div class="card-title">Cartões Cadastrados</div></div><div id="cartoesList"></div></div>
         </div>
-        <div class="card mt-20">
-          <div class="card-header">
-            <div>
-              <div class="card-title">📄 Importar Fatura em PDF</div>
-              <div class="card-sub">Extrai os lançamentos automaticamente do PDF da fatura — você confere e ajusta antes de salvar</div>
-            </div>
-          </div>
-          <div class="form-grid">
-            <div class="form-group full">
-              <label>Cartão desta fatura</label>
-              <select id="faturaPdfCartao"></select>
-            </div>
-          </div>
-          <button class="btn btn-primary mt-16" onclick="document.getElementById('faturaPdfInput').click()">📎 Escolher arquivo PDF</button>
-          <input type="file" id="faturaPdfInput" accept=".pdf" onchange="processarFaturaPdf(event)" style="display:none">
-          <div id="faturaPdfStatus" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
-        </div>
+        <!-- Importador legado de fatura em PDF: removido da interface normal
+             (docs/gates/GATE-5-HISTORY-CUTOFF-PDF-AND-INVOICE-ORDER.md, seção 1).
+             O parser só reconhece o formato rígido "dd/mm descrição 1.234,56" —
+             não é uma funcionalidade nova/corrigida, e apresentá-la como tal
+             prometia mais do que o parser cumpre (PDF escaneado, protegido ou
+             de outro layout nunca funcionou). Código (processarFaturaPdf,
+             extrairTextoPdf, parseFaturaTexto, confirmarLancamentosFatura,
+             abrirModalConferenciaFatura, renderFaturaConferenciaBody,
+             categorizarDescricaoFatura) e o formato de dados continuam
+             intactos no arquivo para uma especificação própria futura — só o
+             ponto de entrada na UI foi retirado. Nenhum dado ou histórico foi
+             apagado ou migrado. -->
       </div>
 
       <div id="page-contas" class="page">
@@ -2608,6 +2603,23 @@ function getCurrentFinancialCycle(referenceDate){
   return getFinancialCycle(ref,events,expectedNextDate);
 }
 
+// Gate 5 (docs/gates/GATE-5-HISTORY-CUTOFF-PDF-AND-INVOICE-ORDER.md, seção 2):
+// corte opcional de início confiável do histórico, por perfil. Puro — só lê
+// state.financialPreferences.historyStartMonth, nunca apaga/migra nada.
+// Retorna o mês/ano em "serial" (ano*12+mês-1, mesmo esquema de addMonths/
+// getChronologicalProjection) ou null se ausente/inválido — nesse caso todo
+// o comportamento de projeção/média histórica permanece exatamente como
+// antes desta preferência existir.
+function getHistoryStartCutoffSerial(){
+  const raw=state.financialPreferences?.historyStartMonth;
+  if(!raw||typeof raw!=='string') return null;
+  const m=raw.match(/^(\d{4})-(\d{2})$/);
+  if(!m) return null;
+  const ano=parseInt(m[1],10), mes=parseInt(m[2],10);
+  if(mes<1||mes>12) return null;
+  return ano*12+mes-1;
+}
+
 // Gate 4.2: a planning buffer, never a realized transaction or a fabricated payment date.
 function getVariableExpenseEstimate(referenceDate,endDate,method='weighted'){
   if(!isValidISODateString(referenceDate)||!isValidISODateString(endDate)||endDate<referenceDate)
@@ -2615,9 +2627,17 @@ function getVariableExpenseEstimate(referenceDate,endDate,method='weighted'){
   const [ry,rm,rd]=referenceDate.split('-').map(Number),[ey,em,ed]=endDate.split('-').map(Number);
   if((ey-ry)*12+em-rm>11) return {unavailable:true,total:0,months:[],reason:'period_too_long'};
   const weights=method==='simple'?[1,1,1]:[1,2,3];
+  const cutoffSerial=getHistoryStartCutoffSerial();
   const history=[],averages={};
   for(let offset=-3;offset<0;offset++){
-    const {mes,ano}=addMonths(rm,ry,offset),items=getDespesasForMonth(mes,ano);
+    const {mes,ano}=addMonths(rm,ry,offset);
+    // Corte de histórico por perfil: os 3 meses completos anteriores
+    // precisam existir DEPOIS do corte. Se qualquer um cair antes, não dá
+    // pra "completar" com um mês anterior ao que o usuário marcou como
+    // início confiável — o resultado é histórico insuficiente, nunca um mês
+    // preenchido com zero (seção 2 do Gate 5).
+    if(cutoffSerial!==null && (ano*12+mes-1)<cutoffSerial) return {unavailable:true,total:0,months:[],reason:'insufficient_history'};
+    const items=getDespesasForMonth(mes,ano);
     const categories={};
     for(const d of items) if(!d.fixa&&(d.parcelas||1)===1){
       const cat=d.cat||'uncategorized';categories[cat]=(categories[cat]||0)+Math.max(0,d._valorParcela||0);
@@ -2678,8 +2698,21 @@ function getChronologicalProjection(referenceDate,endDate){
   for(const r of state.receitas||[]) if(isValidISODateString(r.dataPrevista)){
     const [y,m]=r.dataPrevista.split('-').map(Number);starts.push(y*12+m-1);
   }
-  const earliest=Math.min(...starts), first=Math.max(earliest,ry*12+rm-1-239);
-  if(first>earliest) issues.push({reason:'history_limited'});
+  const earliest=Math.min(...starts);
+  const cap240=ry*12+rm-1-239;
+  const cutoffSerial=getHistoryStartCutoffSerial();
+  let first=earliest;
+  if(cap240>first) first=cap240;
+  // O aviso de "histórico limitado a 240 meses" só faz sentido quando é o
+  // limite TÉCNICO que está cortando a busca. Um corte intencional do
+  // usuário (historyStartMonth) pode empurrar `first` ainda mais adiante —
+  // nesse caso o motivo é a escolha dele, não uma limitação, então o aviso
+  // não deve aparecer (seção 2 do Gate 5). Se o corte for MENOS restritivo
+  // que o limite técnico (ou estiver ausente), o comportamento de sempre
+  // permanece intacto.
+  if(cutoffSerial!==null && cutoffSerial>first) first=cutoffSerial;
+  const limitadoPorCap240=(first===cap240)&&(cap240>earliest);
+  if(limitadoPorCap240) issues.push({reason:'history_limited'});
   const accounts=new Set((state.contas||[]).map(c=>c.id));
   for(let serial=first;serial<=ey*12+em-1;serial++){
     const year=Math.floor(serial/12),month=serial%12+1,key=mesKey(month,year);
@@ -3816,13 +3849,21 @@ function renderProjecaoFinanceira(t){
 function setFinancialPreference(key,value){
   if(key==='primarySalaryId'&&value&&!(state.receitas||[]).some(r=>r.id===value&&r.tipo==='salario'&&r.certeza!==undefined&&r.recorrencia)) return;
   if(key==='variableMethod'&&!['weighted','simple'].includes(value))return;
+  // historyStartMonth (Gate 5, seção 2): "AAAA-MM" válido, ou vazio pra
+  // limpar o corte e restaurar o comportamento anterior. Qualquer outro
+  // valor é rejeitado ANTES de qualquer mutação/salvamento.
+  if(key==='historyStartMonth'&&value&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return;
   if(key==='projectionEndDate'&&value){
     const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     if(getChronologicalProjection(today,value).unavailable){toast('Escolha uma data de hoje até os próximos 12 meses');return;}
   }
-  if(!['primarySalaryId','variableMethod','projectionEndDate'].includes(key))return;
+  if(!['primarySalaryId','variableMethod','projectionEndDate','historyStartMonth'].includes(key))return;
   state.financialPreferences={...(state.financialPreferences||{}),[key]:value};
-  scheduleSave();renderFinancialOutlook();
+  scheduleSave();
+  // historyStartMonth afeta mais do que o card de planejamento (Pior/Melhor
+  // Cenário de meses futuros também derivam da média histórica) — atualiza o
+  // Dashboard inteiro, não só o fragmento de renderFinancialOutlook.
+  if(key==='historyStartMonth') renderDashboard(); else renderFinancialOutlook();
 }
 function renderFinancialOutlook(){
   const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
@@ -3844,6 +3885,14 @@ function renderFinancialOutlook(){
         <div class="form-group"><label for="projectionEndDate">Planejar até</label><input id="projectionEndDate" type="date" min="${today}" value="${end}" onchange="setFinancialPreference('projectionEndDate',this.value)"></div>
         <div class="form-group"><label for="variableMethodSelect">Estimativa dos últimos 3 meses</label><select id="variableMethodSelect" onchange="setFinancialPreference('variableMethod',this.value)"><option value="weighted" ${preferences.variableMethod!=='simple'?'selected':''}>Mais peso ao recente (1, 2, 3)</option><option value="simple" ${preferences.variableMethod==='simple'?'selected':''}>Média simples</option></select></div>
         <div class="form-group"><label>Ciclo do salário principal</label><div id="financialCycleLabel" class="info-box">${cycle.cycleUnavailable?(cycle.selectionRequired?'Escolha um salário principal para definir o ciclo.':'Ainda não há recebimento real para definir o ciclo.'):`${dateLabel(cycle.startDate)} → ${cycle.endDate?dateLabel(cycle.endDate):'fim ainda desconhecido'}${cycle.endSource==='expected_salary'?' (fim estimado)':''}`}</div><button class="btn btn-ghost btn-sm" onclick="setFinancialPreference('projectionEndDate','')">Usar fim do ciclo</button></div>
+        <div class="form-group full">
+          <label for="historyStartMonthInput">Considerar histórico a partir de</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="historyStartMonthInput" type="month" value="${preferences.historyStartMonth||''}" onchange="setFinancialPreference('historyStartMonth',this.value)" style="flex:1">
+            <button class="btn btn-ghost btn-sm" onclick="setFinancialPreference('historyStartMonth','')">Limpar</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Ignora competências anteriores a esse mês só nas projeções e nas médias históricas de gastos — nenhum lançamento é excluído, migrado ou apagado. Deixe em branco pra manter o comportamento atual.</div>
+        </div>
       </div>
     </div>
     <div class="hero-grid">
@@ -4094,10 +4143,16 @@ function getMesesHistoricoDisponiveis(maxN){
   // mês exibido, navegar pra um mês futuro faria a "história" recuar junto
   // (ou até incluir meses futuros sem lançamento nenhum), dando uma média
   // diferente — e às vezes zerada — dependendo de qual mês você está olhando.
+  const cutoffSerial=getHistoryStartCutoffSerial();
   const meses=[];
   for(let i=1;i<=maxN;i++){
     let m=REAL_TODAY_MONTH-i, y=REAL_TODAY_YEAR;
     while(m<=0){ m+=12; y-=1; }
+    // Corte de histórico por perfil (seção 2 do Gate 5): nunca considera mês
+    // anterior ao que o usuário marcou como início confiável — mesmo
+    // tratamento de "fim do histórico" que um mês vazio já recebia, sem
+    // preencher com zero.
+    if(cutoffSerial!==null && (y*12+m-1)<cutoffSerial) break;
     const desps=getDespesasForMonth(m,y);
     const recs=getReceitasForMonth(m,y);
     if(!desps.length && !recs.length) break; // sem dado nesse mês = fim do histórico
@@ -5855,6 +5910,27 @@ function renderCartoes(){
   renderFaturaCartoes();
 }
 
+// Ordena "Compras e parcelas desta fatura" da mais recente pra mais antiga
+// (Gate 5, seção 3) — só apresentação: não muta o array recebido, não muda
+// cálculo/competência/parcela/total/pagamento nem a posição em
+// state.despesas. Chave principal: dataCompra ISO válida, decrescente.
+// Fallback determinístico pra registro legado sem data válida: createdAt
+// decrescente (mesmo campo/formato "mais recente primeiro" já usado na
+// listagem principal de Despesas). Itens com dataCompra válida sempre vêm
+// antes dos sem data — não há como comparar uma data real contra um id de
+// criação sem inventar uma data pro legado, o que a especificação proíbe.
+function ordenarItensFaturaDesc(itens){
+  return itens.slice().sort((a,b)=>{
+    const aTemData=isValidISODateString(a.dataCompra), bTemData=isValidISODateString(b.dataCompra);
+    if(aTemData&&bTemData){
+      if(a.dataCompra!==b.dataCompra) return b.dataCompra.localeCompare(a.dataCompra);
+      return (b.createdAt||'').localeCompare(a.createdAt||''); // empate no mesmo dia: desempate estável
+    }
+    if(aTemData!==bTemData) return aTemData?-1:1; // data válida sempre antes de legado sem data
+    return (b.createdAt||'').localeCompare(a.createdAt||''); // os dois sem data válida
+  });
+}
+
 // ════════════════════════════════════════════════
 // FATURA — área "Cartões / Faturas": única visão de fatura por cartão/mês,
 // reusando os mesmos cálculos e o mesmo state.despesas já usados em
@@ -5916,7 +5992,7 @@ function renderFaturaCartoes(){
       </div>
     </div>`;
   document.getElementById('cartaoFaturaItens').innerHTML = itens.length
-    ? `<div class="card-title" style="font-size:13px;margin-bottom:8px">Compras e parcelas desta fatura</div><div class="item-list">${itens.map(d=>despItemHTML(d)).join('')}</div>`
+    ? `<div class="card-title" style="font-size:13px;margin-bottom:8px">Compras e parcelas desta fatura</div><div class="item-list">${ordenarItensFaturaDesc(itens).map(d=>despItemHTML(d)).join('')}</div>`
     : '<div class="empty-state">Nenhuma compra nesta fatura ainda.</div>';
 }
 
