@@ -211,3 +211,35 @@ Nenhuma outra parte do motor (bloqueio de distribuição sem RRT, imutabilidade
 do recebível materializado, motor legado) foi alterada. Testes: 6 casos
 novos (40 no total). Suíte completa: 532 PASS / 0 FAIL. Comparação com o
 backup real: 0 diferenças em 14 meses históricos.
+
+## Correção da terceira rodada de auditoria (achado P1 sobre `d2018ce`→`9129efa`)
+
+A primeira implementação de Sainte-Laguë (rodada anterior) usava uma
+estimativa inicial por **arredondamento** (`round`), que pode tanto
+sub-estimar quanto sobre-estimar o total — exigindo DOIS caminhos de
+ajuste de resíduo (`prioridadeGanhar` pra somar, `prioridadePerder` pra
+remover), cada um com seu próprio desempate. Verificação exaustiva
+encontrou que os dois desempates não eram simetricamente consistentes: nos
+empates, ambos mantinham o **mesmo** primeiro destino da ordem fixa (em
+vez de direções invertidas), o que ainda permitia que a alocação de um
+destino diminuísse ao crescer o total — reproduzido em 49→50 centavos
+(pesos 65/15/10/7/3): repasse caía de 33 pra 32.
+
+**Correção:** a estimativa inicial passou a ser por **piso** (`floor`, não
+arredondamento). Como `floor(x) <= x` sempre, a soma das 5 estimativas
+NUNCA excede o total — o resíduo é sempre ≥ 0, nunca é preciso remover.
+`prioridadePerder` foi eliminada inteiramente; existe uma única função de
+desempate (`prioridadeGanhar`), usada da mesma forma em toda a execução.
+Isso é a construção **literal** do método Sainte-Laguë (um centavo de cada
+vez, sempre pro maior merecedor) — não uma aproximação por estimativa.
+
+Verificado por varredura exaustiva de monotonicidade de 1 a 2.000.000 de
+centavos (teste permanente `sainte-lague-monotonico-varredura-exaustiva`),
+checando a cada transição `n-1→n` que a soma bate, exatamente um destino
+cresce, nenhum diminui e o incremento total é exatamente 1 centavo — e
+contra todos os cenários de referência já aprovados (R$3.000 do Gate 6
+original, R$0,15 e R$0,50 das correções anteriores), todos idênticos.
+
+Nenhuma outra parte do motor foi alterada. Testes: 5 casos novos (45 no
+total, incluindo a varredura exaustiva). Suíte completa: 537 PASS / 0
+FAIL. Comparação com o backup real: 0 diferenças em 14 meses históricos.

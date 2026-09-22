@@ -817,6 +817,97 @@ await check('alabama-muitas-parcelas-pequenas-irregulares', async () => {
   return { ok, detail: `41 parcelas irregulares somando R$1000,00 — nenhuma alocação negativa=${!r.algumaNegativa}, soma por recebível sempre bate=${r.somaOk}, repasse total=${r.repasseTotalCent} (esp. 65000), soma geral=${r.somaTotal} (esp. 100000)` };
 }, 'Achado P1 (2ª rodada) item 14 — muitas parcelas pequenas e irregulares (propensas ao paradoxo de Alabama) nunca geram alocação negativa nem desvio na soma total');
 
+// ═══════════════════════════════════════════════════════════════════════
+// Correção da terceira rodada de auditoria (achado P1: desempate
+// inconsistente entre prioridadeGanhar/prioridadePerder ainda quebrava a
+// monotonicidade — caso R$0,49→R$0,50, pesos 65/15/10/7/3, repasse caía de
+// 33 pra 32). distribuirReceitaLiquidaCent passou a usar SÓ estimativa por
+// PISO (nunca arredondamento) + acréscimo — nunca precisa remover, elimina
+// a segunda função de desempate inteiramente.
+// ═══════════════════════════════════════════════════════════════════════
+
+const ESPERADO_50_CENTAVOS = { repasse_pessoal: 33, operacao: 8, reserva_crescimento: 5, capital_giro: 3, marketing: 1 };
+
+await check('alabama3-49-depois-1-centavo', async () => {
+  const r = await materializarSequencial(page, 'pAla6', [0.49, 0.01], 0.50);
+  const semNegativo = r.porRecebivel.every((x) => !x.movsNegativas);
+  const somaPorRecebivelBate = r.porRecebivel.every((x) => x.somaDestinosCent === x.distribuivelCent);
+  const totaisBatem = JSON.stringify(r.totais) === JSON.stringify(ESPERADO_50_CENTAVOS);
+  const ok = semNegativo && somaPorRecebivelBate && totaisBatem && r.somaTotaisCent === 50 && r.totalDistribuivelCent === 50;
+  return { ok, detail: `R$0,49 depois R$0,01 — porRecebivel=${JSON.stringify(r.porRecebivel)}, totais=${JSON.stringify(r.totais)} (esp. ${JSON.stringify(ESPERADO_50_CENTAVOS)}), semNegativo=${semNegativo}, somaPorRecebivelBate=${somaPorRecebivelBate}` };
+}, 'Achado P1 (3ª rodada) — reprodução mínima: R$0,49 seguido de R$0,01 nunca gera alocação negativa e fecha em 33/8/5/3/1 centavos, nunca desvia (repasse nunca cai de 33 pra 32)');
+
+await check('alabama3-1-centavo-depois-49', async () => {
+  const r = await materializarSequencial(page, 'pAla7', [0.01, 0.49], 0.50);
+  const semNegativo = r.porRecebivel.every((x) => !x.movsNegativas);
+  const somaPorRecebivelBate = r.porRecebivel.every((x) => x.somaDestinosCent === x.distribuivelCent);
+  const totaisBatem = JSON.stringify(r.totais) === JSON.stringify(ESPERADO_50_CENTAVOS);
+  const ok = semNegativo && somaPorRecebivelBate && totaisBatem && r.somaTotaisCent === 50;
+  return { ok, detail: `R$0,01 depois R$0,49 (ordem invertida) — totais=${JSON.stringify(r.totais)} (esp. ${JSON.stringify(ESPERADO_50_CENTAVOS)}, idênticos independente da ordem), semNegativo=${semNegativo}, somaPorRecebivelBate=${somaPorRecebivelBate}` };
+}, 'Achado P1 (3ª rodada) — R$0,01 seguido de R$0,49 (ordem invertida) produz os mesmos totais finais, sem alocação negativa');
+
+await check('alabama3-totais-49-independem-da-ordem', async () => {
+  const totalOf = async (projetoId) => page.evaluate((ids) => {
+    const centOf = (v) => Math.round(v * 100);
+    const repasseTotalCent = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0);
+    const reservaTotalCent = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    return { repasse_pessoal: repasseTotalCent, operacao: reservaTotalCent('operacao'), reserva_crescimento: reservaTotalCent('reserva_crescimento'), capital_giro: reservaTotalCent('capital_giro'), marketing: reservaTotalCent('marketing') };
+  }, [projetoId + '_r0', projetoId + '_r1']);
+  const t6 = await totalOf('pAla6');
+  const t7 = await totalOf('pAla7');
+  const ok = JSON.stringify(t6) === JSON.stringify(t7) && JSON.stringify(t6) === JSON.stringify(ESPERADO_50_CENTAVOS);
+  return { ok, detail: `R$0,50 dividido em 0,49+0,01 vs 0,01+0,49 — totais finais idênticos=${JSON.stringify(t6) === JSON.stringify(t7)}: ${JSON.stringify(t6)} vs ${JSON.stringify(t7)} (esp. ambos ${JSON.stringify(ESPERADO_50_CENTAVOS)})` };
+}, 'Achado P1 (3ª rodada) item 9 — o total final por destino depende só do total realizado, nunca da ordem das parcelas (caso 0,49/0,50)');
+
+await check('alabama3-resync-nao-duplica', async () => {
+  const r = await page.evaluate(() => {
+    resyncProjectV2('pAla6'); resyncProjectV2('pAla6'); resyncProjectV2('pAla6');
+    const ids = ['pAla6_r0', 'pAla6_r1'];
+    return {
+      qtdRepasses: state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).length,
+      qtdMovsReserva: state.office.movimentacoesReservas.filter((m) => ids.includes(m.origemRecebivelId)).length,
+    };
+  });
+  // r0 (R$0,49) tem repasse_pessoal=33>0 (1 repasse) e os 4 destinos de
+  // reserva >0 (4 movimentações); r1 (R$0,01) tem repasse_pessoal=0 (marginal
+  // — não cria repasse) e só operacao=1>0 (1 movimentação) — nunca duplicado
+  // em 3 resyncs seguidos.
+  const ok = r.qtdRepasses === 1 && r.qtdMovsReserva === 5;
+  return { ok, detail: `resync repetido sobre R$0,49+R$0,01 já materializados — repasses=${r.qtdRepasses} (esp. 1 — a fatia marginal de repasse do 2º recebível é 0), movs reserva=${r.qtdMovsReserva} (esp. 5, nunca duplicado)` };
+}, 'Achado P1 (3ª rodada) item 6 (retido) — reexecutar a sincronização depois da correção continua sem duplicar repasse nem reserva');
+
+// ---------------------------------------------------------------------------
+// Varredura exaustiva de monotonicidade — exigida pela auditoria: de 1 até
+// pelo menos 2.000.000 de centavos, verificando a cada transição n-1 -> n
+// que a soma bate, nenhum destino diminui, o incremento total é
+// exatamente 1 centavo e exatamente um destino cresce. Roda inteiramente
+// dentro do browser (um único page.evaluate, sem overhead de IPC por
+// iteração) chamando a função de produção diretamente — não uma cópia.
+// ---------------------------------------------------------------------------
+await check('sainte-lague-monotonico-varredura-exaustiva', async () => {
+  const r = await page.evaluate(() => {
+    const LIMIT = 2000000;
+    let prev = distribuirReceitaLiquidaCent(0);
+    for (let n = 1; n <= LIMIT; n++) {
+      const cur = distribuirReceitaLiquidaCent(n);
+      let somaCur = 0, cresceram = 0, diminuiram = 0, deltaSoma = 0;
+      for (const k of Object.keys(cur)) {
+        const c = cur[k], p = prev[k] || 0;
+        somaCur += c;
+        if (c < p) diminuiram++;
+        if (c > p) cresceram++;
+        deltaSoma += (c - p);
+      }
+      if (somaCur !== n || cresceram !== 1 || diminuiram !== 0 || deltaSoma !== 1) {
+        return { ok: false, n, cur, prev, somaCur, cresceram, diminuiram, deltaSoma };
+      }
+      prev = cur;
+    }
+    return { ok: true, limite: LIMIT };
+  });
+  return { ok: r.ok === true, detail: r.ok ? `monotônico e exato de 1 a ${r.limite} centavos (soma==n, exatamente 1 destino cresce, 0 diminuem, incremento total==1, em toda transição)` : `FALHOU em n=${r.n} — anterior=${JSON.stringify(r.prev)}, atual=${JSON.stringify(r.cur)}, soma=${r.somaCur} (esp. ${r.n}), cresceram=${r.cresceram} (esp. 1), diminuiram=${r.diminuiram} (esp. 0), deltaSoma=${r.deltaSoma} (esp. 1)` };
+}, 'Achado P1 (3ª rodada) — varredura exaustiva de 1 a 2.000.000 de centavos: soma sempre exata, nenhum destino nunca diminui, exatamente um destino cresce um centavo por transição — a implementação anterior falhava exatamente em n=50');
+
 console.log(`TOTAL=${results.length} PASS=${results.filter((r) => r.status === 'PASS').length} FAIL=${results.filter((r) => r.status === 'FAIL').length}`);
 await close();
 process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0);
