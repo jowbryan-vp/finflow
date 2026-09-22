@@ -9,8 +9,7 @@ da implementação; não é auditoria nem aprovação.
 - Commit-base: `545fdd440596820b76676ccc0cb4dca4871683cf` (entrega aprovada
   `gate/5-account-identification`, auditoria Codex PASS em
   `docs/audits/ACCOUNT-IDENTIFICATION-FINAL-REVIEW.md`).
-- Commit-final: ver `git log -1` nesta branch após este handoff (feito no
-  mesmo commit que inclui este arquivo).
+- Commit-final: `c22fcf1` (inclui este handoff).
 
 ## Arquivos alterados
 
