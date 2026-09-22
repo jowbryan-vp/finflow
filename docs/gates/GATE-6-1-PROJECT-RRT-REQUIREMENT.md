@@ -198,3 +198,71 @@ nunca sincroniza, nunca salva, pra nenhum dos 4 estados.
 
 22 testes novos (49 no total). Suíte completa: 586 PASS / 0 FAIL.
 Comparação com o backup real: 0 diferenças em 14 meses históricos.
+
+## Correção pós-reauditoria (achado P1 residual, 3ª rodada, sobre `783391d`)
+
+A 3ª reauditoria encontrou um caminho residual que sobrevivia às correções
+acima: **"`none` sem metadado de confirmação libera distribuição"**.
+
+**Causa-raiz:** `projetoRrtRequirementSatisfeita` considerava `'none'`
+satisfeito sempre que `projeto.rrts.length===0`, sem checar se
+`rrtRequirementConfirmedAt`/`rrtRequirementConfirmedBy` representavam uma
+confirmação genuína. A migração só inferia `rrtRequirement` quando o
+campo estava AUSENTE (`if(!p.rrtRequirement)`) — um `'none'` já presente
+(de um backup editado externamente, ou de um estado antigo) atravessava a
+migração intocado. Um backup/estado com
+`{rrtRequirement:'none', rrtRequirementConfirmedAt:null,
+rrtRequirementConfirmedBy:null, rrts:[]}` liberava a distribuição
+(repasse + as 4 reservas) sem nenhuma confirmação real ter sido dada.
+
+**Correção aplicada:**
+
+1. **Função central e pura, `hasValidRrtRequirementConfirmation(projeto)`**
+   (`index.html`, perto de `getProjetoRrtRequirement`) — usa uma nova
+   `isValidIsoTimestampString(v)` que exige o formato EXATO produzido por
+   `new Date().toISOString()` (`AAAA-MM-DDTHH:mm:ss.sssZ`, com
+   milissegundos e `Z` literais) mais um round-trip exato
+   (`new Date(v).toISOString()===v`). Rejeita `undefined`/`null`/`''`,
+   strings arbitrárias (`'sim'`, `'ontem'`), datas impossíveis (mês 13,
+   hora 99) e formatos não-canônicos (sem hora, sem milissegundos, espaço
+   em vez de `"T"`) — mesmo quando o parser conseguiria "consertar"
+   silenciosamente a data. `rrtRequirementConfirmedBy` continua opcional
+   (`null` é uma confirmação válida — o app não tem identidade mais forte
+   que o perfil ativo).
+
+2. **Nova regra de satisfação** em `projetoRrtRequirementSatisfeita`:
+   `'none'` agora exige `todosOsRegistros.length===0` **E**
+   `hasValidRrtRequirementConfirmation(projeto)===true`. Essa checagem
+   roda SEMPRE, independente de a migração ter rodado — nunca confia só
+   na normalização da migração. `pending`/`one`/`two` continuam
+   inalterados (o conceito de confirmação de timestamp só se aplica a
+   `'none'`).
+
+3. **Migração estendida** (`migrateState`, `index.html`): um segundo passo,
+   que roda incondicionalmente (não só quando o campo está ausente),
+   examina todo projeto v2 com `rrtRequirement==='none'` já presente. Se a
+   confirmação não é um timestamp ISO válido, normaliza a decisão pra
+   `'pending'` e zera `rrtRequirementConfirmedAt`/`rrtRequirementConfirmedBy`
+   — nunca cria, apaga ou corrige nenhum registro de `projeto.rrts`, nunca
+   recalcula lançamento histórico, nunca materializa repasse/reserva,
+   nunca altera projeto `legacy` (gated por `regraDistribuicao==='v2'`) nem
+   recebível já congelado (`recebivelV2Materializado`). Idempotente: uma
+   vez normalizado pra `'pending'`, a condição `rrtRequirement==='none'`
+   deixa de bater, então rodar de novo é sempre um no-op. Um `'none'` com
+   confirmação já válida é preservado byte a byte.
+
+4. **`getProjetoRrtBlockMessage`** ganhou um caso novo: `'none'` sem
+   confirmação válida mostra a MESMA mensagem de `pending`
+   ("Distribuição bloqueada: informe se o projeto exige RRT.") em vez da
+   mensagem de "tem RRT residual" — defesa em profundidade pro cenário em
+   memória, antes da migração normalizar o campo persistido.
+
+5. **Pontos de gravação confirmados intocados**: `addOfficeProjeto` e
+   `setProjetoRrtRequirement(...,{confirmNone:true})` já geravam o
+   timestamp internamente via `new Date().toISOString()` (nunca aceito de
+   um campo de formulário) — confirmado sem regressão, sempre produz um
+   timestamp que passa em `hasValidRrtRequirementConfirmation`.
+
+72 testes no arquivo (49 + 23 novos, cobrindo os 25 itens pedidos —
+alguns itens compartilham teste). Suíte completa: 609 PASS / 0 FAIL.
+Comparação com o backup real: 0 diferenças em 14 meses históricos.
