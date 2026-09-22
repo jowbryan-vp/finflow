@@ -200,6 +200,18 @@ const FILES = [
   // projeto/movimentação já materializado sob a regra antiga é
   // reinterpretado.
   'gate6-office-net-distribution.test.mjs',
+  // Gate 6.1 — decisão explícita de exigência de RRT por projeto
+  // (docs/gates/GATE-6-1-PROJECT-RRT-REQUIREMENT.md): rrtRequirement
+  // 'pending'|'none'|'one'|'two' substitui o bloqueio implícito por
+  // ausência de RRT — nunca mais cria uma RRT fictícia de R$0,00 pra
+  // destravar a distribuição. 'none' exige confirmação explícita; 'one'/
+  // 'two' travam a quantidade e o tipo exigidos; a decisão fica imutável
+  // assim que qualquer recebível do projeto materializa distribuição
+  // (mesma proteção na função de gravação, não só na UI). Migração infere
+  // a partir das RRTs já cadastradas, sem inventar 'none' nem RRT; projeto
+  // legado nunca ganha o campo. Motor de cálculo/reconciliação/rateio
+  // Sainte-Laguë intocados.
+  'gate6-1-project-rrt-requirement.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

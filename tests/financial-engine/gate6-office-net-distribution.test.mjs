@@ -27,6 +27,7 @@ await check('CEN01-uma-rrt-projeto', async () => {
     state.office.projetos.push({
       id: 'pA', nome: 'Projeto A', cliente: 'Cliente A', valorContrato: 3000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pA', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrtA1', tipo: 'projeto', valor: 130.64, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtA1' }],
     });
     const p = state.office.projetos.find((x) => x.id === 'pA');
@@ -49,6 +50,7 @@ await check('CEN02-duas-rrts', async () => {
     state.office.projetos.push({
       id: 'pB', nome: 'Projeto B', cliente: 'Cliente B', valorContrato: 3000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pB', regraDistribuicao: 'v2',
+      rrtRequirement: 'two', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [
         { id: 'rrtB1', tipo: 'projeto', valor: 130.64, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtB1' },
         { id: 'rrtB2', tipo: 'execucao', valor: 130.64, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtB2' },
@@ -130,6 +132,7 @@ await check('RRT-novo-registro-usa-padrao-atual', async () => {
       id: 'pD', nome: 'Projeto D', cliente: 'Cliente D', valorContrato: 5000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pD', regraDistribuicao: 'v2', rrts: [],
     });
+    setProjetoRrtRequirement('pD', 'one'); // decisão precisa vir antes de qualquer RRT poder ser cadastrada
     addProjetoRRT('pD', 'projeto'); // abre o modal de confirmação, prefill com o padrão vigente (999)
     const valorPrefill = document.getElementById('novaProjRrtValor').value;
     confirmarAddProjetoRRT('pD', 'projeto'); // usuário confirma o valor prefillado sem alterar
@@ -318,11 +321,11 @@ await check('projeto-antigo-so-previsto-migra-para-v2', async () => {
     };
     migrateAppData(legacyRaw);
     const p = state.office.projetos.find((x) => x.id === 'pNaoRealizado');
-    return { regraDistribuicao: p.regraDistribuicao, rrts: p.rrts, precisaConfig: projetoNecessitaConfiguracaoRRT(p) };
+    return { regraDistribuicao: p.regraDistribuicao, rrts: p.rrts, precisaConfig: projetoNecessitaConfiguracaoRRT(p), rrtRequirement: p.rrtRequirement };
   });
-  const ok = r.regraDistribuicao === 'v2' && Array.isArray(r.rrts) && r.rrts.length === 0 && r.precisaConfig === true;
-  return { ok, detail: `projeto antigo ainda inteiramente previsto (nada realizado) — regraDistribuicao=${r.regraDistribuicao} (esp. v2), rrts=${JSON.stringify(r.rrts)} (esp. [], nunca inventada), precisaConfiguracaoRRT=${r.precisaConfig} (esp. true, sinalizado explicitamente)` };
-}, 'item 5/6 do escopo de migração — projeto contratado ainda sem nada realizado migra pra v2 sem inventar RRT, sinalizando "RRT não configurada"');
+  const ok = r.regraDistribuicao === 'v2' && Array.isArray(r.rrts) && r.rrts.length === 0 && r.precisaConfig === true && r.rrtRequirement === 'pending';
+  return { ok, detail: `projeto antigo ainda inteiramente previsto (nada realizado) — regraDistribuicao=${r.regraDistribuicao} (esp. v2), rrts=${JSON.stringify(r.rrts)} (esp. [], nunca inventada), rrtRequirement=${r.rrtRequirement} (esp. pending), precisaConfiguracaoRRT=${r.precisaConfig} (esp. true, sinalizado explicitamente)` };
+}, 'item 5/6/21 do escopo de migração — projeto contratado ainda sem nada realizado migra pra v2 sem inventar RRT, com rrtRequirement=pending (nunca "none")');
 
 // ---------------------------------------------------------------------------
 // Item 17/18 — export/import round-trip e idempotência da migração
@@ -335,19 +338,23 @@ await check('export-import-preserva-campos-novos', async () => {
     state.office.projetos.push({
       id: 'pE', nome: 'Projeto E', cliente: 'Cliente E', valorContrato: 2000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pE', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T12:00:00.000Z', rrtRequirementConfirmedBy: 'Perfil Teste',
       rrts: [{ id: 'rrtE1', tipo: 'projeto', valor: 111.11, status: 'emitida', numero: 'RRT-9', dataEmissao: '2026-09-05', dataPagamento: null, createdAt: 'rrtE1' }],
     });
     const exported1 = JSON.stringify(buildSaveObject());
     migrateAppData(JSON.parse(exported1));
     const exported2 = JSON.stringify(buildSaveObject());
     const p = state.office.projetos.find((x) => x.id === 'pE');
-    return { idempotente: exported1 === exported2, impostoPercentual: state.office.impostoPercentual, rrtValorPadrao: state.office.rrtValorPadrao, rrt: p.rrts[0], regraDistribuicao: p.regraDistribuicao };
+    return {
+      idempotente: exported1 === exported2, impostoPercentual: state.office.impostoPercentual, rrtValorPadrao: state.office.rrtValorPadrao, rrt: p.rrts[0], regraDistribuicao: p.regraDistribuicao,
+      rrtRequirement: p.rrtRequirement, rrtRequirementConfirmedAt: p.rrtRequirementConfirmedAt, rrtRequirementConfirmedBy: p.rrtRequirementConfirmedBy,
+    };
   });
   const ok = r.idempotente && r.impostoPercentual === 7.5 && r.rrtValorPadrao === 321.09
     && r.rrt.valor === 111.11 && r.rrt.status === 'emitida' && r.rrt.numero === 'RRT-9' && r.rrt.dataEmissao === '2026-09-05'
-    && r.regraDistribuicao === 'v2';
-  return { ok, detail: `export→import→export idêntico=${r.idempotente}; imposto=${r.impostoPercentual} (esp. 7.5), rrtValorPadrao=${r.rrtValorPadrao} (esp. 321.09), RRT preservada=${JSON.stringify(r.rrt)}, regra=${r.regraDistribuicao}` };
-}, 'item 17/18 — export/import round-trip preserva impostoPercentual, rrtValorPadrao, rrts e regraDistribuicao; reimportar duas vezes produz o mesmo resultado (migração idempotente)');
+    && r.regraDistribuicao === 'v2' && r.rrtRequirement === 'one' && r.rrtRequirementConfirmedAt === '2026-09-01T12:00:00.000Z' && r.rrtRequirementConfirmedBy === 'Perfil Teste';
+  return { ok, detail: `export→import→export idêntico=${r.idempotente}; imposto=${r.impostoPercentual} (esp. 7.5), rrtValorPadrao=${r.rrtValorPadrao} (esp. 321.09), RRT preservada=${JSON.stringify(r.rrt)}, regra=${r.regraDistribuicao}, rrtRequirement=${r.rrtRequirement} (esp. one), confirmedAt=${r.rrtRequirementConfirmedAt}, confirmedBy=${r.rrtRequirementConfirmedBy}` };
+}, 'item 17/18/25/26 — export/import round-trip preserva impostoPercentual, rrtValorPadrao, rrts, regraDistribuicao e a decisão de RRT (rrtRequirement/confirmedAt/confirmedBy); reimportar duas vezes produz o mesmo resultado (migração idempotente)');
 
 // ═══════════════════════════════════════════════════════════════════════
 // Correção pós-auditoria (achados P1/P2/P3 sobre a implementação 9983605)
@@ -380,14 +387,15 @@ await check('bloqueio-mensagem-ui', async () => {
   const r = await page.evaluate(() => {
     renderOfficeProjetosTab();
     const html = document.getElementById('escritorioSubContent').innerHTML;
-    return { contemMensagem: html.includes('Distribuição bloqueada: configure a RRT do projeto.') };
+    return { contemMensagem: html.includes('Distribuição bloqueada: informe se o projeto exige RRT.') };
   });
   const ok = r.contemMensagem === true;
-  return { ok, detail: `interface exibe a mensagem exata de bloqueio — contém=${r.contemMensagem}` };
-}, 'Achado P1 — a interface informa claramente "Distribuição bloqueada: configure a RRT do projeto."');
+  return { ok, detail: `interface exibe a mensagem exata de bloqueio (estado 'pending') — contém=${r.contemMensagem}` };
+}, 'Achado P1 — a interface informa claramente "Distribuição bloqueada: informe se o projeto exige RRT."');
 
 await check('configurar-rrt-libera-distribuicao', async () => {
   const r = await page.evaluate(() => {
+    setProjetoRrtRequirement('pF', 'one'); // decisão explícita precisa vir antes de qualquer RRT
     addProjetoRRT('pF', 'projeto'); // abre o modal — ainda não cria nada
     document.getElementById('novaProjRrtValor').value = '100';
     confirmarAddProjetoRRT('pF', 'projeto');
@@ -421,6 +429,7 @@ await check('rrtValorPadrao-null-nao-cria-automatico-com-zero', async () => {
       id: 'pZ', nome: 'Projeto Z', cliente: 'Cliente Z', valorContrato: 500, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pZ', regraDistribuicao: 'v2', rrts: [],
     });
+    setProjetoRrtRequirement('pZ', 'one');
     addProjetoRRT('pZ', 'projeto'); // abre modal, não cria nada ainda
     const antesDeConfirmar = state.office.projetos.find((x) => x.id === 'pZ').rrts.length;
     document.getElementById('novaProjRrtValor').value = ''; // usuário deixa em branco
@@ -454,6 +463,7 @@ await check('setup-materializado-para-reversao', async () => {
     state.office.projetos.push({
       id: 'pG', nome: 'Projeto G', cliente: 'Cliente G', valorContrato: 1000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pG', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrtG1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtG1' }],
     });
     state.office.impostoPercentual = 0;
@@ -550,6 +560,7 @@ await check('reconciliacao-cumulativa-tres-parcelas', async () => {
     state.office.projetos.push({
       id: 'pH', nome: 'Projeto H', cliente: 'Cliente H', valorContrato: 1000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pH', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrtH1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtH1' }],
     });
     state.office.impostoPercentual = 0;
@@ -576,6 +587,7 @@ await check('reconciliacao-ordem-nao-afeta-totais-finais', async () => {
     state.office.projetos.push({
       id: 'pI', nome: 'Projeto I', cliente: 'Cliente I', valorContrato: 1000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pI', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrtI1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtI1' }],
     });
     state.office.impostoPercentual = 0;
@@ -607,6 +619,7 @@ await check('reconciliacao-muitos-recebiveis-pequenos', async () => {
     state.office.projetos.push({
       id: 'pJ', nome: 'Projeto J', cliente: 'Cliente J', valorContrato: 1000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pJ', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrtJ1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtJ1' }],
     });
     state.office.impostoPercentual = 0;
@@ -688,6 +701,7 @@ async function materializarSequencial(page, projetoId, valoresReais, contratoRea
     state.office.projetos.push({
       id: projetoId, nome: 'Projeto ' + projetoId, cliente: 'Cliente', valorContrato: contratoReais, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: projetoId, regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrt_' + projetoId, tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrt_' + projetoId }],
     });
     state.office.impostoPercentual = 0;
@@ -785,6 +799,7 @@ await check('alabama-muitas-parcelas-pequenas-irregulares', async () => {
     state.office.projetos.push({
       id: 'pAla5', nome: 'Projeto Alabama 5', cliente: 'Cliente', valorContrato: 1000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pAla5', regraDistribuicao: 'v2',
+      rrtRequirement: 'one', rrtRequirementConfirmedAt: '2026-09-01T00:00:00.000Z', rrtRequirementConfirmedBy: null,
       rrts: [{ id: 'rrt_pAla5', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrt_pAla5' }],
     });
     state.office.impostoPercentual = 0;

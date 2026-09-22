@@ -1914,6 +1914,28 @@ function migrateState() {
       const temRealizado=recebiveisDoProjeto.some(r=>r.estado==='recebido'&&r.dataRecebimento);
       p.regraDistribuicao=temRealizado?'legacy':'v2';
     }
+    // rrtRequirement (evolução pós-Gate 6, docs/gates/GATE-6-OFFICE-NET-DISTRIBUTION.md):
+    // só migra projeto na regra v2 — projeto 'legacy' nunca ganha esse campo
+    // (permanece integralmente no motor antigo, nunca convertido). Migração
+    // idempotente: só roda se o campo ainda não existir, nunca reescreve uma
+    // decisão já registrada. Infere a partir das RRTs JÁ cadastradas — nunca
+    // inventa 'none' (ausência de RRT vira 'pending', nunca "não exige"), e
+    // uma RRT de valor R$0,00 continua sendo uma RRT real (conta pra 'one').
+    // Um estado antigo inconsistente (ex.: duas RRTs do mesmo tipo, o que a
+    // UI já impede desde sempre mas pode existir em dados externos/editados
+    // manualmente) cai em 'pending' — preserva os lançamentos já
+    // materializados (nunca recalculados aqui) e só bloqueia NOVAS
+    // materializações até uma decisão segura.
+    if(p.regraDistribuicao==='v2' && !p.rrtRequirement){
+      const validas=p.rrts.filter(r=>r&&typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0);
+      const tipos=validas.map(r=>r.tipo);
+      if(validas.length===0) p.rrtRequirement='pending';
+      else if(validas.length===1) p.rrtRequirement='one';
+      else if(validas.length===2 && tipos.includes('projeto') && tipos.includes('execucao')) p.rrtRequirement='two';
+      else p.rrtRequirement='pending';
+      if(p.rrtRequirementConfirmedAt===undefined) p.rrtRequirementConfirmedAt=null;
+      if(p.rrtRequirementConfirmedBy===undefined) p.rrtRequirementConfirmedBy=null;
+    }
   });
   if(!off.recebiveis) off.recebiveis=[]; // {id,projetoId,descricao,valor,estado,dataPrevista,dataRecebimento,contaDestino,createdAt}
   off.recebiveis.forEach(r=>{ if(!r.createdAt) r.createdAt=r.id; if(r.dataRecebimento===undefined) r.dataRecebimento=null; });
@@ -3133,13 +3155,75 @@ function getProjetoRrtsValidas(projeto){
 function calcRrtProvisionadaCent(projeto){
   return getProjetoRrtsValidas(projeto).reduce((s,r)=>s+Math.round((r.valor||0)*100),0);
 }
-// Projeto contratado na regra v2 sem NENHUMA RRT registrada ainda — nunca
-// inventamos zero como "sem RRT confirmada"; a UI deve mostrar "RRT não
-// configurada" e a distribuição roda só com o imposto deduzido até que o
-// usuário registre pelo menos uma RRT (ou confirme explicitamente que este
-// projeto não tem RRT, fora de escopo desta entrega — decisão do usuário).
+
+// ── Decisão de exigência de RRT (evolução pós-Gate 6) ──
+// rrtRequirement: 'pending' (ainda não definido — padrão de todo projeto
+// v2 novo) | 'none' (decisão explícita: este projeto não exige RRT) |
+// 'one' (exige exatamente 1 RRT, Projeto OU Execução) | 'two' (exige
+// exatamente 2, uma de cada tipo). NUNCA infere 'none' por ausência de
+// RRT — só 'pending' significa "ainda não decidido"; só uma confirmação
+// explícita do usuário grava 'none' (ver setProjetoRrtRequirement).
+function getProjetoRrtRequirement(projeto){
+  const r=projeto&&projeto.rrtRequirement;
+  return (r==='pending'||r==='none'||r==='one'||r==='two') ? r : 'pending';
+}
+// Verdadeiro só quando a decisão de RRT está satisfeita: 'none' com zero
+// RRTs, 'one' com exatamente uma RRT válida, 'two' com exatamente duas
+// (uma de cada tipo) — 'pending' nunca é satisfeita (precisa da decisão
+// primeiro).
+function projetoRrtRequirementSatisfeita(projeto){
+  const req=getProjetoRrtRequirement(projeto);
+  const validas=getProjetoRrtsValidas(projeto);
+  if(req==='pending') return false;
+  if(req==='none') return validas.length===0;
+  if(req==='one') return validas.length===1;
+  if(req==='two') return validas.length===2 && validas.some(r=>r.tipo==='projeto') && validas.some(r=>r.tipo==='execucao');
+  return false;
+}
+// Projeto contratado na regra v2 cuja decisão de RRT ainda não está
+// satisfeita (nunca decidida, ou decidida mas incompleta) — a distribuição
+// (repasse pessoal + reservas) fica bloqueada até que esteja. Nunca
+// inventa 'none' nem RRT — a UI mostra a mensagem de bloqueio exata
+// (getProjetoRrtBlockMessage) até o usuário decidir/completar.
 function projetoNecessitaConfiguracaoRRT(projeto){
-  return !!(projeto && projetoUsaRegraV2(projeto) && projeto.status==='contratado' && getProjetoRrtsValidas(projeto).length===0);
+  return !!(projeto && projetoUsaRegraV2(projeto) && projeto.status==='contratado' && !projetoRrtRequirementSatisfeita(projeto));
+}
+// Mensagem de bloqueio exibida na interface — varia conforme o motivo
+// exato do bloqueio (seção "Estado pendente"/"Projeto com uma RRT"/
+// "Projeto com duas RRTs" do escopo).
+function getProjetoRrtBlockMessage(projeto){
+  const req=getProjetoRrtRequirement(projeto);
+  if(req==='pending') return 'Distribuição bloqueada: informe se o projeto exige RRT.';
+  const validas=getProjetoRrtsValidas(projeto);
+  if(req==='one') return 'Distribuição bloqueada: cadastre a RRT exigida pelo projeto.';
+  if(req==='two'){
+    const temProjeto=validas.some(r=>r.tipo==='projeto'), temExecucao=validas.some(r=>r.tipo==='execucao');
+    const faltando=[]; if(!temProjeto) faltando.push('a RRT de Projeto'); if(!temExecucao) faltando.push('a RRT de Execução');
+    return 'Distribuição bloqueada: cadastre '+faltando.join(' e ')+' — o projeto exige as duas.';
+  }
+  return 'Distribuição bloqueada: informe se o projeto exige RRT.';
+}
+// Verdadeiro se QUALQUER recebível v2 deste projeto já materializou
+// provisão/distribuição (recebivelV2Materializado, definido mais abaixo
+// junto do resto das ações que leem/escrevem DOM) — usado pra travar a
+// decisão de RRT em definitivo depois que dinheiro real já foi dividido.
+function projetoV2TemMaterializacao(projeto){
+  if(!projeto) return false;
+  return (state.office.recebiveis||[]).some(r=>r.projetoId===projeto.id && recebivelV2Materializado(r));
+}
+// Regras de alteração da decisão de RRT (seção "Alteração da decisão" do
+// escopo) — nunca decide nada sozinha, só diz se uma troca é permitida:
+//   - projeto já materializado: NUNCA (decisão fica imutável pra sempre).
+//   - 'none' com RRT(s) já cadastrada(s): rejeitado — remova primeiro.
+//   - 'one' com duas RRTs já cadastradas: rejeitado — remova uma primeiro.
+//   - qualquer outra combinação (inclusive 'two' e 'pending'): permitida.
+function podeAlterarRrtRequirement(projeto, novoRequirement){
+  if(!['pending','none','one','two'].includes(novoRequirement)) return {ok:false, motivo:'invalido'};
+  if(projetoV2TemMaterializacao(projeto)) return {ok:false, motivo:'materializado'};
+  const validas=getProjetoRrtsValidas(projeto);
+  if(novoRequirement==='none' && validas.length>0) return {ok:false, motivo:'existem_rrts'};
+  if(novoRequirement==='one' && validas.length>1) return {ok:false, motivo:'existem_rrts_demais'};
+  return {ok:true};
 }
 
 // Divide um valor em CENTAVOS INTEIROS pelos 5 destinos fixos usando o
@@ -9056,18 +9140,21 @@ function renderOfficeProjetosTab(){
       const rrtExecucao=(p.rrts||[]).find(r=>r.tipo==='execucao');
       const rrtLine=r=>r?`${fmtBRL(r.valor||0)} (${RRT_STATUS_LABEL[r.status]||r.status})`:'—';
       const precisaConfig=projetoNecessitaConfiguracaoRRT(p);
+      const reqLabel=RRT_REQUIREMENT_LABEL[getProjetoRrtRequirement(p)];
       if(precisaConfig){
         detalheV2=`<div class="item-row-meta" style="margin-top:4px">
           <strong>Lucro-base para divisão (regra líquida):</strong>
+          Exigência de RRT: ${reqLabel} ·
           Valor do projeto: ${fmtBRL(p.valorContrato||0)} ·
           RRT de Projeto: ${rrtLine(rrtProjeto)} ·
           RRT de Execução: ${rrtLine(rrtExecucao)}<br>
-          <span style="color:var(--warn)">⚠ Distribuição bloqueada: configure a RRT do projeto.</span>
+          <span style="color:var(--warn)">⚠ ${getProjetoRrtBlockMessage(p)}</span>
         </div>`;
       } else {
         const dist=calculateProjectDistributionV2(p);
         detalheV2=`<div class="item-row-meta" style="margin-top:4px">
           <strong>Lucro-base para divisão (regra líquida):</strong>
+          Exigência de RRT: ${reqLabel} ·
           Valor do projeto: ${fmtBRL(dist.receitaBruta)} ·
           Imposto provisionado (${getOfficeImpostoPercentual()}%): ${fmtBRL(dist.impostoProvisionado)} ·
           RRT de Projeto: ${rrtLine(rrtProjeto)} ·
@@ -9125,20 +9212,25 @@ function renderOfficeProjetosTab(){
           <div class="form-group"><label>Data prevista da 1ª parcela</label><input type="date" id="newProjParcelaData" disabled></div>
           <div class="form-group full"><label>Conta empresarial de destino</label><select id="newProjConta" disabled>${contaOptsProj}</select></div>
           <div class="form-group full">
-            <label>Quantidade de RRTs</label><br>
-            <label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px"><input type="radio" name="newProjRrtQtd" value="1" checked disabled onchange="onNewProjRrtQtdChange()"> Uma RRT</label>
-            <label style="display:inline-flex;align-items:center;gap:6px"><input type="radio" name="newProjRrtQtd" value="2" disabled onchange="onNewProjRrtQtdChange()"> Duas RRTs</label>
+            <label>RRT do projeto</label><br>
+            <label style="display:block;margin:4px 0"><input type="radio" name="newProjRrtRequirement" value="pending" checked disabled onchange="onNewProjRrtRequirementChange()"> Ainda não definido</label>
+            <label style="display:block;margin:4px 0"><input type="radio" name="newProjRrtRequirement" value="none" disabled onchange="onNewProjRrtRequirementChange()"> Não exige RRT</label>
+            <label style="display:block;margin:4px 0"><input type="radio" name="newProjRrtRequirement" value="one" disabled onchange="onNewProjRrtRequirementChange()"> Exige 1 RRT</label>
+            <label style="display:block;margin:4px 0"><input type="radio" name="newProjRrtRequirement" value="two" disabled onchange="onNewProjRrtRequirementChange()"> Exige 2 RRTs</label>
           </div>
-          <div class="form-group full" id="newProjRrtTipoUnicaWrap">
+          <div class="form-group full" id="newProjRrtNoneConfirmWrap" style="display:none">
+            <label><input type="checkbox" id="newProjRrtNoneConfirm" disabled> Confirmo que este projeto não exige RRT</label>
+          </div>
+          <div class="form-group full" id="newProjRrtTipoUnicaWrap" style="display:none">
             <label>Tipo da RRT</label><br>
             <label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px"><input type="radio" name="newProjRrtTipoUnica" value="projeto" checked disabled> RRT de Projeto</label>
             <label style="display:inline-flex;align-items:center;gap:6px"><input type="radio" name="newProjRrtTipoUnica" value="execucao" disabled> RRT de Execução</label>
           </div>
-          <div class="form-group" id="newProjRrtUnicaValorWrap"><label>Valor da RRT (R$)</label><input type="number" id="newProjRrtUnicaValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
+          <div class="form-group" id="newProjRrtUnicaValorWrap" style="display:none"><label>Valor da RRT (R$)</label><input type="number" id="newProjRrtUnicaValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
           <div class="form-group" id="newProjRrtProjetoValorWrap" style="display:none"><label>Valor da RRT de Projeto (R$)</label><input type="number" id="newProjRrtProjetoValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
           <div class="form-group" id="newProjRrtExecucaoValorWrap" style="display:none"><label>Valor da RRT de Execução (R$)</label><input type="number" id="newProjRrtExecucaoValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
         </div>
-        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>. Ao cadastrar já como <strong>contratado</strong>, a entrada e as parcelas do saldo geram os recebíveis automaticamente, uma única vez. Imposto (${getOfficeImpostoPercentual()}%) e RRT(s) são descontados do contrato antes da divisão de 65/15/10/7/3%.</div>
+        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>. Ao cadastrar já como <strong>contratado</strong>, a entrada e as parcelas do saldo geram os recebíveis automaticamente, uma única vez. Imposto (${getOfficeImpostoPercentual()}%) e RRT(s) exigida(s) são descontados do contrato antes da divisão de 65/15/10/7/3% — enquanto a exigência de RRT ficar "Ainda não definido" ou incompleta, a distribuição fica bloqueada (o dinheiro recebido continua entrando no caixa normalmente).</div>
         <button class="btn btn-primary mt-16" onclick="addOfficeProjeto()">Adicionar Projeto</button>
       </div>
       <div class="card"><div class="card-header"><div class="card-title">Projetos Cadastrados</div></div><div class="item-list">${rows}</div></div>
@@ -9163,19 +9255,21 @@ function onNewProjEntradaRecebidaChange(){
   const el=document.getElementById('newProjEntradaDataRealWrap'); if(!el) return;
   el.style.display = document.getElementById('newProjEntradaRecebida').checked ? 'block' : 'none';
 }
-// Alterna entre "uma RRT" (com escolha de tipo) e "duas RRTs" (Projeto +
-// Execução, os dois registros sempre juntos — nunca cria uma terceira).
-function onNewProjRrtQtdChange(){
-  const qtd=document.querySelector('input[name="newProjRrtQtd"]:checked')?.value||'1';
+// Alterna os campos visíveis do "Novo Projeto" conforme a decisão de RRT
+// escolhida (pending/none/one/two) — nunca preenche nem confirma nada
+// sozinha, só mostra/esconde os campos correspondentes.
+function onNewProjRrtRequirementChange(){
+  const req=document.querySelector('input[name="newProjRrtRequirement"]:checked')?.value||'pending';
+  const noneConfirmWrap=document.getElementById('newProjRrtNoneConfirmWrap');
   const tipoUnicaWrap=document.getElementById('newProjRrtTipoUnicaWrap');
   const unicaValorWrap=document.getElementById('newProjRrtUnicaValorWrap');
   const projetoValorWrap=document.getElementById('newProjRrtProjetoValorWrap');
   const execucaoValorWrap=document.getElementById('newProjRrtExecucaoValorWrap');
-  const duas=qtd==='2';
-  if(tipoUnicaWrap) tipoUnicaWrap.style.display=duas?'none':'block';
-  if(unicaValorWrap) unicaValorWrap.style.display=duas?'none':'block';
-  if(projetoValorWrap) projetoValorWrap.style.display=duas?'block':'none';
-  if(execucaoValorWrap) execucaoValorWrap.style.display=duas?'block':'none';
+  if(noneConfirmWrap) noneConfirmWrap.style.display=req==='none'?'block':'none';
+  if(tipoUnicaWrap) tipoUnicaWrap.style.display=req==='one'?'block':'none';
+  if(unicaValorWrap) unicaValorWrap.style.display=req==='one'?'block':'none';
+  if(projetoValorWrap) projetoValorWrap.style.display=req==='two'?'block':'none';
+  if(execucaoValorWrap) execucaoValorWrap.style.display=req==='two'?'block':'none';
 }
 // Gera os recebíveis (Entrada + Parcela i/N) de um projeto recém-cadastrado
 // como 'contratado', em centavos inteiros pra nunca acumular erro de ponto
@@ -9230,16 +9324,31 @@ function addOfficeProjeto(){
   // RRT deduzidos antes da divisão de 65/15/10/7/3%. Nunca aplicado
   // retroativamente a projetos já existentes com histórico realizado (ver
   // migração em migrateState).
-  const projeto={id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid(),regraDistribuicao:'v2',rrts:[]};
+  const rrtRequirement=document.querySelector('input[name="newProjRrtRequirement"]:checked')?.value||'pending';
+  const projeto={id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid(),regraDistribuicao:'v2',rrts:[],rrtRequirement};
+  if(rrtRequirement==='pending'){
+    projeto.rrtRequirementConfirmedAt=null;
+    projeto.rrtRequirementConfirmedBy=null;
+  } else {
+    projeto.rrtRequirementConfirmedAt=new Date().toISOString();
+    projeto.rrtRequirementConfirmedBy=(perfilAtivo&&perfis[perfilAtivo])?perfis[perfilAtivo].name:null;
+  }
 
   if(status==='contratado'){
-    // RRT é OPCIONAL no cadastro (seção "RRT DO PROJETO" — nunca inventa; um
-    // projeto pode ficar "RRT não configurada" e o usuário adiciona depois
-    // editando o projeto). Só valida/cria RRT se o usuário realmente
+    // A decisão de RRT (rrtRequirement) já foi lida acima — aqui só valida/
+    // cria os REGISTROS de RRT conforme ela. RRT continua OPCIONAL no
+    // cadastro mesmo com 'one'/'two' escolhido (seção "RRT DO PROJETO" —
+    // nunca inventa; o projeto fica bloqueado até o usuário completar,
+    // editando depois). Só valida/cria RRT se o usuário realmente
     // preencheu algum valor — campo em branco nunca bloqueia o cadastro do
     // projeto nem gera erro de validação.
-    const rrtQtd=document.querySelector('input[name="newProjRrtQtd"]:checked')?.value||'1';
-    if(rrtQtd==='2'){
+    if(rrtRequirement==='none'){
+      // Confirmação adicional obrigatória (seção "Projeto sem RRT" do
+      // escopo) — nunca aceita "não exige RRT" sem essa marcação explícita.
+      if(!document.getElementById('newProjRrtNoneConfirm').checked){
+        toast('Confirme explicitamente que o projeto não exige RRT');return;
+      }
+    } else if(rrtRequirement==='two'){
       const valorProjetoRrtRaw=document.getElementById('newProjRrtProjetoValor').value;
       const valorExecucaoRrtRaw=document.getElementById('newProjRrtExecucaoValor').value;
       if(valorProjetoRrtRaw!=='' || valorExecucaoRrtRaw!==''){
@@ -9251,7 +9360,7 @@ function addOfficeProjeto(){
           {id:uid(), tipo:'execucao', valor:Math.round(valorExecucaoRrt*100)/100, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()},
         ];
       }
-    } else {
+    } else if(rrtRequirement==='one'){
       const tipoUnica=document.querySelector('input[name="newProjRrtTipoUnica"]:checked')?.value||'projeto';
       const valorUnicaRaw=document.getElementById('newProjRrtUnicaValor').value;
       if(valorUnicaRaw!==''){
@@ -9260,6 +9369,8 @@ function addOfficeProjeto(){
         projeto.rrts=[{id:uid(), tipo:tipoUnica, valor:Math.round(valorUnica*100)/100, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()}];
       }
     }
+    // rrtRequirement==='pending': nunca cria RRT nenhuma — o projeto fica
+    // bloqueado até o usuário decidir, editando depois.
     // Campos financeiros de entrada/parcelamento só se aplicam a projeto
     // contratado (projeto potencial continua só pipeline, sem gerar caixa).
     const valorEntradaRaw=document.getElementById('newProjEntradaValor').value;
@@ -9321,7 +9432,18 @@ function addOfficeProjeto(){
 }
 const RRT_TIPO_LABEL={projeto:'RRT de Projeto', execucao:'RRT de Execução'};
 const RRT_STATUS_LABEL={prevista:'Prevista', emitida:'Emitida', paga:'Paga'};
-function renderProjetoRrtRows(p){
+const RRT_REQUIREMENT_LABEL={pending:'Ainda não definido', none:'Não exige RRT', one:'Exige 1 RRT', two:'Exige 2 RRTs'};
+// Seção "RRT do projeto" do modal de edição — decisão de exigência
+// (rrtRequirement) + os registros de RRT propriamente ditos, dependentes
+// dessa decisão. Depois que o projeto já materializou alguma distribuição
+// (projetoV2TemMaterializacao), a decisão vira somente leitura — só a
+// FUNÇÃO DE GRAVAÇÃO (setProjetoRrtRequirement) garante isso de verdade;
+// aqui é só a apresentação correspondente.
+function renderProjetoRrtSection(p){
+  const materializado=projetoV2TemMaterializacao(p);
+  const req=getProjetoRrtRequirement(p);
+  const validas=getProjetoRrtsValidas(p);
+
   const rows=(p.rrts||[]).map(r=>`
     <div class="item-row">
       <div class="item-row-info">
@@ -9338,13 +9460,57 @@ function renderProjetoRrtRows(p){
       </div>
       <button class="btn btn-ghost btn-sm" onclick="saveProjetoRRT('${p.id}','${r.id}')">Salvar RRT</button>
       <button class="btn btn-ghost btn-sm" onclick="delProjetoRRT('${p.id}','${r.id}')">🗑</button>
-    </div>`).join('') || '<div class="info-box">RRT não configurada para este projeto.</div>';
-  const tiposPresentes=(p.rrts||[]).map(r=>r.tipo);
-  const podeAdicionar=(p.rrts||[]).length<2;
-  const addBtns=[];
-  if(podeAdicionar && !tiposPresentes.includes('projeto')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','projeto')">+ RRT de Projeto</button>`);
-  if(podeAdicionar && !tiposPresentes.includes('execucao')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','execucao')">+ RRT de Execução</button>`);
-  return `<div class="card-title" style="font-size:14px;margin-top:14px">RRT do projeto</div>${rows}<div style="margin-top:8px">${addBtns.join(' ')}</div>`;
+    </div>`).join('');
+
+  let listaRrt='';
+  if(req==='one' || req==='two'){
+    const maxRrts=req==='one'?1:2;
+    const faltam=Math.max(0,maxRrts-validas.length);
+    const tiposPresentes=(p.rrts||[]).map(r=>r.tipo);
+    const podeAdicionar=!materializado && (p.rrts||[]).length<maxRrts;
+    const addBtns=[];
+    if(podeAdicionar && !tiposPresentes.includes('projeto')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','projeto')">+ RRT de Projeto</button>`);
+    if(podeAdicionar && !tiposPresentes.includes('execucao')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','execucao')">+ RRT de Execução</button>`);
+    listaRrt=`<div class="item-row-meta" style="margin:6px 0">${faltam>0?`Faltam ${faltam} RRT(s) pra liberar a distribuição.`:'RRT(s) completa(s) — distribuição liberada.'}</div>
+      ${rows || '<div class="info-box">Nenhuma RRT cadastrada ainda.</div>'}
+      <div style="margin-top:8px">${addBtns.join(' ')}</div>`;
+  } else if(req==='none'){
+    listaRrt=`<div class="info-box">Este projeto não exige RRT — o imposto continua provisionado normalmente.</div>`;
+  } else {
+    listaRrt=`<div class="info-box" style="border-color:var(--warn)">⚠ Distribuição bloqueada: informe se o projeto exige RRT.</div>`;
+  }
+
+  const decisaoBlock = materializado
+    ? `<div class="info-box">Decisão: <strong>${RRT_REQUIREMENT_LABEL[req]}</strong> — este projeto já possui distribuição financeira materializada, então a exigência de RRT ficou imutável. Registre um estorno financeiro explícito para alterar.</div>`
+    : `<div class="form-group full">
+        ${['pending','none','one','two'].map(v=>`<label style="display:block;margin:4px 0"><input type="radio" name="eProjRrtRequirement" value="${v}" ${req===v?'checked':''} onchange="onEProjRrtRequirementChange()"> ${RRT_REQUIREMENT_LABEL[v]}</label>`).join('')}
+      </div>
+      <div class="form-group full" id="eProjRrtNoneConfirmWrap" style="display:${req==='none'?'block':'none'}">
+        <label><input type="checkbox" id="eProjRrtNoneConfirm"> Confirmo que este projeto não exige RRT</label>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="salvarDecisaoRrtRequirement('${p.id}')">Salvar decisão de RRT</button>`;
+
+  return `<div class="card-title" style="font-size:14px;margin-top:14px">RRT do projeto</div>${decisaoBlock}<div style="margin-top:10px">${listaRrt}</div>`;
+}
+function onEProjRrtRequirementChange(){
+  const val=document.querySelector('input[name="eProjRrtRequirement"]:checked')?.value;
+  const wrap=document.getElementById('eProjRrtNoneConfirmWrap');
+  if(wrap) wrap.style.display = val==='none' ? 'block' : 'none';
+}
+// Confirmação adicional obrigatória pra "Não exige RRT" (seção "Projeto
+// sem RRT" do escopo) — checagem de UI; a proteção real (contra RRT já
+// existente, contra materialização, etc.) está em
+// podeAlterarRrtRequirement/setProjetoRrtRequirement.
+function salvarDecisaoRrtRequirement(projetoId){
+  const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
+  const novo=document.querySelector('input[name="eProjRrtRequirement"]:checked')?.value;
+  if(!novo) return;
+  if(novo==='none' && !document.getElementById('eProjRrtNoneConfirm')?.checked){
+    toast('Confirme explicitamente que o projeto não exige RRT');
+    return;
+  }
+  const ok=setProjetoRrtRequirement(projetoId, novo);
+  if(ok){ openEditOfficeProjeto(projetoId); renderOfficeProjetosTab(); renderEscritorioResumo(); toast('Decisão de RRT atualizada!'); }
 }
 function openEditOfficeProjeto(id){
   const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
@@ -9363,7 +9529,7 @@ function openEditOfficeProjeto(id){
       <div class="form-group full"><label>Data do contrato</label><input type="date" id="eProjData" value="${p.dataContrato||''}"></div>
       <div class="form-group full"><label>Observações</label><input type="text" id="eProjObs" value="${esc(p.observacao||'')}"></div>
     </div>
-    ${projetoUsaRegraV2(p) ? renderProjetoRrtRows(p) : '<div class="info-box" style="margin-top:10px">Projeto na regra de distribuição legada — sem gestão de RRT nesta tela.</div>'}
+    ${projetoUsaRegraV2(p) ? renderProjetoRrtSection(p) : '<div class="info-box" style="margin-top:10px">Projeto na regra de distribuição legada — sem gestão de RRT nesta tela.</div>'}
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="saveEditOfficeProjeto('${id}')">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -9380,7 +9546,11 @@ function openEditOfficeProjeto(id){
 function addProjetoRRT(projetoId, tipo){
   const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
   if(!p.rrts) p.rrts=[];
-  if(p.rrts.length>=2){ toast('Este projeto já tem duas RRTs — o máximo permitido'); return; }
+  const req=getProjetoRrtRequirement(p);
+  if(req==='pending'){ toast('Defina primeiro se o projeto exige RRT'); return; }
+  if(req==='none'){ toast('Este projeto está marcado como "Não exige RRT" — mude a decisão antes de cadastrar uma RRT'); return; }
+  const maxRrts=req==='one'?1:2;
+  if(p.rrts.length>=maxRrts){ toast(req==='one'?'Este projeto exige só 1 RRT — o máximo permitido':'Este projeto já tem duas RRTs — o máximo permitido'); return; }
   if(p.rrts.some(r=>r.tipo===tipo)){ toast('Este projeto já tem uma RRT desse tipo'); return; }
   const padrao=getOfficeRrtValorPadrao();
   document.getElementById('modalTitle').textContent='Nova '+(RRT_TIPO_LABEL[tipo]||tipo);
@@ -9398,7 +9568,13 @@ function addProjetoRRT(projetoId, tipo){
 function confirmarAddProjetoRRT(projetoId, tipo){
   const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
   if(!p.rrts) p.rrts=[];
-  if(p.rrts.length>=2){ toast('Este projeto já tem duas RRTs — o máximo permitido'); return; }
+  // Proteção real (não só a UI que abriu o modal): a exigência de RRT do
+  // projeto é quem decide o teto, não um número fixo de 2.
+  const req=getProjetoRrtRequirement(p);
+  if(req==='pending'){ toast('Defina primeiro se o projeto exige RRT'); return; }
+  if(req==='none'){ toast('Este projeto está marcado como "Não exige RRT" — mude a decisão antes de cadastrar uma RRT'); return; }
+  const maxRrts=req==='one'?1:2;
+  if(p.rrts.length>=maxRrts){ toast(req==='one'?'Este projeto exige só 1 RRT — o máximo permitido':'Este projeto já tem duas RRTs — o máximo permitido'); return; }
   if(p.rrts.some(r=>r.tipo===tipo)){ toast('Este projeto já tem uma RRT desse tipo'); return; }
   const valorRaw=document.getElementById('novaProjRrtValor').value;
   if(valorRaw===''){ toast('Informe o valor da RRT — nunca fica em branco nem vira R$ 0,00 automaticamente'); return; }
@@ -9439,6 +9615,36 @@ function delProjetoRRT(projetoId, rrtId){
 // ainda 'previsto' que passam a existir/mudar de valor pra frente).
 function resyncProjectV2(projetoId){
   (state.office.recebiveis||[]).filter(r=>r.projetoId===projetoId).forEach(r=>syncDerivedPersonalTransfer(r.id));
+}
+// Grava a decisão de exigência de RRT — ESTA é a proteção real (não a UI
+// que a chama): valida via podeAlterarRrtRequirement ANTES de tocar em
+// qualquer coisa (zero mutation numa tentativa rejeitada), então nunca
+// apaga nem cria RRT sozinha — só grava a decisão e deixa
+// addProjetoRRT/delProjetoRRT cuidarem dos registros. 'pending' nunca
+// grava confirmedAt/confirmedBy (ainda não é uma decisão confirmada);
+// qualquer outro valor grava os dois — confirmedBy usa o nome do perfil
+// ativo quando existir (identidade já confiável no app), nunca inventado.
+function setProjetoRrtRequirement(projetoId, novoRequirement){
+  const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return false;
+  const check=podeAlterarRrtRequirement(p, novoRequirement);
+  if(!check.ok){
+    if(check.motivo==='materializado') toast('Este projeto já possui distribuição financeira materializada — a exigência de RRT ficou imutável. Registre um estorno financeiro explícito para alterar.');
+    else if(check.motivo==='existem_rrts') toast('Este projeto já tem RRT cadastrada — remova o(s) registro(s) antes de marcar "Não exige RRT".');
+    else if(check.motivo==='existem_rrts_demais') toast('Este projeto tem duas RRTs cadastradas — remova uma antes de reduzir para "Exige 1 RRT".');
+    else toast('Decisão de RRT inválida');
+    return false;
+  }
+  p.rrtRequirement=novoRequirement;
+  if(novoRequirement==='pending'){
+    p.rrtRequirementConfirmedAt=null;
+    p.rrtRequirementConfirmedBy=null;
+  } else {
+    p.rrtRequirementConfirmedAt=new Date().toISOString();
+    p.rrtRequirementConfirmedBy=(perfilAtivo&&perfis[perfilAtivo])?perfis[perfilAtivo].name:null;
+  }
+  resyncProjectV2(projetoId);
+  scheduleSave();
+  return true;
 }
 function saveEditOfficeProjeto(id){
   const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
