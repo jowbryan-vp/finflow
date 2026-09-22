@@ -183,6 +183,23 @@ const FILES = [
   // em seletor exclusivamente empresarial; nenhuma mistura entre os motores
   // financeiros.
   'gate5-account-identification.test.mjs',
+  // Gate 6 — Caixa do Escritório: imposto e RRT deduzidos ANTES da divisão
+  // percentual (docs/gates/GATE-6-OFFICE-NET-DISTRIBUTION.md, base 545fdd4).
+  // receitaLiquidaDistribuivel = receitaBruta - impostoProvisionado -
+  // Σ RRT, dividida em 5 destinos fixos (repasse pessoal 65% / operação 15%
+  // / reserva de crescimento 10% / capital de giro 7% / marketing 3%) pelo
+  // método do maior resto (soma sempre exata). RRT tem identidade própria
+  // (projeto/execução, valor, status, número, datas) — nunca só
+  // quantidade×valor. Recebimentos parciais tratam a provisão de
+  // imposto+RRT como prioritária (regime "waterfall" congelado por
+  // recebível realizado, nunca recalculado retroativamente). Operação/
+  // crescimento/capital de giro/marketing viram reservas empresariais de
+  // sistema separadas, aplicadas só quando o recebível é caixa real.
+  // Convive lado a lado com a regra legada (regrasDistribuicao/
+  // calculateOfficeDistribution) via projeto.regraDistribuicao — nenhum
+  // projeto/movimentação já materializado sob a regra antiga é
+  // reinterpretado.
+  'gate6-office-net-distribution.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

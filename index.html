@@ -1899,7 +1899,22 @@ function migrateState() {
   off.contas.forEach(c=>{ if(c.saldoInicial===undefined) c.saldoInicial=0; });
   if(!off.movimentacoesContas) off.movimentacoesContas=[]; // ajustes/transferências/repasses/retiradas: {id,contaId,valor,data,obs,transferId?,officeTransferId?}
   if(!off.projetos) off.projetos=[]; // {id,nome,cliente,valorContrato,status,dataContrato,observacao,createdAt}
-  off.projetos.forEach(p=>{ if(!p.createdAt) p.createdAt=p.id; });
+  // regraDistribuicao ('legacy'|'v2'): projeto criado antes da regra nova
+  // (imposto/RRT deduzidos antes da divisão — docs/gates/
+  // GATE-6-OFFICE-NET-DISTRIBUTION.md) preserva 'legacy' pra sempre, mesmo em
+  // migração, SE já tiver algum recebível/repasse efetivamente realizado —
+  // nunca reinterpreta movimentação já materializada. Só migra pra 'v2' um
+  // projeto ainda inteiramente 'previsto' (nada realizado), e mesmo assim sem
+  // inventar RRT nenhuma (rrts:[] — precisaConfigurarRRT sinaliza na UI).
+  off.projetos.forEach(p=>{
+    if(!p.createdAt) p.createdAt=p.id;
+    if(!p.rrts) p.rrts=[];
+    if(!p.regraDistribuicao){
+      const recebiveisDoProjeto=(off.recebiveis||[]).filter(r=>r.projetoId===p.id);
+      const temRealizado=recebiveisDoProjeto.some(r=>r.estado==='recebido'&&r.dataRecebimento);
+      p.regraDistribuicao=temRealizado?'legacy':'v2';
+    }
+  });
   if(!off.recebiveis) off.recebiveis=[]; // {id,projetoId,descricao,valor,estado,dataPrevista,dataRecebimento,contaDestino,createdAt}
   off.recebiveis.forEach(r=>{ if(!r.createdAt) r.createdAt=r.id; if(r.dataRecebimento===undefined) r.dataRecebimento=null; });
   if(!off.despesas) off.despesas=[]; // {id,descricao,categoria,valor,data,conta,projetoId,status,createdAt}
@@ -1916,6 +1931,12 @@ function migrateState() {
     {destino:'impostos', percentual:null},
     {destino:'repasse_pessoal', percentual:null},
   ];
+  // Regra nova (v2) — imposto configurável (padrão 5%, autorizado
+  // explicitamente pelo escopo) e valor vigente de RRT (nunca inventado,
+  // fica null até o usuário configurar; só prefiller de novas RRTs, nunca
+  // altera retroativamente uma RRT já registrada num projeto).
+  if(off.impostoPercentual===undefined) off.impostoPercentual=OFFICE_IMPOSTO_PERCENTUAL_PADRAO;
+  if(off.rrtValorPadrao===undefined) off.rrtValorPadrao=null;
   // receitas pessoais derivadas do escritório (tipo repasse_escritorio/retirada_escritorio):
   // nunca precisam de inferência aqui — já nascem com todos os campos do
   // novo modelo (certeza/estado/datas/officeTransferId) no momento da criação.
@@ -3070,6 +3091,137 @@ function calculateOfficeDistribution(recebivel){
     porDestino[rule.destino]=(ativa && p!==null && p!==undefined) ? (recebivel.valor||0)*(p/100) : null;
   });
   return { valor:recebivel.valor||0, configured:ativa, porDestino, validation };
+}
+
+// ════════════════════════════════════════════════
+// REGRA NOVA (v2) — imposto e RRT são deduções ANTERIORES à divisão
+// percentual, nunca parte dos 100% distribuídos. Convive lado a lado com
+// calculateOfficeDistribution/regrasDistribuicao (regra legada, seção acima)
+// — projetos com regraDistribuicao!=='v2' continuam usando exclusivamente a
+// regra antiga; nenhum projeto/recebível/repasse/receita já materializado
+// sob a regra antiga é reinterpretado por este bloco. Ver docs/gates/
+// GATE-6-OFFICE-NET-DISTRIBUTION.md.
+// ════════════════════════════════════════════════
+
+const OFFICE_IMPOSTO_PERCENTUAL_PADRAO=5; // autorizado explicitamente pelo escopo; configurável em off.impostoPercentual
+// Ordem fixa == prioridade de desempate do maior resto abaixo — nunca muda
+// dinamicamente, nunca definida por config do usuário (percentuais fixos por
+// decisão explícita de escopo, diferente de regrasDistribuicao/legado).
+const OFFICE_DISTRIBUICAO_V2=[
+  {destino:'repasse_pessoal', percentual:65},
+  {destino:'operacao', percentual:15},
+  {destino:'reserva_crescimento', percentual:10},
+  {destino:'capital_giro', percentual:7},
+  {destino:'marketing', percentual:3},
+];
+
+function getOfficeImpostoPercentual(){
+  const p=state.office&&state.office.impostoPercentual;
+  return (typeof p==='number'&&Number.isFinite(p)&&p>=0&&p<=100) ? p : OFFICE_IMPOSTO_PERCENTUAL_PADRAO;
+}
+function getOfficeRrtValorPadrao(){
+  const v=state.office&&state.office.rrtValorPadrao;
+  return (typeof v==='number'&&Number.isFinite(v)&&v>=0) ? v : null; // null = nunca configurado, nunca inventa
+}
+function projetoUsaRegraV2(projeto){ return !!(projeto&&projeto.regraDistribuicao==='v2'); }
+// RRTs com valor numérico válido — um registro corrompido/incompleto nunca
+// quebra a soma nem é silenciosamente tratado como zero-e-esquecido; ele só
+// não entra na soma (mesma filosofia de "nunca inventar" do resto do app).
+function getProjetoRrtsValidas(projeto){
+  return ((projeto&&projeto.rrts)||[]).filter(r=>r&&typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>=0);
+}
+function calcRrtProvisionadaCent(projeto){
+  return getProjetoRrtsValidas(projeto).reduce((s,r)=>s+Math.round((r.valor||0)*100),0);
+}
+// Projeto contratado na regra v2 sem NENHUMA RRT registrada ainda — nunca
+// inventamos zero como "sem RRT confirmada"; a UI deve mostrar "RRT não
+// configurada" e a distribuição roda só com o imposto deduzido até que o
+// usuário registre pelo menos uma RRT (ou confirme explicitamente que este
+// projeto não tem RRT, fora de escopo desta entrega — decisão do usuário).
+function projetoNecessitaConfiguracaoRRT(projeto){
+  return !!(projeto && projetoUsaRegraV2(projeto) && projeto.status==='contratado' && getProjetoRrtsValidas(projeto).length===0);
+}
+
+// Divide um valor em CENTAVOS INTEIROS pelos 5 destinos fixos usando o
+// método do maior resto (largest remainder / Hamilton) — cada destino recebe
+// floor(base*percentual/100) e os centavos residuais (sempre < quantidade de
+// destinos) vão, um a um, para quem tem o maior resto fracionário; empate é
+// resolvido pela ORDEM FIXA de OFFICE_DISTRIBUICAO_V2 (determinístico, nunca
+// Math.random, nunca ordem de iteração de objeto). Isso garante que a soma
+// dos 5 destinos bate EXATAMENTE com a base, sempre — nunca sobra nem falta
+// centavo por erro de ponto flutuante, ao contrário de arredondar cada
+// destino isoladamente.
+function distribuirReceitaLiquidaCent(baseCent){
+  const base=Number.isFinite(baseCent)?baseCent:0;
+  const negativo=base<0;
+  const abs=Math.abs(base);
+  const entries=OFFICE_DISTRIBUICAO_V2.map(d=>{
+    const raw=abs*d.percentual/100;
+    const floor=Math.floor(raw);
+    return {destino:d.destino, floor, rem:raw-floor};
+  });
+  const alocado=entries.reduce((s,e)=>s+e.floor,0);
+  const resto=Math.round(abs-alocado); // inteiro por construção (abs é inteiro, floors são inteiros)
+  const ordemResto=entries.slice().sort((a,b)=>b.rem-a.rem);
+  for(let i=0;i<resto;i++){ ordemResto[i].floor+=1; }
+  const porDestino={};
+  entries.forEach(e=>{ porDestino[e.destino]=(negativo?-1:1)*e.floor; });
+  return porDestino;
+}
+
+// Núcleo da regra nova, no nível do PROJETO inteiro (visão previsto/cheia —
+// usada como prévia informativa e como base dos cálculos por recebível
+// abaixo). Tudo em centavos inteiros até a conversão final de volta a reais.
+function calculateProjectDistributionV2(projeto){
+  const receitaBrutaCent=Math.round((projeto&&projeto.valorContrato||0)*100);
+  const impostoCent=Math.round(receitaBrutaCent*getOfficeImpostoPercentual()/100);
+  const rrtCent=calcRrtProvisionadaCent(projeto);
+  const liquidoCent=receitaBrutaCent-impostoCent-rrtCent;
+  const porDestinoCent=distribuirReceitaLiquidaCent(liquidoCent);
+  const toReais=c=>Math.round(c)/100;
+  const porDestino={};
+  Object.keys(porDestinoCent).forEach(k=>{ porDestino[k]=toReais(porDestinoCent[k]); });
+  return {
+    receitaBruta:toReais(receitaBrutaCent),
+    impostoProvisionado:toReais(impostoCent),
+    rrtProvisionada:toReais(rrtCent),
+    receitaLiquidaDistribuivel:toReais(liquidoCent),
+    porDestino, // {repasse_pessoal, operacao, reserva_crescimento, capital_giro, marketing}
+  };
+}
+
+// Soma, em centavos, o que já foi congelado (recebiveis.provisionadoRealizadoCent)
+// nos OUTROS recebíveis já realizados deste projeto — base do "waterfall" de
+// provisão prioritária abaixo. Nunca lê recebíveis ainda 'previsto': só o que
+// já é caixa real e já passou por essa function uma vez conta como provisionado.
+function getProjetoProvisionadoRealizadoCent(projetoId, excluindoRecebivelId){
+  return (state.office.recebiveis||[])
+    .filter(r=>r.projetoId===projetoId && r.id!==excluindoRecebivelId && r.provisionadoRealizadoCent!==undefined && r.provisionadoRealizadoCent!==null)
+    .reduce((s,r)=>s+(r.provisionadoRealizadoCent||0),0);
+}
+
+// Congela (uma única vez, na primeira vez que o recebível chega a
+// estado==='recebido') quanto desse recebível específico foi consumido pela
+// provisão de imposto+RRT do projeto, e quanto sobrou distribuível — regime
+// de prioridade ("RECEBIMENTOS PARCIAIS" do escopo): enquanto o total
+// acumulado de caixa já realizado no projeto não cobrir imposto+RRT, 100% de
+// cada entrada realizada fica provisionado (distribuivel=0); só o excedente,
+// depois de cobrir integralmente imposto+RRT, vira distribuível. Idempotente
+// por construção — chamar de novo sobre um recebível já congelado é NO-OP
+// (nunca recalcula retroativamente, mesmo que o imposto/RRT do projeto mude
+// depois). Recebíveis futuros (ainda não realizados) usam sempre o valor
+// ATUAL de imposto/RRT no momento em que forem realizados — não é
+// retroatividade, é aplicar a configuração vigente a um evento novo.
+function freezeRecebivelProvisionadoV2(recebivel, projeto){
+  if(recebivel.provisionadoRealizadoCent!==undefined && recebivel.provisionadoRealizadoCent!==null) return; // já congelado
+  const projDist=calculateProjectDistributionV2(projeto);
+  const totalProvisionarCent=Math.round(projDist.impostoProvisionado*100)+Math.round(projDist.rrtProvisionada*100);
+  const jaProvisionadoCent=getProjetoProvisionadoRealizadoCent(projeto.id, recebivel.id);
+  const faltaProvisionarCent=Math.max(0, totalProvisionarCent-jaProvisionadoCent);
+  const valorCent=Math.round((recebivel.valor||0)*100);
+  const provisionadoCent=Math.min(valorCent, faltaProvisionarCent);
+  recebivel.provisionadoRealizadoCent=provisionadoCent;
+  recebivel.distribuivelRealizadoCent=valorCent-provisionadoCent;
 }
 
 // Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
@@ -8422,6 +8574,11 @@ function syncDerivedPersonalTransfer(recebivelId){
   const recebivel=(state.office.recebiveis||[]).find(r=>r.id===recebivelId);
   if(!recebivel) return;
   const projeto=(state.office.projetos||[]).find(p=>p.id===recebivel.projetoId);
+  if(projetoUsaRegraV2(projeto)){ syncDerivedPersonalTransferV2(recebivel, projeto); return; }
+  syncDerivedPersonalTransferLegacy(recebivel, projeto);
+}
+function syncDerivedPersonalTransferLegacy(recebivel, projeto){
+  const recebivelId=recebivel.id;
   const officeTransferId='off_'+recebivelId;
   const repasseExistente=(state.office.repasses||[]).find(rp=>rp.officeTransferId===officeTransferId);
   const receitaExistente=state.receitas.find(r=>r.officeTransferId===officeTransferId);
@@ -8490,6 +8647,135 @@ function syncDerivedPersonalTransfer(recebivelId){
     id:uid(), tipo:'repasse_escritorio', nome:'Repasse do Escritório'+(projeto?(' — '+projeto.nome):''),
     valor:valorRepasse, certeza:'contratado', estado:'previsto', dataPrevista, dataRecebimento:null,
     competenciaMes:mes||null, competenciaAno:ano||null, mes:mes||null, ano:ano||null, conta:null,
+    origem:'office_distribution', officeTransferId, createdAt:uid(),
+  });
+}
+
+// Ids fixos e determinísticos (nunca uid()) das 4 reservas de sistema da
+// regra v2 — precisam ser sempre as MESMAS reservas entre recarregamentos e
+// entre projetos diferentes (todo projeto v2 destina Operação/Crescimento/
+// Capital de Giro/Marketing pras mesmas 4 reservas do escritório, nunca uma
+// reserva nova por projeto). `sistema:true` as identifica pra UI/proteção.
+const OFFICE_RESERVA_SISTEMA_ID={
+  operacao:'oreserva_sys_operacao',
+  reserva_crescimento:'oreserva_sys_crescimento',
+  capital_giro:'oreserva_sys_capital_giro',
+  marketing:'oreserva_sys_marketing',
+};
+const OFFICE_RESERVA_SISTEMA_LABEL={
+  operacao:{nome:'Operação do Escritório', finalidade:'outro', color:'#5b7fff'},
+  reserva_crescimento:{nome:'Reserva de Crescimento', finalidade:'investimento', color:'#38e2b4'},
+  capital_giro:{nome:'Capital de Giro', finalidade:'capital_giro', color:'#ffc147'},
+  marketing:{nome:'Marketing', finalidade:'marketing', color:'#ff5f6d'},
+};
+function ensureOfficeSystemReserve(destino){
+  const id=OFFICE_RESERVA_SISTEMA_ID[destino];
+  if(!id) return null;
+  let r=(state.office.reservas||[]).find(x=>x.id===id);
+  if(!r){
+    const label=OFFICE_RESERVA_SISTEMA_LABEL[destino];
+    r={id, nome:label.nome, finalidade:label.finalidade, color:label.color, saldoInicial:0, sistema:true};
+    state.office.reservas.push(r);
+  }
+  return r;
+}
+
+// Aplica (ou mantém, se já aplicado) os 4 destinos empresariais da regra v2
+// — Operação/Crescimento/Capital de Giro/Marketing — nas reservas de sistema,
+// espelhando a mesma mecânica de confirmarAplicarOfficeReserva (mesmo id
+// pareado em movimentacoesReservas e movimentacoesContas, débito real da
+// conta de destino do recebível). SÓ roda quando o recebível já é caixa real
+// (estado==='recebido') — nunca sobre um recebível previsto (essas 4
+// reservas nunca recebem dinheiro que ainda não existe). Uma vez criado, o
+// par de movimentações é IMUTÁVEL (mesma filosofia de repasse 'recebido'):
+// nunca é apagado nem recalculado, mesmo que RRT/imposto mudem depois.
+function syncOfficeReserveDistributionV2(recebivel, projeto, porDestino){
+  if(!recebivel || recebivel.estado!=='recebido' || !recebivel.contaDestino) return;
+  Object.keys(OFFICE_RESERVA_SISTEMA_ID).forEach(destino=>{
+    const movId='off_dist_'+recebivel.id+'_'+destino;
+    const jaExiste=(state.office.movimentacoesReservas||[]).some(m=>m.id===movId);
+    if(jaExiste) return; // histórico imutável — nunca recalculado
+    const valor=(porDestino&&porDestino[destino])||0;
+    if(valor<=0) return;
+    const reserva=ensureOfficeSystemReserve(destino);
+    const dataMov=recebivel.dataRecebimento||new Date().toISOString().slice(0,10);
+    const [ano,mes]=dataMov.split('-').map(Number);
+    state.office.movimentacoesReservas.push({
+      id:movId, reservaId:reserva.id, valor, mes:mes||null, ano:ano||null, tipo:'aplicacao',
+      origemRecebivelId:recebivel.id, origemDestino:destino, createdAt:uid(),
+    });
+    state.office.movimentacoesContas.push({
+      id:movId, contaId:recebivel.contaDestino, valor:-valor, data:dataMov,
+      obs:'Distribuição do projeto'+(projeto?(' — '+projeto.nome):'')+': '+(OFFICE_RESERVA_SISTEMA_LABEL[destino].nome),
+      officeTransferId:movId,
+    });
+  });
+}
+
+// Núcleo v2 de syncDerivedPersonalTransfer: mesma idempotência/imutabilidade
+// da regra legada (officeTransferId='off_'+recebivelId, nunca duplica, nunca
+// sobrescreve um repasse já 'recebido'), mas a BASE do repasse pessoal nunca
+// é o valor bruto do recebível — é a fatia dele que sobra depois de imposto e
+// RRT provisionados (freezeRecebivelProvisionadoV2, regime de prioridade das
+// entradas realizadas). Recebível ainda 'previsto' nunca gera repasse nem
+// aplica reserva nenhuma aqui (seção "RECEBIMENTOS PARCIAIS" — previsto ≠
+// caixa; só existiria um repasse "estimado" fora do fluxo real de dinheiro,
+// o que o escopo pede pra evitar).
+function syncDerivedPersonalTransferV2(recebivel, projeto){
+  const recebivelId=recebivel.id;
+  const officeTransferId='off_'+recebivelId;
+  const repasseExistente=(state.office.repasses||[]).find(rp=>rp.officeTransferId===officeTransferId);
+  const receitaExistente=state.receitas.find(r=>r.officeTransferId===officeTransferId);
+
+  const semRepasseAinda=()=>{
+    if(repasseExistente && repasseExistente.estado==='previsto'){
+      repasseExistente.estado='cancelado';
+      if(receitaExistente && receitaExistente.estado==='previsto') receitaExistente.estado='cancelado';
+    }
+  };
+
+  if(recebivel.estado==='cancelado'){ semRepasseAinda(); return; }
+  if(!projeto || projeto.status!=='contratado'){ semRepasseAinda(); return; }
+  if(recebivel.estado!=='recebido'){ semRepasseAinda(); return; } // previsto: nenhum repasse/reserva ainda
+
+  // Repasse já efetivamente realizado — histórico imutável, nunca recalculado.
+  if(repasseExistente && repasseExistente.estado==='recebido') return;
+
+  freezeRecebivelProvisionadoV2(recebivel, projeto); // no-op se já congelado
+  const distribuivelCent=recebivel.distribuivelRealizadoCent||0;
+  const porDestinoCent=distribuirReceitaLiquidaCent(distribuivelCent);
+  const porDestino={};
+  Object.keys(porDestinoCent).forEach(k=>{ porDestino[k]=Math.round(porDestinoCent[k])/100; });
+
+  syncOfficeReserveDistributionV2(recebivel, projeto, porDestino);
+
+  const valorRepasse=porDestino.repasse_pessoal;
+  if(valorRepasse===undefined||valorRepasse===null||valorRepasse<=0){ semRepasseAinda(); return; }
+
+  const dataPrevista=recebivel.dataRecebimento||recebivel.dataPrevista||null;
+  if(repasseExistente){
+    repasseExistente.estado='previsto';
+    repasseExistente.valor=valorRepasse;
+    repasseExistente.dataPrevista=dataPrevista;
+    if(receitaExistente && receitaExistente.estado==='previsto'){
+      receitaExistente.valor=valorRepasse;
+      receitaExistente.dataPrevista=dataPrevista;
+      const [anoR,mesR]=(dataPrevista||'').split('-').map(Number);
+      receitaExistente.competenciaMes=mesR||receitaExistente.competenciaMes;
+      receitaExistente.competenciaAno=anoR||receitaExistente.competenciaAno;
+      receitaExistente.mes=receitaExistente.competenciaMes; receitaExistente.ano=receitaExistente.competenciaAno;
+    }
+    return;
+  }
+  const [anoN,mesN]=(dataPrevista||'').split('-').map(Number);
+  state.office.repasses.push({
+    id:uid(), tipo:'planejado', recebivelId, valor:valorRepasse, estado:'previsto',
+    dataPrevista, dataRecebimento:null, officeTransferId, createdAt:uid(),
+  });
+  state.receitas.push({
+    id:uid(), tipo:'repasse_escritorio', nome:'Repasse do Escritório'+(projeto?(' — '+projeto.nome):''),
+    valor:valorRepasse, certeza:'contratado', estado:'previsto', dataPrevista, dataRecebimento:null,
+    competenciaMes:mesN||null, competenciaAno:anoN||null, mes:mesN||null, ano:anoN||null, conta:null,
     origem:'office_distribution', officeTransferId, createdAt:uid(),
   });
 }
@@ -8598,10 +8884,38 @@ function renderOfficeProjetosTab(){
     const detalheContrato = temDetalheContrato
       ? ` · Entrada: ${fmtBRL(p.valorEntrada||0)} · Saldo parcelado: ${fmtBRL(Math.max(0,(p.valorContrato||0)-(p.valorEntrada||0)))} (${p.qtdParcelas||0}x) · Previsto: ${fmtBRL(totalPrevisto)} · A receber: ${fmtBRL(totalPrevisto)}`
       : '';
+    // Regra nova (v2): mostra a régua completa — valor do projeto, imposto
+    // provisionado, cada RRT (Projeto/Execução), receita líquida
+    // distribuível e os 5 destinos — nunca confundindo com saldo bancário
+    // disponível (INTERFACE do escopo). "RRT não configurada" é explícito,
+    // nunca um valor inventado.
+    let detalheV2='';
+    if(projetoUsaRegraV2(p)){
+      const dist=calculateProjectDistributionV2(p);
+      const rrtProjeto=(p.rrts||[]).find(r=>r.tipo==='projeto');
+      const rrtExecucao=(p.rrts||[]).find(r=>r.tipo==='execucao');
+      const rrtLine=r=>r?`${fmtBRL(r.valor||0)} (${RRT_STATUS_LABEL[r.status]||r.status})`:'—';
+      const precisaConfig=projetoNecessitaConfiguracaoRRT(p);
+      detalheV2=`<div class="item-row-meta" style="margin-top:4px">
+        <strong>Lucro-base para divisão (regra líquida):</strong>
+        Valor do projeto: ${fmtBRL(dist.receitaBruta)} ·
+        Imposto provisionado (${getOfficeImpostoPercentual()}%): ${fmtBRL(dist.impostoProvisionado)} ·
+        RRT de Projeto: ${rrtLine(rrtProjeto)} ·
+        RRT de Execução: ${rrtLine(rrtExecucao)} ·
+        Receita líquida distribuível: ${fmtBRL(dist.receitaLiquidaDistribuivel)}<br>
+        Repasse pessoal (65%): ${fmtBRL(dist.porDestino.repasse_pessoal)} ·
+        Operação (15%): ${fmtBRL(dist.porDestino.operacao)} ·
+        Reserva de crescimento (10%): ${fmtBRL(dist.porDestino.reserva_crescimento)} ·
+        Capital de giro (7%): ${fmtBRL(dist.porDestino.capital_giro)} ·
+        Marketing (3%): ${fmtBRL(dist.porDestino.marketing)}
+        ${precisaConfig?'<br><span style="color:var(--warn)">⚠ RRT não configurada — nenhuma RRT foi descontada ainda.</span>':''}
+      </div>`;
+    }
     return `<div class="item-row">
       <div class="item-row-info">
         <div class="item-row-name">${esc(p.nome)} <span class="badge ${statusBadge[p.status]||'badge-blue'}">${statusLabel[p.status]||p.status}</span></div>
         <div class="item-row-meta">${esc(p.cliente||'—')} · Contrato: ${fmtBRL(p.valorContrato||0)} · Recebido: ${fmtBRL(totalRecebido)} · ${recebiveisDoProjeto.length} recebível(is)${detalheContrato}</div>
+        ${detalheV2}
       </div>
       <button class="btn btn-ghost btn-sm" onclick="openEditOfficeProjeto('${p.id}')">Editar</button>
       <button class="btn btn-ghost btn-sm" onclick="delOfficeProjeto('${p.id}')">🗑</button>
@@ -8640,8 +8954,21 @@ function renderOfficeProjetosTab(){
           <div class="form-group"><label>Parcelas do saldo restante</label><input type="number" id="newProjParcelasQtd" placeholder="0" min="0" step="1" value="0" disabled></div>
           <div class="form-group"><label>Data prevista da 1ª parcela</label><input type="date" id="newProjParcelaData" disabled></div>
           <div class="form-group full"><label>Conta empresarial de destino</label><select id="newProjConta" disabled>${contaOptsProj}</select></div>
+          <div class="form-group full">
+            <label>Quantidade de RRTs</label><br>
+            <label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px"><input type="radio" name="newProjRrtQtd" value="1" checked disabled onchange="onNewProjRrtQtdChange()"> Uma RRT</label>
+            <label style="display:inline-flex;align-items:center;gap:6px"><input type="radio" name="newProjRrtQtd" value="2" disabled onchange="onNewProjRrtQtdChange()"> Duas RRTs</label>
+          </div>
+          <div class="form-group full" id="newProjRrtTipoUnicaWrap">
+            <label>Tipo da RRT</label><br>
+            <label style="display:inline-flex;align-items:center;gap:6px;margin-right:18px"><input type="radio" name="newProjRrtTipoUnica" value="projeto" checked disabled> RRT de Projeto</label>
+            <label style="display:inline-flex;align-items:center;gap:6px"><input type="radio" name="newProjRrtTipoUnica" value="execucao" disabled> RRT de Execução</label>
+          </div>
+          <div class="form-group" id="newProjRrtUnicaValorWrap"><label>Valor da RRT (R$)</label><input type="number" id="newProjRrtUnicaValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
+          <div class="form-group" id="newProjRrtProjetoValorWrap" style="display:none"><label>Valor da RRT de Projeto (R$)</label><input type="number" id="newProjRrtProjetoValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
+          <div class="form-group" id="newProjRrtExecucaoValorWrap" style="display:none"><label>Valor da RRT de Execução (R$)</label><input type="number" id="newProjRrtExecucaoValor" min="0" step="0.01" placeholder="0,00" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" disabled></div>
         </div>
-        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>. Ao cadastrar já como <strong>contratado</strong>, a entrada e as parcelas do saldo geram os recebíveis automaticamente, uma única vez.</div>
+        <div class="info-box" style="margin-top:10px">Projeto <strong>potencial</strong> é só pipeline — não gera caixa nem repasse até ser marcado como <strong>contratado</strong>. Ao cadastrar já como <strong>contratado</strong>, a entrada e as parcelas do saldo geram os recebíveis automaticamente, uma única vez. Imposto (${getOfficeImpostoPercentual()}%) e RRT(s) são descontados do contrato antes da divisão de 65/15/10/7/3%.</div>
         <button class="btn btn-primary mt-16" onclick="addOfficeProjeto()">Adicionar Projeto</button>
       </div>
       <div class="card"><div class="card-header"><div class="card-title">Projetos Cadastrados</div></div><div class="item-list">${rows}</div></div>
@@ -8665,6 +8992,20 @@ function onNewProjStatusChange(){
 function onNewProjEntradaRecebidaChange(){
   const el=document.getElementById('newProjEntradaDataRealWrap'); if(!el) return;
   el.style.display = document.getElementById('newProjEntradaRecebida').checked ? 'block' : 'none';
+}
+// Alterna entre "uma RRT" (com escolha de tipo) e "duas RRTs" (Projeto +
+// Execução, os dois registros sempre juntos — nunca cria uma terceira).
+function onNewProjRrtQtdChange(){
+  const qtd=document.querySelector('input[name="newProjRrtQtd"]:checked')?.value||'1';
+  const tipoUnicaWrap=document.getElementById('newProjRrtTipoUnicaWrap');
+  const unicaValorWrap=document.getElementById('newProjRrtUnicaValorWrap');
+  const projetoValorWrap=document.getElementById('newProjRrtProjetoValorWrap');
+  const execucaoValorWrap=document.getElementById('newProjRrtExecucaoValorWrap');
+  const duas=qtd==='2';
+  if(tipoUnicaWrap) tipoUnicaWrap.style.display=duas?'none':'block';
+  if(unicaValorWrap) unicaValorWrap.style.display=duas?'none':'block';
+  if(projetoValorWrap) projetoValorWrap.style.display=duas?'block':'none';
+  if(execucaoValorWrap) execucaoValorWrap.style.display=duas?'block':'none';
 }
 // Gera os recebíveis (Entrada + Parcela i/N) de um projeto recém-cadastrado
 // como 'contratado', em centavos inteiros pra nunca acumular erro de ponto
@@ -8715,9 +9056,40 @@ function addOfficeProjeto(){
   const status=document.getElementById('newProjStatus').value;
   const dataContrato=document.getElementById('newProjData').value||null;
   const observacao=document.getElementById('newProjObs').value.trim();
-  const projeto={id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid()};
+  // Todo projeto criado a partir de agora usa a regra nova (v2) — imposto e
+  // RRT deduzidos antes da divisão de 65/15/10/7/3%. Nunca aplicado
+  // retroativamente a projetos já existentes com histórico realizado (ver
+  // migração em migrateState).
+  const projeto={id:uid(),nome,cliente,valorContrato,status,dataContrato,observacao,createdAt:uid(),regraDistribuicao:'v2',rrts:[]};
 
   if(status==='contratado'){
+    // RRT é OPCIONAL no cadastro (seção "RRT DO PROJETO" — nunca inventa; um
+    // projeto pode ficar "RRT não configurada" e o usuário adiciona depois
+    // editando o projeto). Só valida/cria RRT se o usuário realmente
+    // preencheu algum valor — campo em branco nunca bloqueia o cadastro do
+    // projeto nem gera erro de validação.
+    const rrtQtd=document.querySelector('input[name="newProjRrtQtd"]:checked')?.value||'1';
+    if(rrtQtd==='2'){
+      const valorProjetoRrtRaw=document.getElementById('newProjRrtProjetoValor').value;
+      const valorExecucaoRrtRaw=document.getElementById('newProjRrtExecucaoValor').value;
+      if(valorProjetoRrtRaw!=='' || valorExecucaoRrtRaw!==''){
+        const valorProjetoRrt=parseFloat(valorProjetoRrtRaw);
+        const valorExecucaoRrt=parseFloat(valorExecucaoRrtRaw);
+        if(!(valorProjetoRrt>=0)||!(valorExecucaoRrt>=0)){toast('Informe o valor das duas RRTs (Projeto e Execução), ou deixe os dois em branco para configurar depois');return;}
+        projeto.rrts=[
+          {id:uid(), tipo:'projeto', valor:Math.round(valorProjetoRrt*100)/100, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()},
+          {id:uid(), tipo:'execucao', valor:Math.round(valorExecucaoRrt*100)/100, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()},
+        ];
+      }
+    } else {
+      const tipoUnica=document.querySelector('input[name="newProjRrtTipoUnica"]:checked')?.value||'projeto';
+      const valorUnicaRaw=document.getElementById('newProjRrtUnicaValor').value;
+      if(valorUnicaRaw!==''){
+        const valorUnica=parseFloat(valorUnicaRaw);
+        if(!(valorUnica>=0)){toast('Informe um valor de RRT válido, ou deixe em branco para configurar depois');return;}
+        projeto.rrts=[{id:uid(), tipo:tipoUnica, valor:Math.round(valorUnica*100)/100, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()}];
+      }
+    }
     // Campos financeiros de entrada/parcelamento só se aplicam a projeto
     // contratado (projeto potencial continua só pipeline, sem gerar caixa).
     const valorEntradaRaw=document.getElementById('newProjEntradaValor').value;
@@ -8777,6 +9149,33 @@ function addOfficeProjeto(){
   if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
   toast('Projeto adicionado!');
 }
+const RRT_TIPO_LABEL={projeto:'RRT de Projeto', execucao:'RRT de Execução'};
+const RRT_STATUS_LABEL={prevista:'Prevista', emitida:'Emitida', paga:'Paga'};
+function renderProjetoRrtRows(p){
+  const rows=(p.rrts||[]).map(r=>`
+    <div class="item-row">
+      <div class="item-row-info">
+        <div class="item-row-name">${RRT_TIPO_LABEL[r.tipo]||r.tipo}</div>
+        <div class="item-row-meta">
+          <input type="number" id="eRrtValor_${r.id}" value="${r.valor}" min="0" step="0.01" style="width:110px;display:inline-block">
+          <select id="eRrtStatus_${r.id}" style="display:inline-block;width:auto">
+            ${Object.entries(RRT_STATUS_LABEL).map(([v,l])=>`<option value="${v}" ${r.status===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+          Nº <input type="text" id="eRrtNumero_${r.id}" value="${esc(r.numero||'')}" style="width:90px;display:inline-block">
+          Emissão <input type="date" id="eRrtDataEmissao_${r.id}" value="${r.dataEmissao||''}" style="display:inline-block">
+          Pagamento <input type="date" id="eRrtDataPagamento_${r.id}" value="${r.dataPagamento||''}" style="display:inline-block">
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="saveProjetoRRT('${p.id}','${r.id}')">Salvar RRT</button>
+      <button class="btn btn-ghost btn-sm" onclick="delProjetoRRT('${p.id}','${r.id}')">🗑</button>
+    </div>`).join('') || '<div class="info-box">RRT não configurada para este projeto.</div>';
+  const tiposPresentes=(p.rrts||[]).map(r=>r.tipo);
+  const podeAdicionar=(p.rrts||[]).length<2;
+  const addBtns=[];
+  if(podeAdicionar && !tiposPresentes.includes('projeto')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','projeto')">+ RRT de Projeto</button>`);
+  if(podeAdicionar && !tiposPresentes.includes('execucao')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','execucao')">+ RRT de Execução</button>`);
+  return `<div class="card-title" style="font-size:14px;margin-top:14px">RRT do projeto</div>${rows}<div style="margin-top:8px">${addBtns.join(' ')}</div>`;
+}
 function openEditOfficeProjeto(id){
   const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
   const statusLabel={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
@@ -8794,11 +9193,59 @@ function openEditOfficeProjeto(id){
       <div class="form-group full"><label>Data do contrato</label><input type="date" id="eProjData" value="${p.dataContrato||''}"></div>
       <div class="form-group full"><label>Observações</label><input type="text" id="eProjObs" value="${esc(p.observacao||'')}"></div>
     </div>
+    ${projetoUsaRegraV2(p) ? renderProjetoRrtRows(p) : '<div class="info-box" style="margin-top:10px">Projeto na regra de distribuição legada — sem gestão de RRT nesta tela.</div>'}
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="saveEditOfficeProjeto('${id}')">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
+}
+// RRT nunca é adicionada automaticamente (seção "RRT DO PROJETO" — nunca uma
+// terceira) — validação dupla: no máximo 2 registros e nunca dois do mesmo
+// tipo. Prefill com off.rrtValorPadrao (não inventa se ainda não configurado
+// — cai em 0, editável). Reabre o modal pra refletir o novo registro e
+// resincroniza a distribuição dos recebíveis ainda não realizados.
+function addProjetoRRT(projetoId, tipo){
+  const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
+  if(!p.rrts) p.rrts=[];
+  if(p.rrts.length>=2){ toast('Este projeto já tem duas RRTs — o máximo permitido'); return; }
+  if(p.rrts.some(r=>r.tipo===tipo)){ toast('Este projeto já tem uma RRT desse tipo'); return; }
+  const padrao=getOfficeRrtValorPadrao();
+  p.rrts.push({id:uid(), tipo, valor:padrao===null?0:padrao, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()});
+  resyncProjectV2(projetoId);
+  scheduleSave();openEditOfficeProjeto(projetoId);renderOfficeProjetosTab();renderEscritorioResumo();
+  toast('RRT adicionada!');
+}
+function saveProjetoRRT(projetoId, rrtId){
+  const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
+  const r=(p.rrts||[]).find(x=>x.id===rrtId); if(!r) return;
+  const valor=parseFloat(document.getElementById('eRrtValor_'+rrtId).value);
+  if(!(valor>=0)){ toast('Informe um valor válido para a RRT'); return; }
+  r.valor=Math.round(valor*100)/100;
+  r.status=document.getElementById('eRrtStatus_'+rrtId).value;
+  r.numero=document.getElementById('eRrtNumero_'+rrtId).value.trim();
+  r.dataEmissao=document.getElementById('eRrtDataEmissao_'+rrtId).value||null;
+  r.dataPagamento=document.getElementById('eRrtDataPagamento_'+rrtId).value||null;
+  resyncProjectV2(projetoId);
+  scheduleSave();openEditOfficeProjeto(projetoId);renderOfficeProjetosTab();renderEscritorioResumo();
+  toast('RRT atualizada!');
+}
+function delProjetoRRT(projetoId, rrtId){
+  const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
+  const r=(p.rrts||[]).find(x=>x.id===rrtId); if(!r) return;
+  // RRT já paga é histórico financeiro (pagamento real já ocorreu) — nunca
+  // excluída, mesma filosofia de imutabilidade do resto do Office.
+  if(r.status==='paga'){ toast('Esta RRT já foi paga e não pode ser excluída — é histórico financeiro'); return; }
+  p.rrts=(p.rrts||[]).filter(x=>x.id!==rrtId);
+  resyncProjectV2(projetoId);
+  scheduleSave();openEditOfficeProjeto(projetoId);renderOfficeProjetosTab();renderEscritorioResumo();
+  toast('RRT removida');
+}
+// Recalcula a distribuição de TODOS os recebíveis do projeto (idempotente —
+// recebíveis já congelados/realizados nunca são alterados por isso, só os
+// ainda 'previsto' que passam a existir/mudar de valor pra frente).
+function resyncProjectV2(projetoId){
+  (state.office.recebiveis||[]).filter(r=>r.projetoId===projetoId).forEach(r=>syncDerivedPersonalTransfer(r.id));
 }
 function saveEditOfficeProjeto(id){
   const p=(state.office.projetos||[]).find(x=>x.id===id);if(!p)return;
@@ -8809,10 +9256,13 @@ function saveEditOfficeProjeto(id){
   p.status=document.getElementById('eProjStatus').value;
   p.dataContrato=document.getElementById('eProjData').value||null;
   p.observacao=document.getElementById('eProjObs').value.trim();
-  // Mudou de/para 'contratado': os repasses derivados dos recebíveis deste
-  // projeto precisam ser recalculados (podem passar a existir ou a ser
-  // cancelados, conforme PJ02/PJ05).
-  if(statusAntigo!==p.status){
+  // Mudou de/para 'contratado', OU o valor do contrato mudou (regra v2 —
+  // imposto/RRT/distribuição dependem dele): os repasses derivados dos
+  // recebíveis deste projeto precisam ser recalculados (podem passar a
+  // existir, mudar de valor ou ser cancelados, conforme PJ02/PJ05). Nunca
+  // altera um recebível já congelado/realizado (freezeRecebivelProvisionadoV2/
+  // repasse 'recebido' protegem isso internamente).
+  if(statusAntigo!==p.status || projetoUsaRegraV2(p)){
     (state.office.recebiveis||[]).filter(r=>r.projetoId===id).forEach(r=>syncDerivedPersonalTransfer(r.id));
   }
   scheduleSave();closeModal();renderOfficeProjetosTab();renderEscritorioResumo();toast('Projeto atualizado!');
@@ -9280,7 +9730,32 @@ function renderOfficeConfigTab(){
       <div class="item-row-meta" style="margin-top:8px">Total da distribuição: <strong>${validacao.totalPercent===null?'—':validacao.totalPercent+'%'}</strong></div>
       ${(!validacao.valid) ? `<div class="info-box" style="margin-top:8px;border-color:var(--warn)">⚠ ${validacao.reason==='total_diferente_de_100' ? 'A distribuição precisa totalizar exatamente 100%.' : 'Há um percentual inválido — use apenas valores numéricos entre 0 e 100.'} Uma configuração assim nunca é salva nem usada para gerar repasse.</div>` : ''}
       <button class="btn btn-primary mt-16" onclick="saveOfficeRegrasDistribuicao()">Salvar Regras</button>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-header"><div class="card-title">Regra de Distribuição Líquida (projetos novos)</div></div>
+      <div class="info-box" style="margin-bottom:10px">Imposto e RRT são deduzidos do contrato ANTES da divisão. Só a receita líquida entra nos percentuais fixos: Repasse pessoal 65% · Operação 15% · Reserva de crescimento 10% · Capital de giro 7% · Marketing 3%.</div>
+      <div class="form-grid">
+        <div class="form-group"><label>Imposto (%)</label><input type="number" id="offImpostoPercentual" value="${getOfficeImpostoPercentual()}" min="0" max="100" step="0.1"></div>
+        <div class="form-group"><label>Valor vigente da RRT (R$)</label><input type="number" id="offRrtValorPadrao" value="${getOfficeRrtValorPadrao()===null?'':getOfficeRrtValorPadrao()}" min="0" step="0.01" placeholder="não configurado"></div>
+      </div>
+      <div class="item-row-meta" style="margin-top:6px">O valor vigente é só o preenchimento inicial de uma RRT nova — nunca altera RRTs já registradas em projetos.</div>
+      <button class="btn btn-primary mt-16" onclick="saveOfficeRegraLiquida()">Salvar</button>
     </div>`;
+}
+function saveOfficeRegraLiquida(){
+  const impostoRaw=document.getElementById('offImpostoPercentual').value;
+  const imposto=impostoRaw===''?OFFICE_IMPOSTO_PERCENTUAL_PADRAO:parseFloat(impostoRaw);
+  if(!Number.isFinite(imposto)||imposto<0||imposto>100){ toast('Informe um percentual de imposto válido (0 a 100)'); return; }
+  const rrtRaw=document.getElementById('offRrtValorPadrao').value;
+  const rrtValorPadrao=rrtRaw===''?null:parseFloat(rrtRaw);
+  if(rrtValorPadrao!==null && (!Number.isFinite(rrtValorPadrao)||rrtValorPadrao<0)){ toast('Informe um valor de RRT válido'); return; }
+  state.office.impostoPercentual=imposto;
+  state.office.rrtValorPadrao=rrtValorPadrao;
+  // Mudar o imposto afeta recebíveis ainda não realizados de TODOS os
+  // projetos v2 (nunca os já congelados/realizados) — resincroniza todos.
+  (state.office.projetos||[]).filter(projetoUsaRegraV2).forEach(p=>resyncProjectV2(p.id));
+  scheduleSave();renderOfficeConfigTab();renderOfficeProjetosTab();renderEscritorioResumo();
+  toast('Regra de distribuição líquida atualizada!');
 }
 function addOfficeConta(){
   const name=document.getElementById('newOContaName').value.trim();
