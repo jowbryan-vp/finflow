@@ -170,6 +170,19 @@ const FILES = [
   // de dataCompra/createdAt, garantindo o mesmo resultado com a entrada
   // invertida.
   'gate5-audit-fixes-office-cutoff-order.test.mjs',
+  // Gate 5 — identificação bancária e consulta unificada de contas
+  // (docs/gates/GATE-5-ACCOUNT-IDENTIFICATION-UNIFIED-DIRECTORY.md, base
+  // 61dd401): campos opcionais `agencia`/`numeroConta` (texto, nunca number)
+  // em state.contas e state.office.contas, preservando zero à esquerda,
+  // hífen e dígito verificador; helper único contaLabelHTML monta o rótulo
+  // escapado reaproveitado em todas as listas/seletores de conta; card
+  // "Todas as contas" na página Contas mostra pessoal + escritório lado a
+  // lado, cada um com o saldo do motor correspondente, com Total pessoal e
+  // Total do escritório SEPARADOS (sem total consolidado); nenhuma conta
+  // empresarial aparece em seletor pessoal e nenhuma conta pessoal aparece
+  // em seletor exclusivamente empresarial; nenhuma mistura entre os motores
+  // financeiros.
+  'gate5-account-identification.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

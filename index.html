@@ -1106,13 +1106,23 @@ select option{background:var(--card)}
           <div class="card">
             <div class="card-header"><div class="card-title">Nova Conta Bancária</div></div>
             <div class="form-grid">
-              <div class="form-group full"><label>Nome</label><input type="text" id="newContaName" placeholder="Ex: Mercado Pago, Nubank, Inter"></div>
+              <div class="form-group full"><label>Nome / banco</label><input type="text" id="newContaName" placeholder="Ex: Mercado Pago, Nubank, Inter"></div>
+              <div class="form-group"><label>Agência (opcional)</label><input type="text" id="newContaAgencia" placeholder="Ex: 0001"></div>
+              <div class="form-group"><label>Conta (opcional)</label><input type="text" id="newContaNumero" placeholder="Ex: 001234-5"></div>
               <div class="form-group"><label>Cor</label><input type="color" id="newContaColor" value="#38e2b4" style="height:38px;padding:4px"></div>
               <div class="form-group"><label>Saldo inicial</label><input type="number" id="newContaSaldoInicial" placeholder="0,00" step="0.01"></div>
             </div>
             <button class="btn btn-primary mt-16" onclick="addConta()">Adicionar Conta</button>
           </div>
           <div class="card"><div class="card-header"><div class="card-title">Contas Cadastradas</div><button class="btn btn-ghost btn-sm" onclick="openTransferenciaModal()">⇄ Transferir entre Contas</button></div><div id="contasList"></div></div>
+        </div>
+        <div class="card mt-20">
+          <div class="card-header"><div class="card-title">Todas as contas</div><div class="card-sub">Consulta pessoal + escritório lado a lado — os patrimônios continuam separados, nunca somados entre si.</div></div>
+          <div id="todasContasList"></div>
+          <div class="mini-grid" style="grid-template-columns:repeat(2,1fr);margin-top:12px">
+            <div class="mini-tile"><div class="mini-label">Total pessoal</div><div class="mini-value" id="todasContasTotalPessoal">R$ 0,00</div></div>
+            <div class="mini-tile"><div class="mini-label">Total do escritório</div><div class="mini-value" id="todasContasTotalEscritorio">R$ 0,00</div></div>
+          </div>
         </div>
         <div class="card mt-20">
           <div class="card-header"><div class="card-title">Histórico de Transferências</div></div>
@@ -1764,6 +1774,20 @@ function updateFaturaPreview(){
 // descrição/nome com aspas quebra o atributo HTML (e corrompe o modal), e com
 // `<`/`>` pode injetar marcação/scripts arbitrários.
 function esc(s){ return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// Rótulo de identificação de uma conta (pessoal ou empresarial) pra listas e
+// seletores (Gate 5 — docs/gates/GATE-5-ACCOUNT-IDENTIFICATION-UNIFIED-DIRECTORY.md,
+// seção 2): nome/apelido + agência/número quando informados, sempre escapado
+// — ponto único de montagem pra nunca escapar diferente em cada lugar do
+// arquivo. agencia/numeroConta são só texto (nunca number): preserva zero à
+// esquerda, hífen e dígito verificador tal como digitado; nunca formam
+// chave, nunca entram em cálculo. Quando os dois estão vazios, mantém a
+// apresentação compacta anterior — só o nome, sem separador solto.
+function contaLabelHTML(c){
+  const partes=[];
+  if(c.agencia) partes.push(`Ag ${esc(c.agencia)}`);
+  if(c.numeroConta) partes.push(`Conta ${esc(c.numeroConta)}`);
+  return partes.length ? `${esc(c.name)} · ${partes.join(' · ')}` : esc(c.name);
+}
 // Escapa texto do usuário quando é embutido como argumento de string dentro de um
 // onclick="...('${valor}')" — sem isso, um apóstrofo no texto (ex: nome de
 // subcategoria) fecha a string JS antes da hora e quebra o handler.
@@ -3486,7 +3510,7 @@ function toggleContribuicaoPaga(){
 function openPagarContribuicaoModal(){
   const valor=calcContribuicao(currentMonth,currentYear);
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Pagar Contribuição';
   document.getElementById('modalBody').innerHTML=`
@@ -3547,7 +3571,7 @@ function openPagarFaturaModal(cardId,mesParam,anoParam){
   // (ver toggleFaturaPaga) — só o pagamento de uma fatura vazia é bloqueado.
   if(!(valor>0)){ toast('Não há valor nessa fatura para pagar'); return; }
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Pagar Fatura — '+(card?.name||cardId);
   document.getElementById('modalBody').innerHTML=`
@@ -4438,7 +4462,7 @@ function renderReceitas(){
   const recContaSel=document.getElementById('recConta');
   if(recContaSel){
     recContaSel.innerHTML = state.contas.length
-      ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+      ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
   }
   let recs=getReceitasForMonth(currentMonth,currentYear);
@@ -4678,7 +4702,7 @@ function openEditReceita(id){
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
-      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Receita';
   document.getElementById('modalBody').innerHTML=`
@@ -4772,7 +4796,7 @@ function openEditReceitaNovoModelo(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
-      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Receita';
   if(r.recorrencia){
@@ -4897,7 +4921,7 @@ function populateDespForma(){
   const contaSel=document.getElementById('despConta');
   if(contaSel){
     contaSel.innerHTML = state.contas.length
-      ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+      ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
   }
   // Data da compra: preenche com a data real de hoje por padrão (editável) —
@@ -5380,7 +5404,7 @@ function openEditDespesa(id){
   const cardOpts=state.cards.map(c=>`<option value="${c.id}" ${d.cartao===c.id?'selected':''}>${c.name}</option>`).join('');
   const contaOpts = state.contas.length
     ? `<option value="" ${!d.conta?'selected':''}>— Sem conta vinculada —</option>` +
-      state.contas.map(c=>`<option value="${c.id}" ${d.conta===c.id?'selected':''}>${c.name}</option>`).join('')
+      state.contas.map(c=>`<option value="${c.id}" ${d.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   const cat=state.categories.find(c=>c.id===d.cat);
   const subOpts=(cat?.subs||[]).map(s=>`<option value="${s}" ${d.subcat===s?'selected':''}>${s}</option>`).join('');
@@ -6260,12 +6284,20 @@ function addConta(){
   const name=document.getElementById('newContaName').value.trim();
   const color=document.getElementById('newContaColor').value;
   const saldoInicial=parseFloat(document.getElementById('newContaSaldoInicial').value)||0;
+  // Agência/conta são opcionais e sempre texto — nunca Number(): preserva
+  // zero à esquerda, hífen e dígito verificador tal como digitado. Só trim
+  // nas pontas (Gate 5, seção 1); vazio vira '' (não persiste identificação
+  // inventada, nem sequer o campo com espaços).
+  const agencia=(document.getElementById('newContaAgencia')?.value||'').trim();
+  const numeroConta=(document.getElementById('newContaNumero')?.value||'').trim();
   if(!name){toast('Informe o nome');return;}
   const id=name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'')+'_'+uid().slice(-4);
   if(state.contas.find(c=>c.id===id)){toast('Já existe');return;}
-  state.contas.push({id,name,color,saldoInicial});
+  state.contas.push({id,name,color,saldoInicial,agencia,numeroConta});
   scheduleSave();renderContas();
   document.getElementById('newContaName').value='';
+  if(document.getElementById('newContaAgencia')) document.getElementById('newContaAgencia').value='';
+  if(document.getElementById('newContaNumero')) document.getElementById('newContaNumero').value='';
   document.getElementById('newContaSaldoInicial').value='';
   toast('Conta adicionada!');
 }
@@ -6281,7 +6313,9 @@ function openEditConta(id){
   document.getElementById('modalTitle').textContent='Editar Conta';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Nome</label><input type="text" id="eContaName" value="${esc(c.name)}"></div>
+      <div class="form-group full"><label>Nome / banco</label><input type="text" id="eContaName" value="${esc(c.name)}"></div>
+      <div class="form-group"><label>Agência (opcional)</label><input type="text" id="eContaAgencia" value="${esc(c.agencia||'')}"></div>
+      <div class="form-group"><label>Conta (opcional)</label><input type="text" id="eContaNumero" value="${esc(c.numeroConta||'')}"></div>
       <div class="form-group"><label>Cor</label><input type="color" id="eContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
@@ -6294,6 +6328,8 @@ function openEditConta(id){
 function saveEditConta(id){
   const c=state.contas.find(x=>x.id===id);if(!c)return;
   c.name=document.getElementById('eContaName').value.trim()||c.name;
+  c.agencia=(document.getElementById('eContaAgencia')?.value||'').trim();
+  c.numeroConta=(document.getElementById('eContaNumero')?.value||'').trim();
   c.color=document.getElementById('eContaColor').value;
   c.saldoInicial=parseFloat(document.getElementById('eContaSaldoInicial').value)||0;
   scheduleSave();closeModal();renderContas();toast('Conta atualizada!');
@@ -6530,7 +6566,7 @@ function renderContas(){
     html+=`<div class="item-row">
       <div style="width:16px;height:16px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
       <div class="item-row-info">
-        <div class="item-row-name">${esc(c.name)}</div>
+        <div class="item-row-name">${contaLabelHTML(c)}</div>
         <div class="item-row-meta">Saldo inicial: ${fmtBRL(c.saldoInicial)}</div>
       </div>
       <div class="item-row-val ${saldo>=0?'pos':'neg'}" style="font-size:15px">${fmtBRL(saldo)}</div>
@@ -6540,7 +6576,46 @@ function renderContas(){
     </div>`;
   });
   html+='</div>';document.getElementById('contasList').innerHTML=html;
+  renderTodasAsContas();
   renderTransferencias();
+}
+
+// Gate 5 (docs/gates/GATE-5-ACCOUNT-IDENTIFICATION-UNIFIED-DIRECTORY.md,
+// seção 3): consulta DERIVADA e só de leitura — nunca copia, move ou
+// duplica um registro entre state.contas e state.office.contas, nunca
+// aparece como opção em nenhum seletor de pagamento/transferência. Mostra
+// os dois patrimônios lado a lado, mas os totais ficam sempre separados —
+// nunca um total geral somando pessoal + escritório (seção 4).
+function renderTodasAsContas(){
+  const el=document.getElementById('todasContasList'); if(!el) return;
+  const pessoais=(state.contas||[]).map(c=>({conta:c,ctx:'pessoal',saldo:calcSaldoConta(c.id)}));
+  const escritorio=((state.office&&state.office.contas)||[]).map(c=>({conta:c,ctx:'escritorio',saldo:calcSaldoOfficeConta(c.id)}));
+  const todas=[...pessoais,...escritorio];
+  if(!todas.length){
+    el.innerHTML='<div class="empty-state">Nenhuma conta cadastrada ainda.</div>';
+  } else {
+    el.innerHTML='<div class="item-list">'+todas.map(({conta:c,ctx,saldo})=>{
+      const badge=ctx==='pessoal'?'<span class="badge badge-blue">Pessoal</span>':'<span class="badge badge-yellow">Escritório</span>';
+      const irPara=ctx==='pessoal'?`navigate('contas')`:`irParaContasEscritorio()`;
+      return `<div class="item-row" style="cursor:pointer" onclick="${irPara}">
+        <div style="width:14px;height:14px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
+        <div class="item-row-info">
+          <div class="item-row-name">${contaLabelHTML(c)} ${badge}</div>
+        </div>
+        <div class="item-row-val ${saldo>=0?'pos':'neg'}" style="font-size:15px">${fmtBRL(saldo)}</div>
+      </div>`;
+    }).join('')+'</div>';
+  }
+  const totalPessoal=pessoais.reduce((s,x)=>s+x.saldo,0);
+  const totalEscritorio=escritorio.reduce((s,x)=>s+x.saldo,0);
+  const elPessoal=document.getElementById('todasContasTotalPessoal'); if(elPessoal) elPessoal.textContent=fmtBRL(totalPessoal);
+  const elEscritorio=document.getElementById('todasContasTotalEscritorio'); if(elEscritorio) elEscritorio.textContent=fmtBRL(totalEscritorio);
+}
+// Atalho de navegação da consulta conjunta pra Caixa do Escritório → Contas
+// & Regras — não cria um terceiro cadastro, só leva pro local certo.
+function irParaContasEscritorio(){
+  officeSubTab='config';
+  navigate('escritorio');
 }
 
 // Lista as transferências (movimentacoesContas ligadas por transferId), uma
@@ -6598,7 +6673,7 @@ function renderSaldoContasCard(){
     return `<div style="background:linear-gradient(135deg,${hexToRgba(c.color,.16)},${hexToRgba(c.color,.04)});border:1px solid ${hexToRgba(c.color,.3)};border-radius:var(--radius);padding:14px;min-width:0">
       <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
         <div style="width:9px;height:9px;border-radius:3px;background:${c.color};flex-shrink:0"></div>
-        <div style="font-size:12px;font-weight:600;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.name)}</div>
+        <div style="font-size:12px;font-weight:600;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${contaLabelHTML(c)}</div>
       </div>
       <div class="mono" style="font-size:17px;font-weight:700;color:${saldo>=0?'var(--text)':'var(--danger)'}">${fmtBRL(saldo)}</div>
     </div>`;
@@ -7615,7 +7690,7 @@ function getSaldoTotalCofrinho(){
 function openDepositarCofrinho(){
   const opts=state.cofrinhos.map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Depositar no Cofrinho';
   document.getElementById('modalBody').innerHTML=`
@@ -8129,7 +8204,7 @@ function openResgatarCofrinho(cofrinhoId){
   const saldoDisp=getSaldoCofrinho(cofrinhoId);
   const nomeCofr=cofr?cofr.name:'Cofrinho';
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Resgatar do '+nomeCofr;
   const mesOpts=MONTHS.map((m,i)=>'<option value="'+(i+1)+'"'+(i+1===currentMonth?' selected':'')+'>'+m+'</option>').join('');
@@ -8510,7 +8585,7 @@ function renderOfficeProjetosTab(){
   const statusBadge={potencial:'badge-yellow',contratado:'badge-blue',concluido:'badge-ok',cancelado:'badge-red'};
   const projetos=(state.office.projetos||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   const contaOptsProj = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const rows=projetos.map(p=>{
     const recebiveisDoProjeto=(state.office.recebiveis||[]).filter(r=>r.projetoId===p.id);
@@ -8763,7 +8838,7 @@ function renderOfficeRecebiveisTab(){
     ? state.office.projetos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${statusLabelProj[p.status]||p.status})</option>`).join('')
     : `<option value="">— Cadastre um projeto primeiro —</option>`;
   const contaOpts = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const estadoLabel={previsto:'Previsto',recebido:'Recebido',cancelado:'Cancelado'};
   const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
@@ -8815,7 +8890,7 @@ function addOfficeRecebivel(){
 function openEditOfficeRecebivel(id){
   const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
   const contaOpts = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}" ${r.contaDestino===c.id?'selected':''}>${esc(c.name)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}" ${r.contaDestino===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Recebível';
   document.getElementById('modalBody').innerHTML=`
@@ -8873,7 +8948,7 @@ function delOfficeRecebivel(id){
 function renderOfficeDespesasTab(){
   const el=document.getElementById('escritorioSubContent'); if(!el) return;
   const contaOpts = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const projetoOpts = `<option value="">— Sem projeto vinculado —</option>` + (state.office.projetos||[]).map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('');
   const despesas=(state.office.despesas||[]).slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
@@ -9005,7 +9080,7 @@ function delOfficeReserva(id){
 }
 function openAplicarOfficeReserva(reservaId){
   const contaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Aplicar na Reserva';
   document.getElementById('modalBody').innerHTML=`
@@ -9037,7 +9112,7 @@ function openResgatarOfficeReserva(reservaId){
   const r=(state.office.reservas||[]).find(x=>x.id===reservaId); if(!r) return;
   const saldo=getSaldoOfficeReserva(reservaId);
   const contaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Resgatar da Reserva — '+r.nome;
   document.getElementById('modalBody').innerHTML=`
@@ -9070,10 +9145,10 @@ function confirmarResgatarOfficeReserva(reservaId){
 function renderOfficeRepassesTab(){
   const el=document.getElementById('escritorioSubContent'); if(!el) return;
   const officeContaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const personalContaOpts=(state.contas||[]).length
-    ? state.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
   const estadoLabel={previsto:'Previsto',recebido:'Realizado',cancelado:'Cancelado'};
   const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
@@ -9113,10 +9188,10 @@ function renderOfficeRepassesTab(){
 function openRealizarOfficeRepasse(repasseId){
   const rp=(state.office.repasses||[]).find(x=>x.id===repasseId); if(!rp) return;
   const officeContaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${esc(c.name)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const personalContaOpts=(state.contas||[]).length
-    ? state.contas.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Realizar Repasse';
   document.getElementById('modalBody').innerHTML=`
@@ -9169,7 +9244,7 @@ function renderOfficeConfigTab(){
   const contas=(state.office.contas||[]);
   const rowsContas=contas.map(c=>`<div class="item-row">
       <div style="width:12px;height:12px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
-      <div class="item-row-info"><div class="item-row-name">${esc(c.name)}</div></div>
+      <div class="item-row-info"><div class="item-row-name">${contaLabelHTML(c)}</div></div>
       <div class="item-row-val muted">${fmtBRL(calcSaldoOfficeConta(c.id))}</div>
       <button class="btn btn-ghost btn-sm" onclick="openEditOfficeConta('${c.id}')">Editar</button>
       <button class="btn btn-ghost btn-sm" onclick="delOfficeConta('${c.id}')">🗑</button>
@@ -9186,7 +9261,9 @@ function renderOfficeConfigTab(){
         <div class="card-header"><div class="card-title">Nova Conta Empresarial</div></div>
         <div class="info-box" style="margin-bottom:10px">Contas do escritório são separadas das suas contas pessoais — nunca somadas ao saldo pessoal.</div>
         <div class="form-grid">
-          <div class="form-group full"><label>Nome</label><input type="text" id="newOContaName" placeholder="Ex: Conta PJ, Caixa do Escritório"></div>
+          <div class="form-group full"><label>Nome / banco</label><input type="text" id="newOContaName" placeholder="Ex: Conta PJ, Caixa do Escritório"></div>
+          <div class="form-group"><label>Agência (opcional)</label><input type="text" id="newOContaAgencia" placeholder="Ex: 0001"></div>
+          <div class="form-group"><label>Conta (opcional)</label><input type="text" id="newOContaNumero" placeholder="Ex: 001234-5"></div>
           <div class="form-group"><label>Cor</label><input type="color" id="newOContaColor" value="#ff9900" style="height:38px;padding:4px"></div>
           <div class="form-group"><label>Saldo inicial</label><input type="number" id="newOContaSaldoInicial" placeholder="0,00" step="0.01"></div>
         </div>
@@ -9210,10 +9287,15 @@ function addOfficeConta(){
   if(!name){toast('Informe o nome');return;}
   const color=document.getElementById('newOContaColor').value;
   const saldoInicial=parseFloat(document.getElementById('newOContaSaldoInicial').value)||0;
+  const agencia=(document.getElementById('newOContaAgencia')?.value||'').trim();
+  const numeroConta=(document.getElementById('newOContaNumero')?.value||'').trim();
   const id='oconta_'+name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'')+'_'+uid().slice(-4);
-  state.office.contas.push({id,name,color,saldoInicial});
+  state.office.contas.push({id,name,color,saldoInicial,agencia,numeroConta});
   scheduleSave();renderOfficeConfigTab();renderEscritorioResumo();
-  document.getElementById('newOContaName').value=''; document.getElementById('newOContaSaldoInicial').value='';
+  document.getElementById('newOContaName').value='';
+  if(document.getElementById('newOContaAgencia')) document.getElementById('newOContaAgencia').value='';
+  if(document.getElementById('newOContaNumero')) document.getElementById('newOContaNumero').value='';
+  document.getElementById('newOContaSaldoInicial').value='';
   toast('Conta empresarial adicionada!');
 }
 function delOfficeConta(id){
@@ -9245,7 +9327,9 @@ function openEditOfficeConta(id){
   document.getElementById('modalTitle').textContent='Editar Conta Empresarial';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
-      <div class="form-group full"><label>Nome</label><input type="text" id="eOContaName" value="${esc(c.name)}"></div>
+      <div class="form-group full"><label>Nome / banco</label><input type="text" id="eOContaName" value="${esc(c.name)}"></div>
+      <div class="form-group"><label>Agência (opcional)</label><input type="text" id="eOContaAgencia" value="${esc(c.agencia||'')}"></div>
+      <div class="form-group"><label>Conta (opcional)</label><input type="text" id="eOContaNumero" value="${esc(c.numeroConta||'')}"></div>
       <div class="form-group"><label>Cor</label><input type="color" id="eOContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eOContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
@@ -9258,6 +9342,8 @@ function openEditOfficeConta(id){
 function saveEditOfficeConta(id){
   const c=(state.office.contas||[]).find(x=>x.id===id);if(!c)return;
   c.name=document.getElementById('eOContaName').value.trim()||c.name;
+  c.agencia=(document.getElementById('eOContaAgencia')?.value||'').trim();
+  c.numeroConta=(document.getElementById('eOContaNumero')?.value||'').trim();
   c.color=document.getElementById('eOContaColor').value;
   c.saldoInicial=parseFloat(document.getElementById('eOContaSaldoInicial').value)||0;
   scheduleSave();closeModal();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta atualizada!');
