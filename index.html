@@ -3200,18 +3200,69 @@ function getProjetoProvisionadoRealizadoCent(projetoId, excluindoRecebivelId){
     .reduce((s,r)=>s+(r.provisionadoRealizadoCent||0),0);
 }
 
+// Soma, em centavos, o distribuível já congelado nos OUTROS recebíveis já
+// realizados deste projeto — mesma filosofia de
+// getProjetoProvisionadoRealizadoCent, pro lado distribuível. Base da
+// reconciliação cumulativa por destino (achado P2 da auditoria pós-Gate 6,
+// ver freezeRecebivelProvisionadoV2 abaixo).
+function getProjetoDistribuivelRealizadoCent(projetoId, excluindoRecebivelId){
+  return (state.office.recebiveis||[])
+    .filter(r=>r.projetoId===projetoId && r.id!==excluindoRecebivelId && r.distribuivelRealizadoCent!==undefined && r.distribuivelRealizadoCent!==null)
+    .reduce((s,r)=>s+(r.distribuivelRealizadoCent||0),0);
+}
+// Soma, em centavos, quanto cada um dos 5 destinos já foi EFETIVAMENTE
+// alocado pelos OUTROS recebíveis já processados deste projeto — repasse já
+// criado (qualquer estado exceto cancelado) + reserva já aplicada
+// (movimentacoesReservas.origemRecebivelId). Nunca inclui o recebível
+// excluído (ele ainda não tem repasse/reserva próprios na primeira vez que é
+// congelado). Base da reconciliação cumulativa: como esses valores só vêm de
+// registros JÁ CRIADOS e imutáveis, essa soma nunca muda pra um recebível já
+// congelado, então o resultado da reconciliação abaixo é o mesmo não importa
+// quantas vezes/​em que ordem for recalculado.
+function getProjetoAlocadoPorDestinoCent(projetoId, excluindoRecebivelId){
+  const recebivelIds=new Set((state.office.recebiveis||[]).filter(r=>r.projetoId===projetoId && r.id!==excluindoRecebivelId).map(r=>r.id));
+  const porDestino={repasse_pessoal:0, operacao:0, reserva_crescimento:0, capital_giro:0, marketing:0};
+  (state.office.repasses||[]).forEach(rp=>{
+    if(rp.estado!=='cancelado' && recebivelIds.has(rp.recebivelId)) porDestino.repasse_pessoal+=Math.round((rp.valor||0)*100);
+  });
+  (state.office.movimentacoesReservas||[]).forEach(m=>{
+    if(m.origemRecebivelId && recebivelIds.has(m.origemRecebivelId) && porDestino[m.origemDestino]!==undefined){
+      porDestino[m.origemDestino]+=Math.round((m.valor||0)*100);
+    }
+  });
+  return porDestino;
+}
+
 // Congela (uma única vez, na primeira vez que o recebível chega a
-// estado==='recebido') quanto desse recebível específico foi consumido pela
-// provisão de imposto+RRT do projeto, e quanto sobrou distribuível — regime
-// de prioridade ("RECEBIMENTOS PARCIAIS" do escopo): enquanto o total
-// acumulado de caixa já realizado no projeto não cobrir imposto+RRT, 100% de
-// cada entrada realizada fica provisionado (distribuivel=0); só o excedente,
-// depois de cobrir integralmente imposto+RRT, vira distribuível. Idempotente
-// por construção — chamar de novo sobre um recebível já congelado é NO-OP
-// (nunca recalcula retroativamente, mesmo que o imposto/RRT do projeto mude
-// depois). Recebíveis futuros (ainda não realizados) usam sempre o valor
-// ATUAL de imposto/RRT no momento em que forem realizados — não é
-// retroatividade, é aplicar a configuração vigente a um evento novo.
+// estado==='recebido' COM a RRT do projeto já configurada — ver
+// projetoNecessitaConfiguracaoRRT no chamador) quanto desse recebível
+// específico foi consumido pela provisão de imposto+RRT do projeto, quanto
+// sobrou distribuível, e a fatia exata de cada um dos 5 destinos — regime de
+// prioridade ("RECEBIMENTOS PARCIAIS" do escopo) pro provisionado/
+// distribuível, e RECONCILIAÇÃO CUMULATIVA (achado P2 da auditoria pós-Gate
+// 6) pro por-destino:
+//
+//   1. enquanto o total acumulado de caixa já realizado no projeto não
+//      cobrir imposto+RRT, 100% de cada entrada realizada fica provisionado
+//      (distribuivel=0); só o excedente vira distribuível.
+//   2. a fatia de cada destino NUNCA é o maior-resto aplicado isoladamente
+//      sobre o distribuível deste recebível (isso desvia a soma do projeto
+//      inteiro, um centavo por recebível). Em vez disso: recalcula o maior
+//      resto sobre o distribuível ACUMULADO (já congelado + este) e atribui
+//      a este recebível só a diferença em relação ao que os outros
+//      recebíveis já materializaram de fato (repasse criado + reserva
+//      aplicada). Isso garante, por construção, que a soma final por
+//      destino de TODOS os recebíveis de um projeto bate exatamente com
+//      distribuirReceitaLiquidaCent(distribuível total do projeto) —
+//      sempre, e independente da ordem de realização (o total final só
+//      depende do total acumulado, nunca do caminho).
+//
+// Tudo isso é congelado junto, de uma vez só — idempotente por construção
+// (chamar de novo sobre um recebível já congelado é NO-OP, nunca recalcula
+// retroativamente, mesmo que o projeto seja resincronizado por causa de
+// outro recebível/RRT/imposto). Recebíveis futuros (ainda não realizados)
+// usam sempre a configuração ATUAL no momento em que forem realizados — não
+// é retroatividade, é aplicar a configuração vigente a um evento novo.
 function freezeRecebivelProvisionadoV2(recebivel, projeto){
   if(recebivel.provisionadoRealizadoCent!==undefined && recebivel.provisionadoRealizadoCent!==null) return; // já congelado
   const projDist=calculateProjectDistributionV2(projeto);
@@ -3220,8 +3271,36 @@ function freezeRecebivelProvisionadoV2(recebivel, projeto){
   const faltaProvisionarCent=Math.max(0, totalProvisionarCent-jaProvisionadoCent);
   const valorCent=Math.round((recebivel.valor||0)*100);
   const provisionadoCent=Math.min(valorCent, faltaProvisionarCent);
+  const distribuivelCent=valorCent-provisionadoCent;
+
+  const distribuivelAnteriorCent=getProjetoDistribuivelRealizadoCent(projeto.id, recebivel.id);
+  const cumulativoCent=distribuivelAnteriorCent+distribuivelCent;
+  const cumulativoPorDestino=distribuirReceitaLiquidaCent(cumulativoCent);
+  const jaAlocadoPorDestino=getProjetoAlocadoPorDestinoCent(projeto.id, recebivel.id);
+  const porDestinoCent={};
+  Object.keys(cumulativoPorDestino).forEach(k=>{ porDestinoCent[k]=cumulativoPorDestino[k]-(jaAlocadoPorDestino[k]||0); });
+
   recebivel.provisionadoRealizadoCent=provisionadoCent;
-  recebivel.distribuivelRealizadoCent=valorCent-provisionadoCent;
+  recebivel.distribuivelRealizadoCent=distribuivelCent;
+  recebivel.porDestinoRealizadoCent=porDestinoCent;
+}
+
+// Um recebível v2 "materializado" já congelou provisão/distribuição, ou já
+// gerou repasse/reserva/receita pessoal vinculada — a partir daí seu
+// estado/valor/contaDestino/dataRecebimento ficam imutáveis (achado P1 da
+// auditoria pós-Gate 6: reverter um recebível já congelado pra 'previsto'
+// ou 'cancelado' deixava reservas "fantasmas" lastreadas por dinheiro que
+// saiu do caixa). Checa por MÚLTIPLOS sinais (não só provisionadoRealizadoCent)
+// pra proteger mesmo um estado parcial/antigo sem todos os campos.
+function recebivelV2Materializado(recebivel){
+  if(!recebivel) return false;
+  if(recebivel.provisionadoRealizadoCent!==undefined && recebivel.provisionadoRealizadoCent!==null) return true;
+  if(recebivel.distribuivelRealizadoCent!==undefined && recebivel.distribuivelRealizadoCent!==null) return true;
+  if((state.office.movimentacoesReservas||[]).some(m=>m.origemRecebivelId===recebivel.id)) return true;
+  const officeTransferId='off_'+recebivel.id;
+  if((state.office.repasses||[]).some(rp=>rp.officeTransferId===officeTransferId)) return true;
+  if(state.receitas.some(r=>r.officeTransferId===officeTransferId)) return true;
+  return false;
 }
 
 // Deriva a competência (mês/ano) da FATURA de uma compra no cartão, a partir da
@@ -8741,9 +8820,21 @@ function syncDerivedPersonalTransferV2(recebivel, projeto){
   // Repasse já efetivamente realizado — histórico imutável, nunca recalculado.
   if(repasseExistente && repasseExistente.estado==='recebido') return;
 
+  // Achado P1 (auditoria pós-Gate 6): projeto v2 contratado sem NENHUMA RRT
+  // configurada nunca materializa distribuição alguma — nem repasse pessoal
+  // nem reservas — mesmo com o recebível já em caixa real (calcSaldoOfficeConta
+  // já lê recebivel.estado diretamente, então o dinheiro entra no caixa
+  // operacional do escritório normalmente; só a DISTRIBUIÇÃO fica bloqueada).
+  // Nunca congela provisão nem cria movimentação enquanto bloqueado — nunca
+  // trata RRT ausente como R$0 pra destravar. Uma vez configurada, quem
+  // adiciona a RRT chama resyncProjectV2, que roda isso de novo e destrava
+  // (idempotente, sem duplicar).
+  if(projetoNecessitaConfiguracaoRRT(projeto)){ semRepasseAinda(); return; }
+
   freezeRecebivelProvisionadoV2(recebivel, projeto); // no-op se já congelado
-  const distribuivelCent=recebivel.distribuivelRealizadoCent||0;
-  const porDestinoCent=distribuirReceitaLiquidaCent(distribuivelCent);
+  // porDestinoRealizadoCent é congelado junto (reconciliação cumulativa,
+  // achado P2) — nunca recalculado aqui, sempre lido do valor já travado.
+  const porDestinoCent=recebivel.porDestinoRealizadoCent||{};
   const porDestino={};
   Object.keys(porDestinoCent).forEach(k=>{ porDestino[k]=Math.round(porDestinoCent[k])/100; });
 
@@ -8887,29 +8978,42 @@ function renderOfficeProjetosTab(){
     // Regra nova (v2): mostra a régua completa — valor do projeto, imposto
     // provisionado, cada RRT (Projeto/Execução), receita líquida
     // distribuível e os 5 destinos — nunca confundindo com saldo bancário
-    // disponível (INTERFACE do escopo). "RRT não configurada" é explícito,
-    // nunca um valor inventado.
+    // disponível (INTERFACE do escopo). Achado P1 (auditoria pós-Gate 6):
+    // enquanto a RRT não está configurada, a distribuição está REALMENTE
+    // bloqueada (nenhum repasse/reserva é criado — ver
+    // syncDerivedPersonalTransferV2) — a UI não pode mostrar números de
+    // "repasse pessoal"/reservas como se já estivessem sendo calculados,
+    // senão sugere uma divisão que não está de fato acontecendo.
     let detalheV2='';
     if(projetoUsaRegraV2(p)){
-      const dist=calculateProjectDistributionV2(p);
       const rrtProjeto=(p.rrts||[]).find(r=>r.tipo==='projeto');
       const rrtExecucao=(p.rrts||[]).find(r=>r.tipo==='execucao');
       const rrtLine=r=>r?`${fmtBRL(r.valor||0)} (${RRT_STATUS_LABEL[r.status]||r.status})`:'—';
       const precisaConfig=projetoNecessitaConfiguracaoRRT(p);
-      detalheV2=`<div class="item-row-meta" style="margin-top:4px">
-        <strong>Lucro-base para divisão (regra líquida):</strong>
-        Valor do projeto: ${fmtBRL(dist.receitaBruta)} ·
-        Imposto provisionado (${getOfficeImpostoPercentual()}%): ${fmtBRL(dist.impostoProvisionado)} ·
-        RRT de Projeto: ${rrtLine(rrtProjeto)} ·
-        RRT de Execução: ${rrtLine(rrtExecucao)} ·
-        Receita líquida distribuível: ${fmtBRL(dist.receitaLiquidaDistribuivel)}<br>
-        Repasse pessoal (65%): ${fmtBRL(dist.porDestino.repasse_pessoal)} ·
-        Operação (15%): ${fmtBRL(dist.porDestino.operacao)} ·
-        Reserva de crescimento (10%): ${fmtBRL(dist.porDestino.reserva_crescimento)} ·
-        Capital de giro (7%): ${fmtBRL(dist.porDestino.capital_giro)} ·
-        Marketing (3%): ${fmtBRL(dist.porDestino.marketing)}
-        ${precisaConfig?'<br><span style="color:var(--warn)">⚠ RRT não configurada — nenhuma RRT foi descontada ainda.</span>':''}
-      </div>`;
+      if(precisaConfig){
+        detalheV2=`<div class="item-row-meta" style="margin-top:4px">
+          <strong>Lucro-base para divisão (regra líquida):</strong>
+          Valor do projeto: ${fmtBRL(p.valorContrato||0)} ·
+          RRT de Projeto: ${rrtLine(rrtProjeto)} ·
+          RRT de Execução: ${rrtLine(rrtExecucao)}<br>
+          <span style="color:var(--warn)">⚠ Distribuição bloqueada: configure a RRT do projeto.</span>
+        </div>`;
+      } else {
+        const dist=calculateProjectDistributionV2(p);
+        detalheV2=`<div class="item-row-meta" style="margin-top:4px">
+          <strong>Lucro-base para divisão (regra líquida):</strong>
+          Valor do projeto: ${fmtBRL(dist.receitaBruta)} ·
+          Imposto provisionado (${getOfficeImpostoPercentual()}%): ${fmtBRL(dist.impostoProvisionado)} ·
+          RRT de Projeto: ${rrtLine(rrtProjeto)} ·
+          RRT de Execução: ${rrtLine(rrtExecucao)} ·
+          Receita líquida distribuível: ${fmtBRL(dist.receitaLiquidaDistribuivel)}<br>
+          Repasse pessoal (65%): ${fmtBRL(dist.porDestino.repasse_pessoal)} ·
+          Operação (15%): ${fmtBRL(dist.porDestino.operacao)} ·
+          Reserva de crescimento (10%): ${fmtBRL(dist.porDestino.reserva_crescimento)} ·
+          Capital de giro (7%): ${fmtBRL(dist.porDestino.capital_giro)} ·
+          Marketing (3%): ${fmtBRL(dist.porDestino.marketing)}
+        </div>`;
+      }
     }
     return `<div class="item-row">
       <div class="item-row-info">
@@ -9202,16 +9306,39 @@ function openEditOfficeProjeto(id){
 }
 // RRT nunca é adicionada automaticamente (seção "RRT DO PROJETO" — nunca uma
 // terceira) — validação dupla: no máximo 2 registros e nunca dois do mesmo
-// tipo. Prefill com off.rrtValorPadrao (não inventa se ainda não configurado
-// — cai em 0, editável). Reabre o modal pra refletir o novo registro e
-// resincroniza a distribuição dos recebíveis ainda não realizados.
+// tipo. Achado P1 (auditoria pós-Gate 6): quando off.rrtValorPadrao ainda é
+// null, NÃO cria a RRT direto com valor 0 — abre um modal pedindo o valor
+// explicitamente (prefill só quando o padrão JÁ está configurado). Um
+// valor 0 só é aceito se o usuário digitar e confirmar 0 de propósito,
+// nunca como fallback automático de um campo em branco.
 function addProjetoRRT(projetoId, tipo){
   const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
   if(!p.rrts) p.rrts=[];
   if(p.rrts.length>=2){ toast('Este projeto já tem duas RRTs — o máximo permitido'); return; }
   if(p.rrts.some(r=>r.tipo===tipo)){ toast('Este projeto já tem uma RRT desse tipo'); return; }
   const padrao=getOfficeRrtValorPadrao();
-  p.rrts.push({id:uid(), tipo, valor:padrao===null?0:padrao, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()});
+  document.getElementById('modalTitle').textContent='Nova '+(RRT_TIPO_LABEL[tipo]||tipo);
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:10px">Informe o valor desta RRT — nunca criado automaticamente com R$ 0,00.</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="novaProjRrtValor" min="0" step="0.01" placeholder="0,00" value="${padrao===null?'':padrao}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="confirmarAddProjetoRRT('${projetoId}','${tipo}')">Confirmar RRT</button>
+      <button class="btn btn-ghost" onclick="openEditOfficeProjeto('${projetoId}')">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarAddProjetoRRT(projetoId, tipo){
+  const p=(state.office.projetos||[]).find(x=>x.id===projetoId); if(!p) return;
+  if(!p.rrts) p.rrts=[];
+  if(p.rrts.length>=2){ toast('Este projeto já tem duas RRTs — o máximo permitido'); return; }
+  if(p.rrts.some(r=>r.tipo===tipo)){ toast('Este projeto já tem uma RRT desse tipo'); return; }
+  const valorRaw=document.getElementById('novaProjRrtValor').value;
+  if(valorRaw===''){ toast('Informe o valor da RRT — nunca fica em branco nem vira R$ 0,00 automaticamente'); return; }
+  const valor=parseFloat(valorRaw);
+  if(!(valor>=0)){ toast('Informe um valor de RRT válido'); return; }
+  p.rrts.push({id:uid(), tipo, valor:Math.round(valor*100)/100, status:'prevista', numero:'', dataEmissao:null, dataPagamento:null, createdAt:uid()});
   resyncProjectV2(projetoId);
   scheduleSave();openEditOfficeProjeto(projetoId);renderOfficeProjetosTab();renderEscritorioResumo();
   toast('RRT adicionada!');
@@ -9337,26 +9464,38 @@ function addOfficeRecebivel(){
   if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
   toast('Recebível adicionado!');
 }
+// Mensagem única do achado P1 (auditoria pós-Gate 6, reversão de recebível
+// materializado) — usada tanto no bloqueio de estado/cancelamento quanto no
+// bloqueio de valor/conta/data que afetariam movimentação já materializada
+// (achado explicitamente não distingue as duas mensagens).
+const RECEBIVEL_MATERIALIZADO_BLOQUEIO_MSG='Este recebimento já gerou distribuição financeira e não pode voltar para previsto ou cancelado. Registre um estorno financeiro explícito.';
 function openEditOfficeRecebivel(id){
   const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
+  const projeto=(state.office.projetos||[]).find(p=>p.id===r.projetoId);
+  // Achado P1 (auditoria pós-Gate 6): recebível v2 já materializado (gerou
+  // provisão/distribuição/repasse/reserva) trava estado/valor/conta/data na
+  // UI — mas a proteção real está em saveEditOfficeRecebivel (não basta
+  // desabilitar visualmente, ver comentário lá).
+  const materializado=projetoUsaRegraV2(projeto) && recebivelV2Materializado(r);
   const contaOpts = (state.office.contas||[]).length
     ? state.office.contas.map(c=>`<option value="${c.id}" ${r.contaDestino===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Recebível';
   document.getElementById('modalBody').innerHTML=`
+    ${materializado?`<div class="info-box" style="margin-bottom:10px;border-color:var(--warn)">⚠ ${RECEBIVEL_MATERIALIZADO_BLOQUEIO_MSG}</div>`:''}
     <div class="form-grid">
       <div class="form-group full"><label>Descrição</label><input type="text" id="eRecebDesc" value="${esc(r.descricao||'')}"></div>
-      <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecebValor" value="${r.valor}" min="0" step="0.01"></div>
+      <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecebValor" value="${r.valor}" min="0" step="0.01" ${materializado?'disabled':''}></div>
       <div class="form-group"><label>Estado</label>
-        <select id="eRecebEstado" onchange="onERecebEstadoChange()">
+        <select id="eRecebEstado" onchange="onERecebEstadoChange()" ${materializado?'disabled':''}>
           <option value="previsto" ${r.estado==='previsto'?'selected':''}>Previsto</option>
           <option value="recebido" ${r.estado==='recebido'?'selected':''}>Recebido</option>
           <option value="cancelado" ${r.estado==='cancelado'?'selected':''}>Cancelado</option>
         </select>
       </div>
       <div class="form-group full"><label>Data prevista</label><input type="date" id="eRecebDataPrevista" value="${r.dataPrevista||''}"></div>
-      <div class="form-group full" id="eRecebDataRecebimentoGroup" style="${r.estado==='recebido'?'':'display:none'}"><label>Data em que caiu na conta</label><input type="date" id="eRecebDataRecebimento" value="${r.dataRecebimento||''}"></div>
-      <div class="form-group full"><label>Conta empresarial de destino</label><select id="eRecebConta">${contaOpts}</select></div>
+      <div class="form-group full" id="eRecebDataRecebimentoGroup" style="${r.estado==='recebido'?'':'display:none'}"><label>Data em que caiu na conta</label><input type="date" id="eRecebDataRecebimento" value="${r.dataRecebimento||''}" ${materializado?'disabled':''}></div>
+      <div class="form-group full"><label>Conta empresarial de destino</label><select id="eRecebConta" ${materializado?'disabled':''}>${contaOpts}</select></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="saveEditOfficeRecebivel('${id}')">Salvar</button>
@@ -9371,12 +9510,34 @@ function onERecebEstadoChange(){
 }
 function saveEditOfficeRecebivel(id){
   const r=(state.office.recebiveis||[]).find(x=>x.id===id);if(!r)return;
+  const projeto=(state.office.projetos||[]).find(p=>p.id===r.projetoId);
+  const novoEstado=document.getElementById('eRecebEstado').value;
+  const novoValor=parseFloat(document.getElementById('eRecebValor').value)||0;
+  const novaContaDestino=document.getElementById('eRecebConta').value||null;
+  const novaDataRecebimento=novoEstado==='recebido'?(document.getElementById('eRecebDataRecebimento').value||r.dataRecebimento||null):null;
+  // Achado P1 (auditoria pós-Gate 6): a proteção de verdade fica AQUI, na
+  // função de gravação — o disabled da UI acima é só cortesia visual, nunca
+  // a única barreira (contorno por chamada direta desta function precisa
+  // ser bloqueado igual). Recebível v2 já materializado não pode mudar
+  // estado, valor, conta de destino nem data de recebimento — todos esses
+  // campos alimentaram uma provisão/distribuição/reserva/repasse já
+  // criados e imutáveis; mudar qualquer um deixaria essas movimentações
+  // "fantasmas", lastreadas por um evento que não é mais o que está
+  // registrado. Descrição e data prevista continuam editáveis (não afetam
+  // nenhum cálculo nem movimentação já materializada).
+  if(projetoUsaRegraV2(projeto) && recebivelV2Materializado(r)){
+    const mudouAlgoFinanceiro = novoEstado!==r.estado || novoValor!==r.valor || novaContaDestino!==r.contaDestino || novaDataRecebimento!==r.dataRecebimento;
+    if(mudouAlgoFinanceiro){
+      toast(RECEBIVEL_MATERIALIZADO_BLOQUEIO_MSG);
+      return;
+    }
+  }
   r.descricao=document.getElementById('eRecebDesc').value.trim();
-  r.valor=parseFloat(document.getElementById('eRecebValor').value)||0;
-  r.estado=document.getElementById('eRecebEstado').value;
+  r.valor=novoValor;
+  r.estado=novoEstado;
   r.dataPrevista=document.getElementById('eRecebDataPrevista').value||null;
-  r.dataRecebimento=r.estado==='recebido'?(document.getElementById('eRecebDataRecebimento').value||r.dataRecebimento||null):null;
-  r.contaDestino=document.getElementById('eRecebConta').value||null;
+  r.dataRecebimento=novaDataRecebimento;
+  r.contaDestino=novaContaDestino;
   syncDerivedPersonalTransfer(id);
   scheduleSave();closeModal();renderOfficeRecebiveisTab();renderEscritorioResumo();
   if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();

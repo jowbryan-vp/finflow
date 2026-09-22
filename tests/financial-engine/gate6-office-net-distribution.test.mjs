@@ -130,13 +130,15 @@ await check('RRT-novo-registro-usa-padrao-atual', async () => {
       id: 'pD', nome: 'Projeto D', cliente: 'Cliente D', valorContrato: 5000, status: 'contratado',
       dataContrato: '2026-09-01', observacao: '', createdAt: 'pD', regraDistribuicao: 'v2', rrts: [],
     });
-    addProjetoRRT('pD', 'projeto');
+    addProjetoRRT('pD', 'projeto'); // abre o modal de confirmação, prefill com o padrão vigente (999)
+    const valorPrefill = document.getElementById('novaProjRrtValor').value;
+    confirmarAddProjetoRRT('pD', 'projeto'); // usuário confirma o valor prefillado sem alterar
     const p = state.office.projetos.find((x) => x.id === 'pD');
-    return { valor: p.rrts[0].valor };
+    return { valorPrefill, valor: p.rrts[0].valor };
   });
-  const ok = r.valor === 999;
-  return { ok, detail: `RRT nova criada depois da mudança do padrão usa o padrão VIGENTE no momento do cadastro=${r.valor} (esp. 999)` };
-}, 'item 1/2 — ao adicionar uma RRT nova, o valor inicial vem do padrão vigente do escritório, editável depois');
+  const ok = r.valorPrefill === '999' && r.valor === 999;
+  return { ok, detail: `modal de nova RRT prefilla com o padrão VIGENTE=${r.valorPrefill} (esp. "999"); confirmado, o registro criado tem valor=${r.valor} (esp. 999)` };
+}, 'item 1/2 — o modal de nova RRT prefilla com o padrão vigente do escritório (nunca cria automático sem confirmação), valor editável antes de confirmar');
 
 // ---------------------------------------------------------------------------
 // Item 10/13 — recebível previsto não impacta caixa real nem gera repasse
@@ -346,6 +348,327 @@ await check('export-import-preserva-campos-novos', async () => {
     && r.regraDistribuicao === 'v2';
   return { ok, detail: `export→import→export idêntico=${r.idempotente}; imposto=${r.impostoPercentual} (esp. 7.5), rrtValorPadrao=${r.rrtValorPadrao} (esp. 321.09), RRT preservada=${JSON.stringify(r.rrt)}, regra=${r.regraDistribuicao}` };
 }, 'item 17/18 — export/import round-trip preserva impostoPercentual, rrtValorPadrao, rrts e regraDistribuicao; reimportar duas vezes produz o mesmo resultado (migração idempotente)');
+
+// ═══════════════════════════════════════════════════════════════════════
+// Correção pós-auditoria (achados P1/P2/P3 sobre a implementação 9983605)
+// ═══════════════════════════════════════════════════════════════════════
+
+// ---------------------------------------------------------------------------
+// Achado P1 — projeto v2 sem RRT configurada nunca materializa distribuição
+// ---------------------------------------------------------------------------
+await setupBase();
+await check('bloqueio-sem-rrt-nao-gera-repasse-nem-reserva', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({
+      id: 'pF', nome: 'Projeto F', cliente: 'Cliente F', valorContrato: 1000, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pF', regraDistribuicao: 'v2', rrts: [],
+    });
+    state.office.impostoPercentual = 0; // isola o achado: mesmo com imposto 0%, sem RRT a distribuição fica bloqueada
+    state.office.recebiveis.push({ id: 'recF1', projetoId: 'pF', descricao: 'Entrada', valor: 1000, estado: 'recebido', dataPrevista: '2026-09-20', dataRecebimento: '2026-09-20', contaDestino: 'oc1', createdAt: 'recF1' });
+    syncDerivedPersonalTransfer('recF1');
+    const repasse = state.office.repasses.find((rp) => rp.recebivelId === 'recF1');
+    const movsReserva = state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === 'recF1');
+    const rec = state.office.recebiveis.find((x) => x.id === 'recF1');
+    const saldoOffice = calcSaldoOfficeConta('oc1');
+    return { temRepasse: !!repasse, qtdMovsReserva: movsReserva.length, congelado: rec.provisionadoRealizadoCent !== undefined, saldoOffice };
+  });
+  const ok = r.temRepasse === false && r.qtdMovsReserva === 0 && r.congelado === false && r.saldoOffice === 1000;
+  return { ok, detail: `projeto sem RRT, imposto 0%, recebido R$1000 — repasse=${r.temRepasse} (esp. false), movs reserva=${r.qtdMovsReserva} (esp. 0), congelado=${r.congelado} (esp. false, nunca provisiona sem RRT), saldo do caixa operacional=${r.saldoOffice} (esp. 1000 — o dinheiro entra no caixa mesmo com distribuição bloqueada)` };
+}, 'Achado P1 item 1/2/3 — projeto v2 contratado sem nenhuma RRT configurada nunca gera repasse nem reserva, mas o recebimento real continua entrando no caixa operacional');
+
+await check('bloqueio-mensagem-ui', async () => {
+  const r = await page.evaluate(() => {
+    renderOfficeProjetosTab();
+    const html = document.getElementById('escritorioSubContent').innerHTML;
+    return { contemMensagem: html.includes('Distribuição bloqueada: configure a RRT do projeto.') };
+  });
+  const ok = r.contemMensagem === true;
+  return { ok, detail: `interface exibe a mensagem exata de bloqueio — contém=${r.contemMensagem}` };
+}, 'Achado P1 — a interface informa claramente "Distribuição bloqueada: configure a RRT do projeto."');
+
+await check('configurar-rrt-libera-distribuicao', async () => {
+  const r = await page.evaluate(() => {
+    addProjetoRRT('pF', 'projeto'); // abre o modal — ainda não cria nada
+    document.getElementById('novaProjRrtValor').value = '100';
+    confirmarAddProjetoRRT('pF', 'projeto');
+    const repasse = state.office.repasses.find((rp) => rp.recebivelId === 'recF1');
+    const movsReserva = state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === 'recF1');
+    const rec = state.office.recebiveis.find((x) => x.id === 'recF1');
+    return { temRepasse: !!repasse, valorRepasse: repasse ? repasse.valor : null, qtdMovsReserva: movsReserva.length, provisionadoCent: rec.provisionadoRealizadoCent };
+  });
+  // imposto 0%, RRT 100 -> distribuível 900. repasse 65%=585, 4 reservas somando 315.
+  const ok = r.temRepasse === true && r.valorRepasse === 585 && r.qtdMovsReserva === 4 && r.provisionadoCent === 10000;
+  return { ok, detail: `configurar a RRT (100) depois do recebimento já realizado destrava a distribuição — repasse=${r.temRepasse}/${r.valorRepasse} (esp. true/585), movs reserva=${r.qtdMovsReserva} (esp. 4), provisionadoCent=${r.provisionadoCent} (esp. 10000=100)` };
+}, 'Achado P1 item 7/4 — configurar a RRT depois do recebimento realizado sincroniza, provisiona e materializa a distribuição corretamente, sem inventar RRT=0');
+
+await check('configurar-rrt-nao-duplica-ao-resync', async () => {
+  const r = await page.evaluate(() => {
+    resyncProjectV2('pF'); resyncProjectV2('pF'); syncDerivedPersonalTransfer('recF1');
+    return {
+      qtdRepasses: state.office.repasses.filter((rp) => rp.recebivelId === 'recF1').length,
+      qtdReceitas: state.receitas.filter((x) => x.officeTransferId === 'off_recF1').length,
+      qtdMovsReserva: state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === 'recF1').length,
+    };
+  });
+  const ok = r.qtdRepasses === 1 && r.qtdReceitas === 1 && r.qtdMovsReserva === 4;
+  return { ok, detail: `recalcular repetidamente depois de destravar — repasses=${r.qtdRepasses}, receitas=${r.qtdReceitas}, movs reserva=${r.qtdMovsReserva} (esp. 1,1,4, nunca duplicado)` };
+}, 'Achado P1 item 5 — liberar a distribuição depois de configurar a RRT não duplica repasse, receita pessoal nem reserva em recálculos seguintes');
+
+await check('rrtValorPadrao-null-nao-cria-automatico-com-zero', async () => {
+  const r = await page.evaluate(() => {
+    state.office.rrtValorPadrao = null;
+    state.office.projetos.push({
+      id: 'pZ', nome: 'Projeto Z', cliente: 'Cliente Z', valorContrato: 500, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pZ', regraDistribuicao: 'v2', rrts: [],
+    });
+    addProjetoRRT('pZ', 'projeto'); // abre modal, não cria nada ainda
+    const antesDeConfirmar = state.office.projetos.find((x) => x.id === 'pZ').rrts.length;
+    document.getElementById('novaProjRrtValor').value = ''; // usuário deixa em branco
+    confirmarAddProjetoRRT('pZ', 'projeto'); // deve ser rejeitado
+    const depoisDeConfirmarVazio = state.office.projetos.find((x) => x.id === 'pZ').rrts.length;
+    return { antesDeConfirmar, depoisDeConfirmarVazio };
+  });
+  const ok = r.antesDeConfirmar === 0 && r.depoisDeConfirmarVazio === 0;
+  return { ok, detail: `rrtValorPadrao null — addProjetoRRT nunca cria nada sozinho (rrts=${r.antesDeConfirmar}, esp. 0), confirmar com o campo em branco também é rejeitado (rrts=${r.depoisDeConfirmarVazio}, esp. 0 — nunca vira R$0,00 automático)` };
+}, 'Achado P1 item 4/5/6 — rrtValorPadrao null nunca cria uma RRT automática de valor zero; campo em branco no modal é rejeitado');
+
+await check('rrt-valor-zero-aceito-se-confirmado-explicitamente', async () => {
+  const r = await page.evaluate(() => {
+    addProjetoRRT('pZ', 'projeto');
+    document.getElementById('novaProjRrtValor').value = '0'; // usuário digita e confirma 0 de propósito
+    confirmarAddProjetoRRT('pZ', 'projeto');
+    const p = state.office.projetos.find((x) => x.id === 'pZ');
+    return { qtd: p.rrts.length, valor: p.rrts[0] ? p.rrts[0].valor : null };
+  });
+  const ok = r.qtd === 1 && r.valor === 0;
+  return { ok, detail: `usuário digita e confirma explicitamente 0 — RRT criada com valor=${r.valor} (esp. 0), qtd=${r.qtd} (esp. 1)` };
+}, 'Achado P1 item 6 — valor zero só é aceito quando digitado e confirmado explicitamente pelo usuário, nunca como fallback automático');
+
+// ---------------------------------------------------------------------------
+// Achado P2 — recebível v2 materializado não pode reverter para previsto/cancelado
+// ---------------------------------------------------------------------------
+await check('setup-materializado-para-reversao', async () => {
+  const r = await page.evaluate(() => {
+    const saldoOperacionalAntes = getOfficeOperationalBalance();
+    const saldoReservasAntes = getOfficeReservedBalance();
+    state.office.projetos.push({
+      id: 'pG', nome: 'Projeto G', cliente: 'Cliente G', valorContrato: 1000, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pG', regraDistribuicao: 'v2',
+      rrts: [{ id: 'rrtG1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtG1' }],
+    });
+    state.office.impostoPercentual = 0;
+    state.office.recebiveis.push({ id: 'recG1', projetoId: 'pG', descricao: 'Entrada', valor: 1000, estado: 'recebido', dataPrevista: '2026-09-20', dataRecebimento: '2026-09-20', contaDestino: 'oc1', createdAt: 'recG1' });
+    syncDerivedPersonalTransfer('recG1');
+    const deltaOperacional = getOfficeOperationalBalance() - saldoOperacionalAntes;
+    const deltaReservas = getOfficeReservedBalance() - saldoReservasAntes;
+    const materializado = recebivelV2Materializado(state.office.recebiveis.find((x) => x.id === 'recG1'));
+    return { deltaOperacional, deltaReservas, materializado };
+  });
+  const ok = r.materializado === true && Math.round(r.deltaOperacional * 100) === 65000 && Math.round(r.deltaReservas * 100) === 35000;
+  return { ok, detail: `imposto 0%, RRT 0, recebido R$1000 — materializado=${r.materializado} (esp. true), delta operacional=${r.deltaOperacional} (esp. 650 — 1000 recebido menos 350 aplicado nas reservas), delta reservas=${r.deltaReservas} (esp. 350)` };
+}, 'setup — recebível v2 totalmente materializado (repasse previsto + 4 reservas aplicadas), base pra testar a proteção de reversão');
+
+await check('reversao-para-previsto-bloqueada', async () => {
+  const r = await page.evaluate(() => {
+    const antes = JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recG1'));
+    openEditOfficeRecebivel('recG1');
+    const selectDisabled = document.getElementById('eRecebEstado').disabled;
+    // Contorna o disabled da UI de propósito — a proteção real precisa estar
+    // na função de gravação, não só no atributo disabled do campo.
+    document.getElementById('eRecebEstado').disabled = false;
+    document.getElementById('eRecebEstado').value = 'previsto';
+    saveEditOfficeRecebivel('recG1');
+    const depois = JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recG1'));
+    return { selectDisabled, inalterado: antes === depois };
+  });
+  const ok = r.selectDisabled === true && r.inalterado === true;
+  return { ok, detail: `UI desabilita o campo de estado (disabled=${r.selectDisabled}, esp. true); mesmo contornando o disabled e chamando saveEditOfficeRecebivel diretamente com estado='previsto', nada muda (inalterado=${r.inalterado}, esp. true)` };
+}, 'Achado P2 item 1/2/3/8/10 — recebível v2 materializado não pode voltar para previsto, nem pela UI nem por chamada direta contornando o disabled');
+
+await check('reversao-para-cancelado-bloqueada', async () => {
+  const r = await page.evaluate(() => {
+    const antes = JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recG1'));
+    openEditOfficeRecebivel('recG1');
+    document.getElementById('eRecebEstado').disabled = false;
+    document.getElementById('eRecebEstado').value = 'cancelado';
+    saveEditOfficeRecebivel('recG1');
+    const depois = JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recG1'));
+    return { inalterado: antes === depois };
+  });
+  const ok = r.inalterado === true;
+  return { ok, detail: `tentativa de cancelar um recebível já materializado — estado inalterado=${r.inalterado} (esp. true)` };
+}, 'Achado P2 item 1/2/9 — recebível v2 materializado não pode ser cancelado');
+
+await check('tentativa-bloqueada-nao-altera-caixa-reservas-repasse', async () => {
+  const r = await page.evaluate(() => {
+    const antes = {
+      saldoOperacional: getOfficeOperationalBalance(), saldoReservas: getOfficeReservedBalance(),
+      qtdMovsReserva: state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === 'recG1').length,
+      repasse: JSON.stringify(state.office.repasses.find((rp) => rp.recebivelId === 'recG1')),
+    };
+    openEditOfficeRecebivel('recG1');
+    document.getElementById('eRecebEstado').disabled = false;
+    document.getElementById('eRecebEstado').value = 'previsto';
+    saveEditOfficeRecebivel('recG1');
+    const depois = {
+      saldoOperacional: getOfficeOperationalBalance(), saldoReservas: getOfficeReservedBalance(),
+      qtdMovsReserva: state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === 'recG1').length,
+      repasse: JSON.stringify(state.office.repasses.find((rp) => rp.recebivelId === 'recG1')),
+    };
+    return { antes, depois };
+  });
+  const ok = r.antes.saldoOperacional === r.depois.saldoOperacional && r.antes.saldoReservas === r.depois.saldoReservas
+    && r.antes.qtdMovsReserva === r.depois.qtdMovsReserva && r.antes.repasse === r.depois.repasse;
+  return { ok, detail: `tentativa bloqueada de reversão — saldo operacional (${r.antes.saldoOperacional}→${r.depois.saldoOperacional}), reservas (${r.antes.saldoReservas}→${r.depois.saldoReservas}), movs reserva (${r.antes.qtdMovsReserva}→${r.depois.qtdMovsReserva}), repasse inalterado=${r.antes.repasse === r.depois.repasse} — nada muda` };
+}, 'Achado P2 item 10 — uma tentativa bloqueada de reversão não altera estado, caixa, reservas nem repasse');
+
+await check('valor-conta-data-imutaveis-apos-materializacao', async () => {
+  const r = await page.evaluate(() => {
+    const recAntes = JSON.parse(JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recG1')));
+    openEditOfficeRecebivel('recG1');
+    const valorDisabled = document.getElementById('eRecebValor').disabled;
+    const contaDisabled = document.getElementById('eRecebConta').disabled;
+    const dataDisabled = document.getElementById('eRecebDataRecebimento').disabled;
+    // Contorna o disabled e tenta mudar valor/conta diretamente, mantendo o
+    // mesmo estado (pra isolar especificamente a proteção de valor/conta).
+    document.getElementById('eRecebValor').disabled = false; document.getElementById('eRecebValor').value = '999999';
+    document.getElementById('eRecebConta').disabled = false;
+    document.getElementById('eRecebEstado').value = 'recebido';
+    saveEditOfficeRecebivel('recG1');
+    const recDepois = state.office.recebiveis.find((x) => x.id === 'recG1');
+    return { valorDisabled, contaDisabled, dataDisabled, valorInalterado: recDepois.valor === recAntes.valor };
+  });
+  const ok = r.valorDisabled === true && r.contaDisabled === true && r.dataDisabled === true && r.valorInalterado === true;
+  return { ok, detail: `campos desabilitados na UI (valor=${r.valorDisabled}, conta=${r.contaDisabled}, data=${r.dataDisabled}, esp. true nos três); mesmo contornando, o valor não muda=${r.valorInalterado} (esp. true)` };
+}, 'Achado P2 item 8 — valor, conta de destino e data real de um recebível já materializado ficam imutáveis, mesmo contornando o disabled da UI');
+
+// ---------------------------------------------------------------------------
+// Achado P3 — reconciliação cumulativa por destino (soma bate com o projeto inteiro)
+// ---------------------------------------------------------------------------
+await check('reconciliacao-cumulativa-tres-parcelas', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({
+      id: 'pH', nome: 'Projeto H', cliente: 'Cliente H', valorContrato: 1000, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pH', regraDistribuicao: 'v2',
+      rrts: [{ id: 'rrtH1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtH1' }],
+    });
+    state.office.impostoPercentual = 0;
+    const valores = { a: 333.33, b: 333.33, c: 333.34 };
+    ['a', 'b', 'c'].forEach((suf, i) => {
+      const id = 'recH' + suf;
+      state.office.recebiveis.push({ id, projetoId: 'pH', descricao: 'Parcela ' + (i + 1), valor: valores[suf], estado: 'recebido', dataPrevista: '2026-09-2' + (i + 1), dataRecebimento: '2026-09-2' + (i + 1), contaDestino: 'oc1', createdAt: id });
+      syncDerivedPersonalTransfer(id);
+    });
+    const ids = ['recHa', 'recHb', 'recHc'];
+    const repasseTotal = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + rp.valor, 0);
+    const reservaTotal = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + m.valor, 0);
+    return {
+      repasseTotal, operacaoTotal: reservaTotal('operacao'), crescimentoTotal: reservaTotal('reserva_crescimento'),
+      capitalGiroTotal: reservaTotal('capital_giro'), marketingTotal: reservaTotal('marketing'),
+    };
+  });
+  const ok = r.repasseTotal === 650 && r.operacaoTotal === 150 && r.crescimentoTotal === 100 && r.capitalGiroTotal === 70 && r.marketingTotal === 30;
+  return { ok, detail: `esperado repasse=650 operacao=150 crescimento=100 capitalGiro=70 marketing=30 — obtido: ${JSON.stringify(r)}` };
+}, 'Achado P3 item 12 — três parcelas de R$333,33/333,33/333,34 fecham exatamente com a divisão do projeto inteiro (650/150/100/70/30), nunca 650,01/69,99');
+
+await check('reconciliacao-ordem-nao-afeta-totais-finais', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({
+      id: 'pI', nome: 'Projeto I', cliente: 'Cliente I', valorContrato: 1000, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pI', regraDistribuicao: 'v2',
+      rrts: [{ id: 'rrtI1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtI1' }],
+    });
+    state.office.impostoPercentual = 0;
+    const valores = { a: 333.33, b: 333.33, c: 333.34 };
+    const datas = { a: '2026-09-21', b: '2026-09-22', c: '2026-09-23' };
+    ['a', 'b', 'c'].forEach((suf) => {
+      state.office.recebiveis.push({ id: 'recI' + suf, projetoId: 'pI', descricao: 'Parcela', valor: valores[suf], estado: 'previsto', dataPrevista: datas[suf], dataRecebimento: null, contaDestino: 'oc1', createdAt: 'recI' + suf });
+    });
+    // Realiza fora da ordem de criação: c, depois a, depois b.
+    ['c', 'a', 'b'].forEach((suf) => {
+      const rec = state.office.recebiveis.find((x) => x.id === 'recI' + suf);
+      rec.estado = 'recebido'; rec.dataRecebimento = datas[suf];
+      syncDerivedPersonalTransfer('recI' + suf);
+    });
+    const ids = ['recIa', 'recIb', 'recIc'];
+    const repasseTotal = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + rp.valor, 0);
+    const reservaTotal = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + m.valor, 0);
+    return {
+      repasseTotal, operacaoTotal: reservaTotal('operacao'), crescimentoTotal: reservaTotal('reserva_crescimento'),
+      capitalGiroTotal: reservaTotal('capital_giro'), marketingTotal: reservaTotal('marketing'),
+    };
+  });
+  const ok = r.repasseTotal === 650 && r.operacaoTotal === 150 && r.crescimentoTotal === 100 && r.capitalGiroTotal === 70 && r.marketingTotal === 30;
+  return { ok, detail: `mesmos valores (333.33/333.33/333.34), realizados fora de ordem (c, a, b) — totais finais: ${JSON.stringify(r)} (esp. 650/150/100/70/30, idênticos ao teste anterior)` };
+}, 'Achado P3 item 13 — a ordem de realização dos recebíveis não altera os totais finais por destino');
+
+await check('reconciliacao-muitos-recebiveis-pequenos', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({
+      id: 'pJ', nome: 'Projeto J', cliente: 'Cliente J', valorContrato: 1000, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pJ', regraDistribuicao: 'v2',
+      rrts: [{ id: 'rrtJ1', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrtJ1' }],
+    });
+    state.office.impostoPercentual = 0;
+    const n = 37;
+    const totalCent = 100000;
+    const base = Math.floor(totalCent / n);
+    const resto = totalCent - base * n;
+    const ids = [];
+    for (let i = 0; i < n; i++) {
+      const valorCent = base + (i === n - 1 ? resto : 0);
+      const id = 'recJ' + i;
+      ids.push(id);
+      state.office.recebiveis.push({ id, projetoId: 'pJ', descricao: 'Parcela ' + i, valor: valorCent / 100, estado: 'recebido', dataPrevista: '2026-10-01', dataRecebimento: '2026-10-01', contaDestino: 'oc1', createdAt: id });
+      syncDerivedPersonalTransfer(id);
+    }
+    // Soma em centavos inteiros — evita que o próprio somatório do TESTE
+    // (não a lógica em produção, que já soma em centavos) introduza ruído
+    // de ponto flutuante ao somar 37+ parcelas de reais.
+    const centOf = (v) => Math.round(v * 100);
+    const repasseTotalCent = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0);
+    const reservaTotalCent = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    const somaTudoCent = repasseTotalCent + reservaTotalCent('operacao') + reservaTotalCent('reserva_crescimento') + reservaTotalCent('capital_giro') + reservaTotalCent('marketing');
+    return {
+      repasseTotal: repasseTotalCent / 100, operacaoTotal: reservaTotalCent('operacao') / 100, crescimentoTotal: reservaTotalCent('reserva_crescimento') / 100,
+      capitalGiroTotal: reservaTotalCent('capital_giro') / 100, marketingTotal: reservaTotalCent('marketing') / 100, somaTudo: somaTudoCent / 100,
+    };
+  });
+  const ok = r.repasseTotal === 650 && r.operacaoTotal === 150 && r.crescimentoTotal === 100 && r.capitalGiroTotal === 70 && r.marketingTotal === 30 && r.somaTudo === 1000;
+  return { ok, detail: `37 recebíveis pequenos somando R$1000,00 exato — totais finais: ${JSON.stringify(r)} (esp. 650/150/100/70/30, soma=1000, sem desvio sistemático)` };
+}, 'Achado P3 item 14 — muitos recebíveis pequenos do mesmo projeto não acumulam desvio de arredondamento; a soma final bate exatamente com a divisão do projeto inteiro');
+
+await check('resync-nao-duplica-muitos-recebiveis', async () => {
+  const r = await page.evaluate(() => {
+    const centOf = (v) => Math.round(v * 100);
+    const totalOfCent = () => state.office.repasses.filter((rp) => state.office.recebiveis.some((x) => x.projetoId === 'pJ' && x.id === rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0)
+      + state.office.movimentacoesReservas.filter((m) => state.office.recebiveis.some((x) => x.projetoId === 'pJ' && x.id === m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    const totalAntes = totalOfCent() / 100;
+    resyncProjectV2('pJ'); resyncProjectV2('pJ'); resyncProjectV2('pJ');
+    const totalDepois = totalOfCent() / 100;
+    return { totalAntes, totalDepois };
+  });
+  const ok = r.totalAntes === 1000 && r.totalDepois === 1000;
+  return { ok, detail: `total materializado antes=${r.totalAntes}, depois de 3 resyncs=${r.totalDepois} (esp. ambos 1000, sem duplicar nem divergir)` };
+}, 'Achado P1/P3 item 15 — reexecutar a sincronização sobre muitos recebíveis já materializados não cria diferenças nem duplicações');
+
+// ---------------------------------------------------------------------------
+// Item 16 — projeto legado continua usando exclusivamente o motor antigo
+// ---------------------------------------------------------------------------
+await check('projeto-legado-motor-antigo-intocado', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({ id: 'pLegacyCheck', nome: 'Projeto Legado', cliente: 'X', valorContrato: 2000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pLegacyCheck', regraDistribuicao: 'legacy' });
+    state.office.regrasDistribuicao.find((x) => x.destino === 'reserva').percentual = 40;
+    state.office.regrasDistribuicao.find((x) => x.destino === 'impostos').percentual = 30;
+    state.office.regrasDistribuicao.find((x) => x.destino === 'repasse_pessoal').percentual = 30;
+    state.office.recebiveis.push({ id: 'recLegacyCheck', projetoId: 'pLegacyCheck', descricao: 'Entrada', valor: 2000, estado: 'previsto', dataPrevista: '2026-01-10', dataRecebimento: null, contaDestino: 'oc1', createdAt: 'recLegacyCheck' });
+    syncDerivedPersonalTransfer('recLegacyCheck');
+    const repasse = state.office.repasses.find((rp) => rp.recebivelId === 'recLegacyCheck');
+    return { valor: repasse ? repasse.valor : null };
+  });
+  const ok = r.valor === 600; // 2000 × 30% do valor BRUTO — regra antiga, sem dedução de imposto/RRT
+  return { ok, detail: `projeto 'legacy' continua usando o cálculo bruto antigo — repasse=${r.valor} (esp. 600 = 2000×30% do bruto, sem imposto/RRT deduzidos)` };
+}, 'Achado item 16 — projeto legado continua usando exclusivamente o motor antigo (calculateOfficeDistribution sobre o valor bruto), nunca a regra líquida nova');
 
 console.log(`TOTAL=${results.length} PASS=${results.filter((r) => r.status === 'PASS').length} FAIL=${results.filter((r) => r.status === 'FAIL').length}`);
 await close();

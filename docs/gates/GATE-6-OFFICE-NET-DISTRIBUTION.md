@@ -132,3 +132,47 @@ fiscal completa, alteração dos percentuais fixos, e qualquer edição
 simultânea de `regraDistribuicao` para um projeto já `'legacy'` (não há
 caminho de upgrade legacy→v2 nesta entrega — só migração automática no
 carregamento, restrita a projetos ainda inteiramente previstos).
+
+## Correção pós-auditoria (achados P1/P2/P3 sobre `9983605`)
+
+A auditoria Codex da implementação `9983605` encontrou três achados,
+corrigidos nesta mesma branch:
+
+**P1 — distribuição sem RRT configurada.** `syncDerivedPersonalTransferV2`
+agora verifica `projetoNecessitaConfiguracaoRRT(projeto)` ANTES de congelar
+qualquer provisão — enquanto verdadeiro, nenhum repasse nem reserva é
+criado, mesmo com o recebível já `'recebido'` (o dinheiro continua entrando
+no caixa operacional normalmente, só a distribuição fica bloqueada). A UI
+mostra "Distribuição bloqueada: configure a RRT do projeto." em vez de
+números de repasse/reserva como se já estivessem calculados. `addProjetoRRT`
+deixou de criar a RRT direto com `valor:0` quando `rrtValorPadrao` é `null`
+— agora abre um modal pedindo o valor explicitamente; um campo em branco é
+rejeitado, e `0` só é aceito se digitado e confirmado de propósito
+(`confirmarAddProjetoRRT`).
+
+**P2 — reversão de recebível materializado.** `recebivelV2Materializado(r)`
+detecta se um recebível já congelou provisão/distribuição ou já gerou
+repasse/reserva/receita vinculada. A partir daí, `estado`, `valor`,
+`contaDestino` e `dataRecebimento` ficam imutáveis — bloqueado tanto na UI
+(`openEditOfficeRecebivel` desabilita os campos) quanto, de forma
+decisiva, na função de gravação (`saveEditOfficeRecebivel`, que rejeita a
+mudança mesmo contornando o `disabled`). `descricao`/`dataPrevista`
+continuam editáveis (não afetam nenhum cálculo). Um motor de estorno
+explícito fica fora de escopo desta correção.
+
+**P3 — arredondamento por recebível divergindo do projeto inteiro.** O
+maior resto deixou de ser aplicado isoladamente sobre o distribuível de
+cada recebível. `freezeRecebivelProvisionadoV2` agora aplica uma
+**reconciliação cumulativa por destino**: recalcula `distribuirReceitaLiquidaCent`
+sobre o distribuível ACUMULADO do projeto (já congelado + este recebível) e
+atribui a este recebível só a diferença em relação ao que os outros já
+materializaram de fato (repasse criado + reserva aplicada,
+`getProjetoAlocadoPorDestinoCent`). O resultado (`porDestinoRealizadoCent`)
+é congelado junto com `provisionadoRealizadoCent`/`distribuivelRealizadoCent`
+— nunca recalculado depois. Isso garante que a soma final por destino de
+todos os recebíveis de um projeto bate exatamente com a divisão do projeto
+inteiro, sempre, independente da ordem de realização.
+
+Testes: 16 casos novos em `gate6-office-net-distribution.test.mjs`
+(34 no total). Suíte completa: 526 PASS / 0 FAIL. Comparação com o backup
+real (`compare-real-backup.mjs`): 0 diferenças em 14 meses históricos.
