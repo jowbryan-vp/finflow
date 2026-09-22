@@ -3143,29 +3143,90 @@ function projetoNecessitaConfiguracaoRRT(projeto){
 }
 
 // Divide um valor em CENTAVOS INTEIROS pelos 5 destinos fixos usando o
-// método do maior resto (largest remainder / Hamilton) — cada destino recebe
-// floor(base*percentual/100) e os centavos residuais (sempre < quantidade de
-// destinos) vão, um a um, para quem tem o maior resto fracionário; empate é
-// resolvido pela ORDEM FIXA de OFFICE_DISTRIBUICAO_V2 (determinístico, nunca
-// Math.random, nunca ordem de iteração de objeto). Isso garante que a soma
-// dos 5 destinos bate EXATAMENTE com a base, sempre — nunca sobra nem falta
-// centavo por erro de ponto flutuante, ao contrário de arredondar cada
-// destino isoladamente.
+// método de divisor Sainte-Laguë (Webster, "maiores médias") — SUBSTITUIU o
+// método do maior resto (largest remainder / Hamilton) usado até a segunda
+// rodada de auditoria pós-Gate 6. Motivo (achado P1 dessa rodada): o maior
+// resto NÃO é monotônico — ao crescer o total, a alocação de um destino
+// pode DIMINUIR (paradoxo de Alabama). Isso quebrava a reconciliação
+// cumulativa por recebível (freezeRecebivelProvisionadoV2): o ajuste
+// atribuído a um recebível seguinte podia dar NEGATIVO pra um destino cujo
+// dinheiro já tinha sido materializado (reserva aplicada, imutável) no
+// recebível anterior — o ajuste negativo era descartado silenciosamente
+// por syncOfficeReserveDistributionV2 (`if(valor<=0) return`), criando
+// dinheiro fantasma: a soma efetivamente distribuída passava a superar o
+// dinheiro realmente recebido (ver reprodução mínima nos testes
+// bloqueio-alabama-*).
+//
+// Métodos de divisor (Jefferson/D'Hondt, Sainte-Laguë/Webster,
+// Huntington-Hill, Adams) são estruturalmente MONOTÔNICOS em população —
+// propriedade matemática bem estabelecida da teoria de rateio
+// proporcional: cada assento (aqui, cada centavo) adicional é sempre um a
+// mais sobre o estado anterior, nunca uma redistribuição do zero, logo
+// aumentar o total NUNCA reduz a alocação de nenhum destino. Entre os
+// métodos de divisor, Sainte-Laguë foi o escolhido porque reproduz
+// EXATAMENTE os mesmos valores que o maior resto já produzia nos dois
+// cenários de referência originais do Gate 6 (R$3.000 com RRT de
+// R$130,64/R$261,28) e no caso de referência desta correção (R$0,15 →
+// 10/2/2/1/0 centavos) — ao contrário de Jefferson/D'Hondt, que favorece
+// desproporcionalmente o maior peso (repasse 65%) e não bateria com essas
+// referências.
+//
+// Algoritmo — tudo em BigInt, nunca ponto flutuante como fonte de verdade:
+//   1. Estimativa inicial por arredondamento simples: para cada destino,
+//      round(total×percentual/100), calculado como
+//      floor((2×total×percentual+100)/200) — round-half-up exato, sem
+//      float. Como os 5 percentuais somam exatamente 100, essa estimativa
+//      já soma muito perto do total: a diferença (residual) nunca passa de
+//      ±2 (soma de 5 erros de arredondamento de no máximo 0,5 cada).
+//   2. O residual é corrigido destino a destino pela prioridade padrão de
+//      maiores médias (quem tem o maior percentual/(2×assentos+1) ganha o
+//      próximo centavo; quem tem o menor percentual/(2×assentos−1) perde
+//      o último, se for preciso remover) — sempre por comparação cruzada
+//      exata (nunca uma divisão real). Nunca itera centavo a centavo (isso
+//      custaria O(total), inviável pra contratos grandes) — o ajuste do
+//      residual é sempre O(quantidade de destinos), independente do
+//      tamanho do total.
 function distribuirReceitaLiquidaCent(baseCent){
-  const base=Number.isFinite(baseCent)?baseCent:0;
-  const negativo=base<0;
-  const abs=Math.abs(base);
-  const entries=OFFICE_DISTRIBUICAO_V2.map(d=>{
-    const raw=abs*d.percentual/100;
-    const floor=Math.floor(raw);
-    return {destino:d.destino, floor, rem:raw-floor};
+  const destinos=OFFICE_DISTRIBUICAO_V2.map(d=>d.destino);
+  const zero={}; destinos.forEach(d=>{ zero[d]=0; });
+  if(!Number.isFinite(baseCent) || baseCent===0) return zero;
+  const negativo=baseCent<0;
+  const totalAbs=BigInt(Math.round(Math.abs(baseCent)));
+  if(totalAbs===0n) return zero;
+  const pesos=OFFICE_DISTRIBUICAO_V2.map(d=>BigInt(d.percentual));
+
+  const seats={};
+  let somaSeats=0n;
+  destinos.forEach((d,i)=>{
+    const s=(2n*totalAbs*pesos[i]+100n)/200n; // round-half-up exato (BigInt trunca == floor aqui, pois o numerador é sempre >=0)
+    seats[d]=s; somaSeats+=s;
   });
-  const alocado=entries.reduce((s,e)=>s+e.floor,0);
-  const resto=Math.round(abs-alocado); // inteiro por construção (abs é inteiro, floors são inteiros)
-  const ordemResto=entries.slice().sort((a,b)=>b.rem-a.rem);
-  for(let i=0;i<resto;i++){ ordemResto[i].floor+=1; }
+  let delta=totalAbs-somaSeats; // residual: sempre em [-2,2] pra 5 destinos com pesos somando 100
+
+  // Prioridade de maiores médias — comparação sempre por multiplicação
+  // cruzada (a/b vs c/d  <=>  a*d vs c*b), nunca por divisão real.
+  const prioridadeGanhar=()=>{
+    let melhor=null;
+    destinos.forEach((d,i)=>{
+      const num=pesos[i], den=2n*seats[d]+1n;
+      if(melhor===null || num*melhor.den>melhor.num*den) melhor={d,num,den};
+    });
+    return melhor.d;
+  };
+  const prioridadePerder=()=>{
+    let pior=null;
+    destinos.forEach((d,i)=>{
+      if(seats[d]<=0n) return; // nunca tira de quem já está em zero
+      const num=pesos[i], den=2n*seats[d]-1n;
+      if(pior===null || num*pior.den<pior.num*den) pior={d,num,den};
+    });
+    return pior.d;
+  };
+  while(delta>0n){ const d=prioridadeGanhar(); seats[d]+=1n; delta-=1n; }
+  while(delta<0n){ const d=prioridadePerder(); seats[d]-=1n; delta+=1n; }
+
   const porDestino={};
-  entries.forEach(e=>{ porDestino[e.destino]=(negativo?-1:1)*e.floor; });
+  destinos.forEach(d=>{ porDestino[d]=Number(seats[d])*(negativo?-1:1); });
   return porDestino;
 }
 
@@ -3245,17 +3306,23 @@ function getProjetoAlocadoPorDestinoCent(projetoId, excluindoRecebivelId){
 //   1. enquanto o total acumulado de caixa já realizado no projeto não
 //      cobrir imposto+RRT, 100% de cada entrada realizada fica provisionado
 //      (distribuivel=0); só o excedente vira distribuível.
-//   2. a fatia de cada destino NUNCA é o maior-resto aplicado isoladamente
-//      sobre o distribuível deste recebível (isso desvia a soma do projeto
-//      inteiro, um centavo por recebível). Em vez disso: recalcula o maior
-//      resto sobre o distribuível ACUMULADO (já congelado + este) e atribui
-//      a este recebível só a diferença em relação ao que os outros
-//      recebíveis já materializaram de fato (repasse criado + reserva
-//      aplicada). Isso garante, por construção, que a soma final por
-//      destino de TODOS os recebíveis de um projeto bate exatamente com
+//   2. a fatia de cada destino NUNCA é distribuirReceitaLiquidaCent
+//      aplicado isoladamente sobre o distribuível deste recebível (isso
+//      desvia a soma do projeto inteiro, um centavo por recebível). Em vez
+//      disso: recalcula distribuirReceitaLiquidaCent sobre o distribuível
+//      ACUMULADO (já congelado + este) e atribui a este recebível só a
+//      diferença em relação ao que os outros recebíveis já materializaram
+//      de fato (repasse criado + reserva aplicada). Isso só é seguro
+//      porque distribuirReceitaLiquidaCent usa um método de divisor
+//      (Sainte-Laguë) MONOTÔNICO — a diferença nunca dá negativa pra
+//      nenhum destino (ver comentário da função, achado P1 da segunda
+//      rodada de auditoria: o método antigo, maior resto, não garantia
+//      isso). Isso garante, por construção, que a soma final por destino
+//      de TODOS os recebíveis de um projeto bate exatamente com
 //      distribuirReceitaLiquidaCent(distribuível total do projeto) —
-//      sempre, e independente da ordem de realização (o total final só
-//      depende do total acumulado, nunca do caminho).
+//      sempre, sem nenhuma alocação negativa, e independente da ordem de
+//      realização (o total final só depende do total acumulado, nunca do
+//      caminho).
 //
 // Tudo isso é congelado junto, de uma vez só — idempotente por construção
 // (chamar de novo sobre um recebível já congelado é NO-OP, nunca recalcula

@@ -670,6 +670,153 @@ await check('projeto-legado-motor-antigo-intocado', async () => {
   return { ok, detail: `projeto 'legacy' continua usando o cálculo bruto antigo — repasse=${r.valor} (esp. 600 = 2000×30% do bruto, sem imposto/RRT deduzidos)` };
 }, 'Achado item 16 — projeto legado continua usando exclusivamente o motor antigo (calculateOfficeDistribution sobre o valor bruto), nunca a regra líquida nova');
 
+// ═══════════════════════════════════════════════════════════════════════
+// Correção da segunda rodada de auditoria (achado P1: paradoxo de Alabama
+// no rateio cumulativo — maior resto não é monotônico, podia materializar
+// dinheiro fantasma). distribuirReceitaLiquidaCent passou a usar Sainte-
+// Laguë (método de divisor, monotônico por construção).
+// ═══════════════════════════════════════════════════════════════════════
+
+// Materializa, em sequência, uma lista de recebíveis (em reais) de um
+// projeto v2 com imposto 0% e uma RRT explicitamente configurada em
+// R$0,00 (garante distribuível == soma dos recebíveis, sem provisão
+// consumindo nada) — devolve, pra cada recebível, sua fatia por destino
+// (nunca negativa) e a validação de que a soma bate com seu próprio
+// distribuível, além dos totais finais agregados por destino.
+async function materializarSequencial(page, projetoId, valoresReais, contratoReais) {
+  return page.evaluate(({ projetoId, valoresReais, contratoReais }) => {
+    state.office.projetos.push({
+      id: projetoId, nome: 'Projeto ' + projetoId, cliente: 'Cliente', valorContrato: contratoReais, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: projetoId, regraDistribuicao: 'v2',
+      rrts: [{ id: 'rrt_' + projetoId, tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrt_' + projetoId }],
+    });
+    state.office.impostoPercentual = 0;
+    const centOf = (v) => Math.round(v * 100);
+    const ids = [];
+    const porRecebivel = [];
+    valoresReais.forEach((valor, i) => {
+      const id = projetoId + '_r' + i;
+      ids.push(id);
+      state.office.recebiveis.push({ id, projetoId, descricao: 'Parcela ' + i, valor, estado: 'recebido', dataPrevista: '2026-10-01', dataRecebimento: '2026-10-01', contaDestino: 'oc1', createdAt: id });
+      syncDerivedPersonalTransfer(id);
+      const rec = state.office.recebiveis.find((x) => x.id === id);
+      const repasse = state.office.repasses.find((rp) => rp.recebivelId === id);
+      const movs = state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === id);
+      const porDestinoCent = { ...(rec.porDestinoRealizadoCent || {}) };
+      const somaDestinosCent = Object.values(porDestinoCent).reduce((s, v) => s + v, 0);
+      porRecebivel.push({
+        valor, distribuivelCent: rec.distribuivelRealizadoCent, porDestinoCent, somaDestinosCent,
+        repasseValorCent: repasse ? centOf(repasse.valor) : 0,
+        movsNegativas: Object.values(porDestinoCent).some((v) => v < 0) || movs.some((m) => m.valor < 0) || (repasse && repasse.valor < 0),
+      });
+    });
+    const repasseTotalCent = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0);
+    const reservaTotalCent = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    const totalDistribuivelCent = state.office.recebiveis.filter((r) => ids.includes(r.id)).reduce((s, r) => s + (r.distribuivelRealizadoCent || 0), 0);
+    return {
+      porRecebivel,
+      totais: {
+        repasse_pessoal: repasseTotalCent, operacao: reservaTotalCent('operacao'), reserva_crescimento: reservaTotalCent('reserva_crescimento'),
+        capital_giro: reservaTotalCent('capital_giro'), marketing: reservaTotalCent('marketing'),
+      },
+      totalDistribuivelCent,
+      somaTotaisCent: repasseTotalCent + reservaTotalCent('operacao') + reservaTotalCent('reserva_crescimento') + reservaTotalCent('capital_giro') + reservaTotalCent('marketing'),
+    };
+  }, { projetoId, valoresReais, contratoReais });
+}
+
+const ESPERADO_15_CENTAVOS = { repasse_pessoal: 10, operacao: 2, reserva_crescimento: 2, capital_giro: 1, marketing: 0 };
+
+await check('alabama-14-depois-1-centavo', async () => {
+  const r = await materializarSequencial(page, 'pAla1', [0.14, 0.01], 0.15);
+  const semNegativo = r.porRecebivel.every((x) => !x.movsNegativas);
+  const somaPorRecebivelBate = r.porRecebivel.every((x) => x.somaDestinosCent === x.distribuivelCent);
+  const totaisBatem = JSON.stringify(r.totais) === JSON.stringify(ESPERADO_15_CENTAVOS);
+  const ok = semNegativo && somaPorRecebivelBate && totaisBatem && r.somaTotaisCent === 15 && r.totalDistribuivelCent === 15;
+  return { ok, detail: `R$0,14 depois R$0,01 — porRecebivel=${JSON.stringify(r.porRecebivel)}, totais=${JSON.stringify(r.totais)} (esp. ${JSON.stringify(ESPERADO_15_CENTAVOS)}), semNegativo=${semNegativo}, somaPorRecebivelBate=${somaPorRecebivelBate}` };
+}, 'Achado P1 (2ª rodada) — reprodução mínima: R$0,14 seguido de R$0,01 nunca gera alocação negativa e fecha em 10/2/2/1/0 centavos, nunca 16');
+
+await check('alabama-1-centavo-depois-14', async () => {
+  const r = await materializarSequencial(page, 'pAla2', [0.01, 0.14], 0.15);
+  const semNegativo = r.porRecebivel.every((x) => !x.movsNegativas);
+  const somaPorRecebivelBate = r.porRecebivel.every((x) => x.somaDestinosCent === x.distribuivelCent);
+  const totaisBatem = JSON.stringify(r.totais) === JSON.stringify(ESPERADO_15_CENTAVOS);
+  const ok = semNegativo && somaPorRecebivelBate && totaisBatem && r.somaTotaisCent === 15;
+  return { ok, detail: `R$0,01 depois R$0,14 (ordem invertida) — totais=${JSON.stringify(r.totais)} (esp. ${JSON.stringify(ESPERADO_15_CENTAVOS)}, idênticos independente da ordem), semNegativo=${semNegativo}, somaPorRecebivelBate=${somaPorRecebivelBate}` };
+}, 'Achado P1 (2ª rodada) — R$0,01 seguido de R$0,14 (ordem invertida) produz os mesmos totais finais, sem alocação negativa');
+
+await check('alabama-100-14-depois-1-centavo', async () => {
+  const r = await materializarSequencial(page, 'pAla3', [100.14, 0.01], 100.15);
+  const semNegativo = r.porRecebivel.every((x) => !x.movsNegativas);
+  const somaPorRecebivelBate = r.porRecebivel.every((x) => x.somaDestinosCent === x.distribuivelCent);
+  const ok = semNegativo && somaPorRecebivelBate && r.somaTotaisCent === 10015 && r.totalDistribuivelCent === 10015;
+  return { ok, detail: `R$100,14 depois R$0,01 — totais=${JSON.stringify(r.totais)}, soma=${r.somaTotaisCent} (esp. 10015), semNegativo=${semNegativo}, somaPorRecebivelBate=${somaPorRecebivelBate}` };
+}, 'Achado P1 (2ª rodada) — caso realista R$100,14 seguido de R$0,01: sem alocação negativa, soma bate exatamente');
+
+await check('alabama-1-centavo-depois-100-14', async () => {
+  const r = await materializarSequencial(page, 'pAla4', [0.01, 100.14], 100.15);
+  const semNegativo = r.porRecebivel.every((x) => !x.movsNegativas);
+  const somaPorRecebivelBate = r.porRecebivel.every((x) => x.somaDestinosCent === x.distribuivelCent);
+  const ok = semNegativo && somaPorRecebivelBate && r.somaTotaisCent === 10015;
+  return { ok, detail: `R$0,01 depois R$100,14 (ordem invertida) — totais=${JSON.stringify(r.totais)}, soma=${r.somaTotaisCent} (esp. 10015), semNegativo=${semNegativo}, somaPorRecebivelBate=${somaPorRecebivelBate}` };
+}, 'Achado P1 (2ª rodada) — R$0,01 seguido de R$100,14 (ordem invertida) produz o mesmo total final, sem alocação negativa');
+
+await check('alabama-totais-100-14-independem-da-ordem', async () => {
+  const r3 = await page.evaluate(() => {
+    const ids = ['pAla3_r0', 'pAla3_r1'];
+    const centOf = (v) => Math.round(v * 100);
+    const repasseTotalCent = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0);
+    const reservaTotalCent = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    return { repasse_pessoal: repasseTotalCent, operacao: reservaTotalCent('operacao'), reserva_crescimento: reservaTotalCent('reserva_crescimento'), capital_giro: reservaTotalCent('capital_giro'), marketing: reservaTotalCent('marketing') };
+  });
+  const r4 = await page.evaluate(() => {
+    const ids = ['pAla4_r0', 'pAla4_r1'];
+    const centOf = (v) => Math.round(v * 100);
+    const repasseTotalCent = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0);
+    const reservaTotalCent = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    return { repasse_pessoal: repasseTotalCent, operacao: reservaTotalCent('operacao'), reserva_crescimento: reservaTotalCent('reserva_crescimento'), capital_giro: reservaTotalCent('capital_giro'), marketing: reservaTotalCent('marketing') };
+  });
+  const ok = JSON.stringify(r3) === JSON.stringify(r4);
+  return { ok, detail: `R$100,15 dividido em 100,14+0,01 vs 0,01+100,14 — totais finais idênticos=${ok}: ${JSON.stringify(r3)} vs ${JSON.stringify(r4)}` };
+}, 'Achado P1 (2ª rodada) item 5 — o total final por destino depende só do total realizado, nunca da ordem das parcelas');
+
+await check('alabama-muitas-parcelas-pequenas-irregulares', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({
+      id: 'pAla5', nome: 'Projeto Alabama 5', cliente: 'Cliente', valorContrato: 1000, status: 'contratado',
+      dataContrato: '2026-09-01', observacao: '', createdAt: 'pAla5', regraDistribuicao: 'v2',
+      rrts: [{ id: 'rrt_pAla5', tipo: 'projeto', valor: 0, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rrt_pAla5' }],
+    });
+    state.office.impostoPercentual = 0;
+    // 41 parcelas irregulares (não múltiplas exatas de 100), soma exata em
+    // centavos via resto na última — testa exatamente o cenário que
+    // provoca o paradoxo de Alabama com mais frequência (totais
+    // intermediários "feios").
+    const n = 41, totalCent = 100000;
+    const base = Math.floor(totalCent / n), resto = totalCent - base * n;
+    const ids = [];
+    let algumaNegativa = false, somaOk = true;
+    for (let i = 0; i < n; i++) {
+      const valorCent = base + (i === n - 1 ? resto : 0);
+      const id = 'recAla5_' + i; ids.push(id);
+      state.office.recebiveis.push({ id, projetoId: 'pAla5', descricao: 'P' + i, valor: valorCent / 100, estado: 'recebido', dataPrevista: '2026-10-01', dataRecebimento: '2026-10-01', contaDestino: 'oc1', createdAt: id });
+      syncDerivedPersonalTransfer(id);
+      const rec = state.office.recebiveis.find((x) => x.id === id);
+      const porDestinoCent = rec.porDestinoRealizadoCent || {};
+      if (Object.values(porDestinoCent).some((v) => v < 0)) algumaNegativa = true;
+      const soma = Object.values(porDestinoCent).reduce((s, v) => s + v, 0);
+      if (soma !== rec.distribuivelRealizadoCent) somaOk = false;
+    }
+    const centOf = (v) => Math.round(v * 100);
+    const repasseTotalCent = state.office.repasses.filter((rp) => ids.includes(rp.recebivelId)).reduce((s, rp) => s + centOf(rp.valor), 0);
+    const reservaTotalCent = (destino) => state.office.movimentacoesReservas.filter((m) => m.origemDestino === destino && ids.includes(m.origemRecebivelId)).reduce((s, m) => s + centOf(m.valor), 0);
+    const somaTotal = repasseTotalCent + reservaTotalCent('operacao') + reservaTotalCent('reserva_crescimento') + reservaTotalCent('capital_giro') + reservaTotalCent('marketing');
+    return { algumaNegativa, somaOk, repasseTotalCent, somaTotal };
+  });
+  const ok = r.algumaNegativa === false && r.somaOk === true && r.repasseTotalCent === 65000 && r.somaTotal === 100000;
+  return { ok, detail: `41 parcelas irregulares somando R$1000,00 — nenhuma alocação negativa=${!r.algumaNegativa}, soma por recebível sempre bate=${r.somaOk}, repasse total=${r.repasseTotalCent} (esp. 65000), soma geral=${r.somaTotal} (esp. 100000)` };
+}, 'Achado P1 (2ª rodada) item 14 — muitas parcelas pequenas e irregulares (propensas ao paradoxo de Alabama) nunca geram alocação negativa nem desvio na soma total');
+
 console.log(`TOTAL=${results.length} PASS=${results.filter((r) => r.status === 'PASS').length} FAIL=${results.filter((r) => r.status === 'FAIL').length}`);
 await close();
 process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0);

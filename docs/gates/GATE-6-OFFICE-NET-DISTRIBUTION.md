@@ -176,3 +176,38 @@ inteiro, sempre, independente da ordem de realização.
 Testes: 16 casos novos em `gate6-office-net-distribution.test.mjs`
 (34 no total). Suíte completa: 526 PASS / 0 FAIL. Comparação com o backup
 real (`compare-real-backup.mjs`): 0 diferenças em 14 meses históricos.
+
+## Correção da segunda rodada de auditoria (achado P1 sobre `9983605`→`d2018ce`)
+
+A reconciliação cumulativa acima (P3) recalculava `distribuirReceitaLiquidaCent`
+com o método do **maior resto** a cada recebível. O maior resto **não é
+monotônico**: ao crescer o total, a alocação de um destino específico pode
+*diminuir* (paradoxo de Alabama). Como um recebível anterior já tinha
+materializado sua reserva (imutável), um ajuste negativo pra esse destino
+não podia ser aplicado — e era descartado silenciosamente
+(`if(valor<=0) return` em `syncOfficeReserveDistributionV2`), criando
+dinheiro fantasma: a soma efetivamente distribuída passava a superar o
+dinheiro realmente recebido (reprodução mínima: R$0,14 + R$0,01 = R$0,15,
+correto é 10/2/2/1/0 centavos, o bug materializava 10/2/1/1/**1** = 16
+centavos).
+
+**Correção:** `distribuirReceitaLiquidaCent` passou a usar o método de
+divisor **Sainte-Laguë (Webster, "maiores médias")** em vez do maior resto
+— matematicamente comprovado monotônico em população (nunca sofre do
+paradoxo de Alabama), porque cada centavo adicional é sempre um a mais
+sobre o estado anterior, nunca uma redistribuição do zero. Sainte-Laguë foi
+escolhido entre os métodos de divisor por reproduzir exatamente os mesmos
+valores que o maior resto já produzia nos cenários de referência do Gate 6
+(R$3.000 com RRT de R$130,64/R$261,28) e no caso de referência desta
+correção (R$0,15 → 10/2/2/1/0) — Jefferson/D'Hondt não bateria (favorece
+desproporcionalmente o maior peso). Implementado inteiramente em BigInt
+(nunca ponto flutuante como fonte de verdade): estimativa inicial por
+arredondamento simples (sempre soma a no máximo ±2 do total, já que os 5
+percentuais somam exatamente 100) mais um ajuste do resíduo por prioridade
+de maiores médias, O(quantidade de destinos) — nunca itera centavo a
+centavo, escala pra contratos de qualquer tamanho.
+
+Nenhuma outra parte do motor (bloqueio de distribuição sem RRT, imutabilidade
+do recebível materializado, motor legado) foi alterada. Testes: 6 casos
+novos (40 no total). Suíte completa: 532 PASS / 0 FAIL. Comparação com o
+backup real: 0 diferenças em 14 meses históricos.
