@@ -1952,6 +1952,32 @@ function migrateState() {
       if(p.rrtRequirementConfirmedAt===undefined) p.rrtRequirementConfirmedAt=null;
       if(p.rrtRequirementConfirmedBy===undefined) p.rrtRequirementConfirmedBy=null;
     }
+    // Achado P1 da 3ª reauditoria: o bloco acima só roda quando o campo
+    // AINDA NÃO EXISTE (!p.rrtRequirement) — um backup/estado que já chega
+    // com rrtRequirement:'none' (ex.: editado externamente, ou de uma versão
+    // anterior do app que gravou 'none' sem a validação atual) passava por
+    // essa guarda intocado, mesmo sem rrtRequirementConfirmedAt ser um
+    // timestamp ISO genuíno — projetoRrtRequirementSatisfeita então liberava
+    // a distribuição sem confirmação real nenhuma. Este segundo passo roda
+    // SEMPRE (independente do primeiro ter rodado), pra qualquer projeto v2
+    // com rrtRequirement==='none' já presente: se a confirmação persistida
+    // não é um timestamp ISO 8601 válido (hasValidRrtRequirementConfirmation
+    // — nunca confia numa checagem frouxa tipo !!confirmedAt), a decisão é
+    // normalizada pra 'pending' (nunca pra 'one'/'two' — ausência de
+    // confirmação não é prova de que o projeto EXIGE RRT, só de que a
+    // decisão "não exige" não foi provada). Nunca cria, apaga ou corrige
+    // nenhum registro de projeto.rrts (mesmo que existam registros
+    // residuais — a contagem bruta > 0 já bloqueava 'none' de qualquer
+    // forma, e vira 'pending' aqui do mesmo jeito, sem tocar nos registros).
+    // Idempotente: depois de normalizado pra 'pending', a condição
+    // rrtRequirement==='none' deixa de bater — rodar de novo é sempre um
+    // no-op. Uma decisão 'none' com confirmação já válida (timestamp ISO
+    // genuíno) nunca é tocada aqui, preservada byte a byte.
+    if(p.regraDistribuicao==='v2' && p.rrtRequirement==='none' && !hasValidRrtRequirementConfirmation(p)){
+      p.rrtRequirement='pending';
+      p.rrtRequirementConfirmedAt=null;
+      p.rrtRequirementConfirmedBy=null;
+    }
   });
   if(!off.recebiveis) off.recebiveis=[]; // {id,projetoId,descricao,valor,estado,dataPrevista,dataRecebimento,contaDestino,createdAt}
   off.recebiveis.forEach(r=>{ if(!r.createdAt) r.createdAt=r.id; if(r.dataRecebimento===undefined) r.dataRecebimento=null; });
@@ -3187,6 +3213,33 @@ function getProjetoRrtRequirement(projeto){
   const r=projeto&&projeto.rrtRequirement;
   return (r==='pending'||r==='none'||r==='one'||r==='two') ? r : 'pending';
 }
+// Achado P1 da reauditoria (3ª rodada): valida se uma string é EXATAMENTE
+// o formato produzido por new Date().toISOString() (ex.:
+// "2026-09-22T16:52:35.892Z") — distinto de isValidISODateString, que só
+// valida data pura ("AAAA-MM-DD"), sem hora. Exige round-trip exato
+// (new Date(v).toISOString()===v) pra rejeitar qualquer variação
+// (sem milissegundos, offset diferente de "Z", data que o parser
+// "conserta" silenciosamente, etc.) — não é suficiente "parsear sem erro".
+function isValidIsoTimestampString(v){
+  if(typeof v!=='string' || v==='') return false;
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(v)) return false;
+  const d=new Date(v);
+  if(Number.isNaN(d.getTime())) return false;
+  return d.toISOString()===v;
+}
+// Função central e pura: verdadeiro só quando existe uma PROVA persistida
+// e válida de que o usuário confirmou "este projeto não exige RRT". Achado
+// P1 da reauditoria (3ª rodada): checar só !!rrtRequirementConfirmedAt
+// (ou nem checar nada, como antes) permite que um backup/estado editado
+// externamente com rrtRequirement:'none' e confirmedAt:null (ou string
+// arbitrária tipo "sim"/"ontem") libere distribuição sem confirmação real.
+// rrtRequirementConfirmedBy continua OPCIONAL (pode ser null — o app não
+// tem identidade mais forte que o perfil ativo); só confirmedAt precisa
+// ser um timestamp ISO 8601 genuíno. Não se aplica a pending/one/two (essas
+// decisões não dependem de timestamp pra ficarem satisfeitas).
+function hasValidRrtRequirementConfirmation(projeto){
+  return isValidIsoTimestampString(projeto&&projeto.rrtRequirementConfirmedAt);
+}
 // Verdadeiro só quando a decisão de RRT está satisfeita. Achado P1 da
 // auditoria (reauditoria pós-implementação): usar só getProjetoRrtsValidas
 // (que FILTRA registros inválidos) deixava um registro corrompido/
@@ -3194,7 +3247,9 @@ function getProjetoRrtRequirement(projeto){
 // passar por 'none' (contagem de válidas = 0) e liberar a distribuição com
 // dedução zero, mesmo com um registro real ainda em projeto.rrts. Por isso
 // SEMPRE compara também a contagem BRUTA (todosOsRegistros, sem filtro):
-//   none: zero registros BRUTOS (nenhuma RRT, nem inválida, sobrando)
+//   none: zero registros BRUTOS E confirmação persistida válida (achado P1
+//     da 3ª reauditoria — nunca confia só na migração; essa checagem roda
+//     sempre, mesmo sobre estado alterado em memória sem migração)
 //   one:  exatamente um registro bruto E esse registro é válido
 //   two:  exatamente dois registros brutos, os dois válidos, um de cada tipo
 //   pending: nunca satisfeita
@@ -3206,7 +3261,7 @@ function projetoRrtRequirementSatisfeita(projeto){
   const todosOsRegistros=(projeto&&projeto.rrts)||[];
   const validas=getProjetoRrtsValidas(projeto);
   if(req==='pending') return false;
-  if(req==='none') return todosOsRegistros.length===0;
+  if(req==='none') return todosOsRegistros.length===0 && hasValidRrtRequirementConfirmation(projeto);
   if(req==='one') return todosOsRegistros.length===1 && validas.length===1;
   if(req==='two') return todosOsRegistros.length===2 && validas.length===2 && validas.some(r=>r.tipo==='projeto') && validas.some(r=>r.tipo==='execucao');
   return false;
@@ -3226,10 +3281,17 @@ function getProjetoRrtBlockMessage(projeto){
   const req=getProjetoRrtRequirement(projeto);
   if(req==='pending') return 'Distribuição bloqueada: informe se o projeto exige RRT.';
   if(req==='none'){
+    // Achado P1 (3ª reauditoria): 'none' sem confirmação válida persistida
+    // (backup/estado editado externamente, ou migração que ainda não rodou)
+    // nunca deve aparecer como "Não exige RRT" pra o usuário — mostra a
+    // MESMA mensagem de pending, já que na prática é uma decisão que ainda
+    // não tem prova de ter sido tomada de verdade.
+    if(!hasValidRrtRequirementConfirmation(projeto)) return 'Distribuição bloqueada: informe se o projeto exige RRT.';
     // Só chega aqui se sobrou algum registro de RRT (válido ou não) num
-    // projeto marcado como "não exige" — nunca deveria acontecer pelo
-    // fluxo normal (podeAlterarRrtRequirement bloqueia essa transição),
-    // mas dados importados/editados externamente podem cair aqui.
+    // projeto marcado como "não exige" com confirmação válida — nunca
+    // deveria acontecer pelo fluxo normal (podeAlterarRrtRequirement
+    // bloqueia essa transição), mas dados importados/editados externamente
+    // podem cair aqui.
     return 'Distribuição bloqueada: este projeto está marcado como "Não exige RRT", mas ainda tem RRT cadastrada — remova o registro antes.';
   }
   const validas=getProjetoRrtsValidas(projeto);

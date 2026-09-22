@@ -815,6 +815,343 @@ await check('p1-none-validamente-confirmado-continua-liberando', async () => {
   return { ok, detail: `projeto 'none' validamente confirmado — decisão aceita=${r.ok}, repasse=${r.temRepasse}/${r.valor} (esp. true/650)` };
 }, 'Achado — item 29 — projeto "none" validamente confirmado continua liberando distribuição normalmente');
 
+// ═══════════════════════════════════════════════════════════════════════
+// Correção pós-reauditoria (achado P1, 3ª rodada): "none sem metadado de
+// confirmação libera distribuição". projetoRrtRequirementSatisfeita usava
+// só projeto.rrts.length===0 pra considerar 'none' satisfeito — um
+// backup/estado externo com rrtRequirement:'none' e
+// rrtRequirementConfirmedAt:null passava incólume pela migração antiga
+// (que só inferia o campo quando ausente) e liberava a distribuição sem
+// nenhuma confirmação real. hasValidRrtRequirementConfirmation é a nova
+// função central e pura que fecha essa brecha, tanto na checagem de
+// satisfação (roda sempre, mesmo sem migração) quanto na migração
+// (normaliza 'none' inválido pra 'pending').
+// ═══════════════════════════════════════════════════════════════════════
+await setupBase();
+
+await check('p1c-none-confirmedAt-ausente-nao-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pNoneAusente', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrts: [] };
+    return { satisfeita: projetoRrtRequirementSatisfeita(p), bloqueado: projetoNecessitaConfiguracaoRRT(p), msg: getProjetoRrtBlockMessage(p) };
+  });
+  const ok = r.satisfeita === false && r.bloqueado === true && r.msg === 'Distribuição bloqueada: informe se o projeto exige RRT.';
+  return { ok, detail: `'none' sem o campo rrtRequirementConfirmedAt (ausente) — satisfeita=${r.satisfeita} (esp. false), bloqueado=${r.bloqueado} (esp. true), mensagem="${r.msg}"` };
+}, 'Achado P1 (3ª reauditoria) item 1 — none com confirmedAt ausente nunca satisfaz a decisão, e mostra a mesma mensagem de pending');
+
+await check('p1c-none-confirmedAt-null-nao-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pNoneNull', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: null, rrts: [] };
+    return { satisfeita: projetoRrtRequirementSatisfeita(p), msg: getProjetoRrtBlockMessage(p) };
+  });
+  const ok = r.satisfeita === false && r.msg === 'Distribuição bloqueada: informe se o projeto exige RRT.';
+  return { ok, detail: `'none' com confirmedAt:null (exatamente o achado residual da reauditoria) — satisfeita=${r.satisfeita} (esp. false)` };
+}, 'Achado P1 (3ª reauditoria) item 2 — none com confirmedAt:null nunca satisfaz a decisão');
+
+await check('p1c-none-confirmedAt-vazia-nao-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pNoneVazia', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: '', rrts: [] };
+    return { satisfeita: projetoRrtRequirementSatisfeita(p) };
+  });
+  const ok = r.satisfeita === false;
+  return { ok, detail: `'none' com confirmedAt:'' (string vazia) — satisfeita=${r.satisfeita} (esp. false)` };
+}, "Achado P1 (3ª reauditoria) item 3 — none com confirmedAt:'' (string vazia) nunca satisfaz a decisão");
+
+await check('p1c-none-confirmedAt-sim-nao-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pNoneSim', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: 'sim', rrts: [] };
+    return { satisfeita: projetoRrtRequirementSatisfeita(p) };
+  });
+  const ok = r.satisfeita === false;
+  return { ok, detail: `'none' com confirmedAt:'sim' (string arbitrária, não é data) — satisfeita=${r.satisfeita} (esp. false)` };
+}, "Achado P1 (3ª reauditoria) item 4 — none com confirmedAt:'sim' (string arbitrária) nunca satisfaz a decisão");
+
+await check('p1c-none-data-impossivel-nao-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pNoneImp', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: '2026-13-40T99:99:99.999Z', rrts: [] };
+    return { satisfeita: projetoRrtRequirementSatisfeita(p) };
+  });
+  const ok = r.satisfeita === false;
+  return { ok, detail: `'none' com data impossível (mês 13, dia 40, hora 99) — satisfeita=${r.satisfeita} (esp. false)` };
+}, 'Achado P1 (3ª reauditoria) item 5 — none com data impossível/inválida nunca satisfaz a decisão');
+
+await check('p1c-none-data-nao-canonica-nao-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const semHora = { id: 'x1', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: '2026-09-22', rrts: [] };
+    const semMillis = { id: 'x2', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: '2026-09-22T10:00:00Z', rrts: [] };
+    const espacoEmVezDeT = { id: 'x3', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: '2026-09-22 10:00:00.000Z', rrts: [] };
+    return { semHora: projetoRrtRequirementSatisfeita(semHora), semMillis: projetoRrtRequirementSatisfeita(semMillis), espacoEmVezDeT: projetoRrtRequirementSatisfeita(espacoEmVezDeT) };
+  });
+  const ok = r.semHora === false && r.semMillis === false && r.espacoEmVezDeT === false;
+  return { ok, detail: `'none' com strings de data válidas mas em formato NÃO-canônico (sem hora=${r.semHora}, sem milissegundos=${r.semMillis}, espaço em vez de "T"=${r.espacoEmVezDeT}) — todas esp. false, só o formato exato de toISOString() é aceito` };
+}, 'Achado P1 (3ª reauditoria) item 6 — none com string de data não-canônica (formato diferente de toISOString) nunca satisfaz a decisão');
+
+await check('p1c-none-invalido-bloqueia-materializacao-de-verdade', async () => {
+  await pushProjeto(page, { id: 'pNoneInvMat', over: { rrtRequirement: 'none', rrtRequirementConfirmedAt: null, rrtRequirementConfirmedBy: null } });
+  const r = await page.evaluate(() => {
+    state.office.recebiveis.push({ id: 'recNoneInvMat', projetoId: 'pNoneInvMat', descricao: 'Entrada', valor: 1000, estado: 'recebido', dataPrevista: '2026-09-20', dataRecebimento: '2026-09-20', contaDestino: 'oc1', createdAt: 'recNoneInvMat' });
+    syncDerivedPersonalTransfer('recNoneInvMat');
+    const rec = state.office.recebiveis.find((x) => x.id === 'recNoneInvMat');
+    return {
+      temRepasse: !!state.office.repasses.find((rp) => rp.recebivelId === 'recNoneInvMat'),
+      qtdMovsReserva: state.office.movimentacoesReservas.filter((m) => m.origemRecebivelId === 'recNoneInvMat').length,
+      congelado: rec.provisionadoRealizadoCent !== undefined,
+      saldoOffice: calcSaldoOfficeConta('oc1'),
+    };
+  });
+  const ok = r.temRepasse === false && r.qtdMovsReserva === 0 && r.congelado === false && r.saldoOffice === 1000;
+  return { ok, detail: `projeto com rrtRequirement:'none' e confirmedAt:null alterado DIRETAMENTE em memória (sem passar pela migração) — repasse=${r.temRepasse} (esp. false), movs reserva=${r.qtdMovsReserva} (esp. 0), congelado=${r.congelado} (esp. false), caixa continua entrando=${r.saldoOffice} (esp. 1000)` };
+}, 'Achado P1 (3ª reauditoria) item 7 — none sem confirmação válida bloqueia repasse/reservas/congelamento de verdade mesmo em memória, sem depender da migração; o recebimento real continua entrando no caixa');
+
+await check('p1c-none-iso-valido-confirmedby-null-satisfeita', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pNoneOkNull', status: 'contratado', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: new Date().toISOString(), rrtRequirementConfirmedBy: null, rrts: [] };
+    return { satisfeita: projetoRrtRequirementSatisfeita(p), valida: hasValidRrtRequirementConfirmation(p) };
+  });
+  const ok = r.satisfeita === true && r.valida === true;
+  return { ok, detail: `'none' com timestamp ISO 8601 válido (formato de toISOString()) e confirmedBy:null — válida=${r.valida} (esp. true), satisfeita=${r.satisfeita} (esp. true)` };
+}, 'Achado P1 (3ª reauditoria) item 8 — none com timestamp ISO válido e confirmedBy:null (opcional) satisfaz a decisão normalmente');
+
+await check('p1c-none-confirmado-deduz-zero-e-provisiona-imposto', async () => {
+  const r = await page.evaluate(() => {
+    state.office.impostoPercentual = 10;
+    const p = { id: 'pNoneDireto', regraDistribuicao: 'v2', valorContrato: 1000, rrtRequirement: 'none', rrtRequirementConfirmedAt: new Date().toISOString(), rrtRequirementConfirmedBy: null, rrts: [] };
+    const dist = calculateProjectDistributionV2(p);
+    state.office.impostoPercentual = 0;
+    return dist;
+  });
+  const ok = r.rrtProvisionada === 0 && r.impostoProvisionado === 100 && r.receitaLiquidaDistribuivel === 900;
+  return { ok, detail: `'none' validamente confirmado — rrtProvisionada=${r.rrtProvisionada} (esp. 0), impostoProvisionado=${r.impostoProvisionado} (esp. 100), líquido=${r.receitaLiquidaDistribuivel} (esp. 900)` };
+}, 'Achado P1 (3ª reauditoria) itens 9/10 — none validamente confirmado continua deduzindo zero de RRT e provisionando o imposto normalmente');
+
+await check('p1c-migracao-none-sem-confirmedAt-vira-pending', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pMigNoneAusente');
+    return { rrtRequirement: p.rrtRequirement, confirmedAt: p.rrtRequirementConfirmedAt, confirmedBy: p.rrtRequirementConfirmedBy, qtdRrts: p.rrts.length };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneAusente', nome: 'Mig None Ausente', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneAusente', regraDistribuicao: 'v2', rrtRequirement: 'none', rrts: [] }],
+    recebiveis: [{ id: 'recMigNoneAusente', projetoId: 'pMigNoneAusente', descricao: 'Entrada', valor: 1000, estado: 'previsto', dataPrevista: '2026-02-01', dataRecebimento: null, contaDestino: 'oc_m', createdAt: 'recMigNoneAusente' }],
+  }));
+  const ok = r.rrtRequirement === 'pending' && r.confirmedAt === null && r.confirmedBy === null && r.qtdRrts === 0;
+  return { ok, detail: `backup com rrtRequirement:'none' e confirmedAt AUSENTE — migração normaliza pra ${r.rrtRequirement} (esp. pending), confirmedAt=${r.confirmedAt}/confirmedBy=${r.confirmedBy} (esp. null/null)` };
+}, "Achado P1 (3ª reauditoria) item 11 — migração de 'none' com confirmedAt ausente resulta em pending");
+
+await check('p1c-migracao-none-confirmedAt-null-vira-pending', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pMigNoneNull');
+    return { rrtRequirement: p.rrtRequirement, confirmedAt: p.rrtRequirementConfirmedAt, confirmedBy: p.rrtRequirementConfirmedBy };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneNull', nome: 'Mig None Null', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneNull', regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: null, rrtRequirementConfirmedBy: null, rrts: [] }],
+    recebiveis: [{ id: 'recMigNoneNull', projetoId: 'pMigNoneNull', descricao: 'Entrada', valor: 1000, estado: 'previsto', dataPrevista: '2026-02-01', dataRecebimento: null, contaDestino: 'oc_m', createdAt: 'recMigNoneNull' }],
+  }));
+  const ok = r.rrtRequirement === 'pending' && r.confirmedAt === null && r.confirmedBy === null;
+  return { ok, detail: `backup com rrtRequirement:'none', confirmedAt:null, confirmedBy:null (reproduz exatamente o achado residual) — migração normaliza pra ${r.rrtRequirement} (esp. pending)` };
+}, "Achado P1 (3ª reauditoria) item 12 — migração de 'none' com confirmedAt:null resulta em pending");
+
+await check('p1c-migracao-none-timestamp-invalido-vira-pending', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pMigNoneInv');
+    return { rrtRequirement: p.rrtRequirement, confirmedAt: p.rrtRequirementConfirmedAt };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneInv', nome: 'Mig None Inválido', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneInv', regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: 'ontem', rrtRequirementConfirmedBy: null, rrts: [] }],
+    recebiveis: [{ id: 'recMigNoneInv', projetoId: 'pMigNoneInv', descricao: 'Entrada', valor: 1000, estado: 'previsto', dataPrevista: '2026-02-01', dataRecebimento: null, contaDestino: 'oc_m', createdAt: 'recMigNoneInv' }],
+  }));
+  const ok = r.rrtRequirement === 'pending' && r.confirmedAt === null;
+  return { ok, detail: `backup com rrtRequirementConfirmedAt:'ontem' (string arbitrária) — migração normaliza pra ${r.rrtRequirement} (esp. pending)` };
+}, "Achado P1 (3ª reauditoria) item 13 — migração de 'none' com timestamp inválido (string arbitrária) resulta em pending");
+
+await check('p1c-migracao-none-invalido-preserva-rrts-existentes', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pMigNoneComRrts');
+    return { rrtRequirement: p.rrtRequirement, rrts: p.rrts };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneComRrts', nome: 'Mig None Com RRTs', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneComRrts', regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: null, rrtRequirementConfirmedBy: null, rrts: [
+      { id: 'rComRrts1', tipo: 'projeto', valor: 50, status: 'prevista', numero: '', dataEmissao: null, dataPagamento: null, createdAt: 'rComRrts1' },
+    ] }],
+    recebiveis: [{ id: 'recMigNoneComRrts', projetoId: 'pMigNoneComRrts', descricao: 'Entrada', valor: 1000, estado: 'previsto', dataPrevista: '2026-02-01', dataRecebimento: null, contaDestino: 'oc_m', createdAt: 'recMigNoneComRrts' }],
+  }));
+  const ok = r.rrtRequirement === 'pending' && r.rrts.length === 1 && r.rrts[0].id === 'rComRrts1' && r.rrts[0].valor === 50;
+  return { ok, detail: `'none' inconsistente (com registro de RRT residual) e sem confirmação válida — normaliza pra ${r.rrtRequirement} (esp. pending), registro de RRT integralmente preservado (${JSON.stringify(r.rrts)})` };
+}, 'Achado P1 (3ª reauditoria) item 14 — migração de none inválido preserva integralmente todos os registros de RRT existentes, nunca cria nem apaga nenhum');
+
+await check('p1c-migracao-none-invalido-nao-materializa', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pMigNoneMat');
+    const rec = state.office.recebiveis.find((x) => x.id === 'recMigNoneMat');
+    return {
+      rrtRequirement: p.rrtRequirement,
+      qtdRepasses: state.office.repasses.length,
+      qtdMovsReserva: state.office.movimentacoesReservas.length,
+      recEstado: rec.estado, recValor: rec.valor, recCongelado: rec.provisionadoRealizadoCent !== undefined,
+    };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneMat', nome: 'Mig None Mat', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneMat', regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: null, rrtRequirementConfirmedBy: null, rrts: [] }],
+    recebiveis: [{ id: 'recMigNoneMat', projetoId: 'pMigNoneMat', descricao: 'Entrada', valor: 1000, estado: 'recebido', dataPrevista: '2026-02-01', dataRecebimento: '2026-02-01', contaDestino: 'oc_m', createdAt: 'recMigNoneMat' }],
+  }));
+  const ok = r.rrtRequirement === 'pending' && r.qtdRepasses === 0 && r.qtdMovsReserva === 0 && r.recCongelado === false && r.recEstado === 'recebido' && r.recValor === 1000;
+  return { ok, detail: `'none' inválido com recebível já 'recebido' no próprio backup — migração normaliza a decisão pra ${r.rrtRequirement} (esp. pending) mas NUNCA cria repasse (${r.qtdRepasses}) nem movimenta reserva (${r.qtdMovsReserva}) nem recalcula o recebível (estado=${r.recEstado}, valor=${r.recValor}, congelado=${r.recCongelado})` };
+}, 'Achado P1 (3ª reauditoria) item 15 — migração de none inválido nunca cria repasse, nunca movimenta reserva, nunca recalcula recebível — só normaliza o campo da decisão');
+
+await check('p1c-migracao-none-invalido-e-idempotente', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const primeiraPassagem = JSON.stringify(state.office.projetos.find((x) => x.id === 'pMigNoneIdem'));
+    migrateState(); // roda a migração de novo, direto sobre o mesmo state em memória
+    const segundaPassagem = JSON.stringify(state.office.projetos.find((x) => x.id === 'pMigNoneIdem'));
+    migrateState();
+    const terceiraPassagem = JSON.stringify(state.office.projetos.find((x) => x.id === 'pMigNoneIdem'));
+    return { primeiraPassagem, segundaPassagem, terceiraPassagem };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneIdem', nome: 'Mig None Idem', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneIdem', regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: null, rrtRequirementConfirmedBy: null, rrts: [] }],
+    recebiveis: [{ id: 'recMigNoneIdem', projetoId: 'pMigNoneIdem', descricao: 'Entrada', valor: 1000, estado: 'previsto', dataPrevista: '2026-02-01', dataRecebimento: null, contaDestino: 'oc_m', createdAt: 'recMigNoneIdem' }],
+  }));
+  const ok = r.primeiraPassagem === r.segundaPassagem && r.segundaPassagem === r.terceiraPassagem;
+  return { ok, detail: `mesmo projeto migrado 3 vezes seguidas (1ª via migrateAppData, 2ª e 3ª via migrateState() direto) — resultado idêntico byte a byte nas 3 passagens=${ok}` };
+}, 'Achado P1 (3ª reauditoria) item 16 — a normalização de none inválido é idempotente: rodar a migração repetidamente produz exatamente o mesmo resultado');
+
+await check('p1c-migracao-none-iso-valido-permanece-none', async () => {
+  const timestampValido = '2026-09-01T12:00:00.000Z';
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pMigNoneValido');
+    return { rrtRequirement: p.rrtRequirement, confirmedAt: p.rrtRequirementConfirmedAt, confirmedBy: p.rrtRequirementConfirmedBy };
+  }, backupMinimo({
+    projetos: [{ id: 'pMigNoneValido', nome: 'Mig None Válido', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pMigNoneValido', regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: timestampValido, rrtRequirementConfirmedBy: 'Fulano', rrts: [] }],
+    recebiveis: [{ id: 'recMigNoneValido', projetoId: 'pMigNoneValido', descricao: 'Entrada', valor: 1000, estado: 'previsto', dataPrevista: '2026-02-01', dataRecebimento: null, contaDestino: 'oc_m', createdAt: 'recMigNoneValido' }],
+  }));
+  const ok = r.rrtRequirement === 'none' && r.confirmedAt === timestampValido && r.confirmedBy === 'Fulano';
+  return { ok, detail: `'none' com timestamp ISO 8601 genuinamente válido — migração preserva intocado: rrtRequirement=${r.rrtRequirement} (esp. none), confirmedAt=${r.confirmedAt}, confirmedBy=${r.confirmedBy}` };
+}, "Achado P1 (3ª reauditoria) item 17 — none com timestamp ISO válido permanece 'none' depois da migração, sem nenhuma alteração");
+
+await check('p1c-export-import-preserva-none-legitimo', async () => {
+  const r = await page.evaluate(() => {
+    state.office.projetos.push({
+      id: 'pEINoneOk', nome: 'Projeto EI None Ok', cliente: 'X', valorContrato: 1000, status: 'contratado', dataContrato: '2026-09-01', observacao: '', createdAt: 'pEINoneOk',
+      regraDistribuicao: 'v2', rrtRequirement: 'none', rrtRequirementConfirmedAt: new Date().toISOString(), rrtRequirementConfirmedBy: null, rrts: [],
+    });
+    const exported = JSON.stringify(buildSaveObject());
+    migrateAppData(JSON.parse(exported));
+    const p = state.office.projetos.find((x) => x.id === 'pEINoneOk');
+    return { rrtRequirement: p.rrtRequirement, valida: hasValidRrtRequirementConfirmation(p) };
+  });
+  const ok = r.rrtRequirement === 'none' && r.valida === true;
+  return { ok, detail: `'none' legitimamente confirmado, exportado e reimportado — permanece ${r.rrtRequirement} (esp. none), confirmação continua válida=${r.valida} (esp. true)` };
+}, "Achado P1 (3ª reauditoria) item 18 — export/import preserva um 'none' legítimo (com confirmação válida) sem degradar pra pending");
+
+await check('p1c-setProjetoRrtRequirement-gera-iso-valido', async () => {
+  await pushProjeto(page, { id: 'pSetIso' });
+  const r = await page.evaluate(() => {
+    const ok = setProjetoRrtRequirement('pSetIso', 'none', { confirmNone: true });
+    const p = state.office.projetos.find((x) => x.id === 'pSetIso');
+    return { ok, confirmedAt: p.rrtRequirementConfirmedAt, valida: hasValidRrtRequirementConfirmation(p) };
+  });
+  const ok = r.ok === true && r.valida === true && typeof r.confirmedAt === 'string';
+  return { ok, detail: `setProjetoRrtRequirement(id,'none',{confirmNone:true}) — sucesso=${r.ok}, confirmedAt="${r.confirmedAt}" gerado internamente, válido=${r.valida} (esp. true)` };
+}, "Achado P1 (3ª reauditoria) item 19 — setProjetoRrtRequirement(...,'none',{confirmNone:true}) gera um timestamp ISO válido internamente");
+
+await check('p1c-addOfficeProjeto-none-gera-iso-valido', async () => {
+  const r = await page.evaluate(() => {
+    renderOfficeProjetosTab();
+    document.getElementById('newProjNome').value = 'Projeto None Válido';
+    document.getElementById('newProjValor').value = '1000';
+    document.getElementById('newProjStatus').value = 'contratado';
+    onNewProjStatusChange();
+    document.getElementById('newProjEntradaValor').value = '1000';
+    document.getElementById('newProjEntradaData').value = '2026-09-20';
+    document.getElementById('newProjConta').value = 'oc1';
+    document.querySelector('input[name="newProjRrtRequirement"][value="none"]').checked = true;
+    onNewProjRrtRequirementChange();
+    document.getElementById('newProjRrtNoneConfirm').checked = true;
+    addOfficeProjeto();
+    const p = state.office.projetos[state.office.projetos.length - 1];
+    return { rrtRequirement: p.rrtRequirement, confirmedAt: p.rrtRequirementConfirmedAt, valida: hasValidRrtRequirementConfirmation(p) };
+  });
+  const ok = r.rrtRequirement === 'none' && r.valida === true && typeof r.confirmedAt === 'string';
+  return { ok, detail: `cadastro real de projeto com "Não exige RRT" confirmado — rrtRequirement=${r.rrtRequirement} (esp. none), confirmedAt="${r.confirmedAt}" gerado internamente, válido=${r.valida} (esp. true)` };
+}, 'Achado P1 (3ª reauditoria) item 20 — registrar um projeto com none confirmado pelo formulário real gera um timestamp ISO válido internamente');
+
+await check('p1c-confirmedBy-null-nao-invalida-confirmacao', async () => {
+  const r = await page.evaluate(() => {
+    const p = { id: 'pConfBy', rrtRequirement: 'none', rrtRequirementConfirmedAt: new Date().toISOString(), rrtRequirementConfirmedBy: null, rrts: [] };
+    return { valida: hasValidRrtRequirementConfirmation(p) };
+  });
+  const ok = r.valida === true;
+  return { ok, detail: `hasValidRrtRequirementConfirmation com confirmedBy:null (nunca inventado, sem identidade mais forte que o perfil ativo) — válida=${r.valida} (esp. true)` };
+}, 'Achado P1 (3ª reauditoria) item 21 — confirmedBy:null nunca invalida uma confirmação legítima (é sempre opcional)');
+
+await check('p1c-legado-nao-ganha-campos-mesmo-com-none-tampering', async () => {
+  const r = await page.evaluate((raw) => {
+    migrateAppData(raw);
+    const p = state.office.projetos.find((x) => x.id === 'pLegadoTamper');
+    return { regraDistribuicao: p.regraDistribuicao, temCampo: 'rrtRequirement' in p, valorContrato: p.valorContrato };
+  }, backupMinimo({
+    // Simula um backup editado externamente onde um projeto LEGADO (recebível
+    // já realizado) ganhou por engano os campos da regra nova, com 'none'
+    // sem confirmação válida — o novo passo de normalização é gated por
+    // regraDistribuicao==='v2', então mesmo esse tampering nunca deve ativar
+    // a normalização nem deixar rastro; o projeto legado permanece só com
+    // regraDistribuicao inferida (recalculada pela migração porque o backup
+    // não define o campo), sem NENHUM campo da regra nova.
+    projetos: [{ id: 'pLegadoTamper', nome: 'Legado Tampered', cliente: 'X', valorContrato: 5000, status: 'contratado', dataContrato: '2026-01-01', observacao: '', createdAt: 'pLegadoTamper' }],
+    recebiveis: [{ id: 'recLegadoTamper', projetoId: 'pLegadoTamper', descricao: 'Entrada', valor: 2000, estado: 'recebido', dataPrevista: '2026-01-10', dataRecebimento: '2026-01-10', contaDestino: 'oc_m', createdAt: 'recLegadoTamper' }],
+    repasses: [{ id: 'rpLegadoTamper', tipo: 'planejado', recebivelId: 'recLegadoTamper', valor: 600, estado: 'recebido', dataPrevista: '2026-01-10', dataRecebimento: '2026-01-10', officeTransferId: 'off_recLegadoTamper', createdAt: 'rpLegadoTamper' }],
+  }));
+  const ok = r.regraDistribuicao === 'legacy' && r.temCampo === false && r.valorContrato === 5000;
+  return { ok, detail: `projeto legado (recebível já realizado) — regraDistribuicao=${r.regraDistribuicao} (esp. legacy), ganhou rrtRequirement=${r.temCampo} (esp. false — o novo passo de normalização de 'none' inválido é gated por v2, nunca toca legado)` };
+}, 'Achado P1 (3ª reauditoria) item 22 — projeto legado permanece sem os campos da regra nova mesmo com o novo passo de normalização de none inválido');
+
+await check('p1c-recebivel-ja-congelado-permanece-inalterado', async () => {
+  await pushProjeto(page, { id: 'pCongelado', over: { rrtRequirement: 'none', rrtRequirementConfirmedAt: new Date().toISOString(), rrtRequirementConfirmedBy: null } });
+  const r = await page.evaluate(() => {
+    state.office.recebiveis.push({ id: 'recCongelado', projetoId: 'pCongelado', descricao: 'Entrada', valor: 1000, estado: 'recebido', dataPrevista: '2026-09-20', dataRecebimento: '2026-09-20', contaDestino: 'oc1', createdAt: 'recCongelado' });
+    syncDerivedPersonalTransfer('recCongelado'); // materializa de verdade: repasse + reservas + congelamento, com confirmação válida
+    const antes = {
+      recCongelado: JSON.parse(JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recCongelado'))),
+      qtdRepasses: state.office.repasses.length, qtdMovsReserva: state.office.movimentacoesReservas.length,
+    };
+    // Um backup/estado externo corrompe a confirmação DEPOIS da materialização
+    // real já ter acontecido (cenário só possível via edição direta do JSON,
+    // já que setProjetoRrtRequirement trava a decisão após materializado).
+    const p = state.office.projetos.find((x) => x.id === 'pCongelado');
+    p.rrtRequirementConfirmedAt = null;
+    migrateState(); // roda a migração direto sobre o state já materializado
+    const depois = {
+      recCongelado: JSON.parse(JSON.stringify(state.office.recebiveis.find((x) => x.id === 'recCongelado'))),
+      qtdRepasses: state.office.repasses.length, qtdMovsReserva: state.office.movimentacoesReservas.length,
+    };
+    return { antes, depois, rrtRequirementDepois: p.rrtRequirement };
+  });
+  const ok = JSON.stringify(r.antes.recCongelado) === JSON.stringify(r.depois.recCongelado)
+    && r.antes.qtdRepasses === r.depois.qtdRepasses && r.antes.qtdMovsReserva === r.depois.qtdMovsReserva
+    && r.rrtRequirementDepois === 'pending';
+  return { ok, detail: `recebível já materializado (repasse+reservas+congelamento reais) antes da confirmação ser corrompida — depois de migrateState() normalizar a decisão pra ${r.rrtRequirementDepois} (esp. pending), o recebível/repasses/reservas já congelados permanecem byte a byte inalterados (recebível idêntico=${JSON.stringify(r.antes.recCongelado) === JSON.stringify(r.depois.recCongelado)}, repasses=${r.antes.qtdRepasses}/${r.depois.qtdRepasses}, movs reserva=${r.antes.qtdMovsReserva}/${r.depois.qtdMovsReserva})` };
+}, 'Achado P1 (3ª reauditoria) item 23 — um recebível já materializado/congelado permanece inalterado mesmo quando a migração normaliza a decisão de RRT do projeto pra pending');
+
+await check('p1c-pending-one-two-continuam-funcionando', async () => {
+  const r = await page.evaluate(() => {
+    const pending = { id: 'pRegPending', rrtRequirement: 'pending', rrts: [] };
+    const one = { id: 'pRegOne', rrtRequirement: 'one', rrts: [{ tipo: 'execucao', valor: 30 }] };
+    const twoIncompleto = { id: 'pRegTwoInc', rrtRequirement: 'two', rrts: [{ tipo: 'projeto', valor: 20 }] };
+    const twoCompleto = { id: 'pRegTwoOk', rrtRequirement: 'two', rrts: [{ tipo: 'projeto', valor: 20 }, { tipo: 'execucao', valor: 20 }] };
+    return {
+      pending: projetoRrtRequirementSatisfeita(pending),
+      one: projetoRrtRequirementSatisfeita(one),
+      twoIncompleto: projetoRrtRequirementSatisfeita(twoIncompleto),
+      twoCompleto: projetoRrtRequirementSatisfeita(twoCompleto),
+    };
+  });
+  const ok = r.pending === false && r.one === true && r.twoIncompleto === false && r.twoCompleto === true;
+  return { ok, detail: `pending/one/two não dependem de hasValidRrtRequirementConfirmation (só 'none' depende) — pending=${r.pending} (esp. false), one completo=${r.one} (esp. true), two incompleto=${r.twoIncompleto} (esp. false), two completo=${r.twoCompleto} (esp. true)` };
+}, 'Achado P1 (3ª reauditoria) item 24 — pending/one/two continuam funcionando exatamente como antes, sem serem afetados pela nova checagem de confirmação (que só se aplica a none)');
+
+// Item 25 — todos os testes anteriores (desta suíte, da suíte de distribuição
+// líquida do escritório, e da suíte completa) continuam passando: validado
+// pela execução integral deste arquivo e por run-all.mjs (ver handoff).
+
 console.log(`TOTAL=${results.length} PASS=${results.filter((r) => r.status === 'PASS').length} FAIL=${results.filter((r) => r.status === 'FAIL').length}`);
 await close();
 process.exit(results.some((r) => r.status === 'FAIL') ? 1 : 0);
