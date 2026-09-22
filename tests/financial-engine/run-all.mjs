@@ -109,6 +109,14 @@ const FILES = [
   // Cobre as visões agrupada e filtrada, e o caso de fatura com ajuste
   // positivo e nenhuma compra lançada.
   'gate5-cards-invoices-adjusted-total.test.mjs',
+  // Gate 5 (UAT) — correção da regressão da terceira rodada de auditoria
+  // (docs/audits/CARDS-INVOICES-ADJUSTED-TOTAL-REVIEW.md, base 2074d42): o
+  // grupo "Outros" (compras de um cartão personalizado excluído, preservadas
+  // por delCartao) passou a mostrar R$ 0,00 na visão agrupada porque seu id
+  // interno `_outros` não existe em calcByCardForMonth. Volta a usar g.total
+  // como fallback só para esse caso, sem mexer no total ajustado dos cartões
+  // reais nem na política de exclusão de cartões.
+  'gate5-cards-orphan-total.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

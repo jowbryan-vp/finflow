@@ -5115,8 +5115,13 @@ function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
     // Total efetivo do cartão = mesma fonte de Cartões/Faturas e do pagamento
     // (calcByCardForMonth, que já aplica o ajuste manual de fatura). Uma
     // fatura ajustada e sem nenhuma compra lançada ainda precisa aparecer
-    // aqui — senão o resumo "esconde" uma fatura a pagar.
-    const totalEfetivo = isCC ? (byCardEfetivo[g.card.id]||0) : g.total;
+    // aqui — senão o resumo "esconde" uma fatura a pagar. Só usar esse total
+    // quando o cartão tiver chave real em calcByCardForMonth: o grupo
+    // "Outros" (compras de um cartão excluído, preservadas por delCartao) não
+    // existe nessa estrutura, e cair em 0 esconderia o valor real da compra —
+    // nesse caso preserva-se a soma das parcelas (g.total).
+    const temChaveReal = isCC && byCardEfetivo && Object.prototype.hasOwnProperty.call(byCardEfetivo,g.card.id);
+    const totalEfetivo = temChaveReal ? byCardEfetivo[g.card.id] : g.total;
     if(!g.items.length && !(isCC && totalEfetivo!==0)) return;
     if(isCC){
       const paga=isFaturaPaga(g.card.id,currentMonth,currentYear);
