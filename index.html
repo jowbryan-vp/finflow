@@ -5692,8 +5692,24 @@ function addCartao(){
   state.cards.push({id,name,color,fecha,paga});scheduleSave();renderCartoes();
   document.getElementById('newCardName').value='';toast('Cartão adicionado!');
 }
+// Um cartão personalizado só pode ser excluído vazio e sem histórico —
+// calcSaldoConta e calcByCardForMonth percorrem state.cards pra achar
+// faturas pagas e ajustes; excluir um cartão com histórico faz esse
+// histórico "sumir" do saldo mesmo com despesa/pagamento/vínculo ainda
+// gravados (achado da auditoria docs/audits/
+// CARDS-INVOICES-ORPHAN-TOTAL-FINAL-REVIEW.md). Não migra, apaga nem
+// reclassifica nada — só impede a exclusão enquanto houver vínculo.
+function cartaoTemHistorico(id){
+  if(state.despesas.some(d=>d.cartao===id)) return true;
+  const pertenceAoCartao=(k)=>k.replace(/_\d{4}-\d{2}$/,'')===id;
+  if(Object.keys(state.faturasPagas||{}).some(pertenceAoCartao)) return true;
+  if(Object.keys(state.faturasContas||{}).some(pertenceAoCartao)) return true;
+  if(Object.keys(state.faturasAjustes||{}).some(pertenceAoCartao)) return true;
+  return false;
+}
 function delCartao(id){
   if(DEFAULT_CARDS.find(c=>c.id===id)){toast('Não é possível remover cartões padrão');return;}
+  if(cartaoTemHistorico(id)){toast('Este cartão possui lançamentos ou histórico financeiro e não pode ser removido');return;}
   state.cards=state.cards.filter(c=>c.id!==id);scheduleSave();renderCartoes();toast('Removido');
 }
 function openEditCartao(id){

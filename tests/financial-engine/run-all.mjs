@@ -117,6 +117,17 @@ const FILES = [
   // como fallback só para esse caso, sem mexer no total ajustado dos cartões
   // reais nem na política de exclusão de cartões.
   'gate5-cards-orphan-total.test.mjs',
+  // Gate 5 (UAT) — correção do risco crítico encontrado pela auditoria Codex
+  // ao revisar o fallback do grupo Outros (docs/audits/
+  // CARDS-INVOICES-ORPHAN-TOTAL-FINAL-REVIEW.md, base c4f33df): delCartao só
+  // bloqueava cartões padrão. Excluir um cartão personalizado com histórico
+  // (despesa, fatura paga, conta de pagamento ou ajuste vinculado) fazia esse
+  // histórico "sumir" do saldo (calcSaldoConta/calcByCardForMonth percorrem
+  // state.cards), mesmo com state.despesas/faturasPagas/faturasContas ainda
+  // gravados. Agora delCartao bloqueia a exclusão de cartão personalizado com
+  // qualquer vínculo em state.despesas/faturasPagas/faturasContas/
+  // faturasAjustes; só cartão vazio e sem histórico continua excluível.
+  'gate5-cards-delete-integrity.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
