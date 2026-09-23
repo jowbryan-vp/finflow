@@ -250,9 +250,12 @@ soma completa da fixture e esse total no resumo; status "Pendente";
 `NO_SCRIPT_ERRORS` continua ao final cobrindo todos os casos (console
 vazio).
 
-Reprodução confirmada: com `index.html` do HEAD-base (correção removida
-temporariamente via `git stash` só desse arquivo), os casos 13–18 falham
-(`campoVazio:false`); com a correção, passam.
+**Correção desta afirmação (reauditoria P3):** a versão original deste
+parágrafo dizia que os casos 13–18 falhavam sem a correção. Isso era
+falso: só 13–16 dependiam da limpeza; 17 e 18 passavam sem ela (as falhas
+deles observadas naquela rodada vinham de uma fixture com datas após o
+fechamento, depois ajustada). A evidência real, após o fortalecimento dos
+casos 17 e 18, está na seção "Fortalecimento dos casos 17 e 18" abaixo.
 
 ### Resultados
 
@@ -288,4 +291,116 @@ cabeçalho de período:
   disponível no ambiente).
 - Verificação no navegador feita no harness isolado com fixture sintética,
   não na instância autenticada do app.
+- Decisão final cabe à reauditoria Codex.
+
+---
+
+## Fortalecimento dos casos 17 e 18 (reauditoria Codex — P3)
+
+Fluxo: Claude corrige → Codex reaudita. Só testes e este handoff; os
+relatórios Codex não foram editados.
+
+### Proveniência
+
+- Branch: `fix/invoice-transaction-search` (sem checkout/merge/rebase/push;
+  `main` não tocada — `origin/main` continua em
+  `71edc74867d89d73832875c4ab456491f207c189`; não há `main` local).
+- Hash-base recebido: `8720eee07e55f85203c9113b71dc8a8e846b7861`
+  (`docs: registra reauditoria da correção da pesquisa`), confirmado com
+  working tree limpa e diff vazio; `98ed826` (funcional) e `6f4f7be`
+  (handoff) conferidos na ancestralidade.
+- Commit de testes: `9d88ca7971ca442793b2a3e16159874ba1856e43`
+  (`test: casos 17/18 da pesquisa na fatura dependem da limpeza de changeMonth`).
+- Commit documental: este acréscimo (ver `git log -1`).
+- `index.html` byte a byte inalterado nesta rodada: blob
+  `be7f62c7cb384b48230493e20a8a877228ddce03` em `8720eee` e no HEAD final.
+
+### Problema (P3)
+
+17 sobrescrevia o termo residual (`NETFLIX`) logo após `changeMonth(1)`,
+antes de qualquer verificação; 18 testava só troca de cartão e
+sair/reabrir, sem passar por `changeMonth()`. Ambos passavam sem a
+limpeza.
+
+### Alterações em `gate5-invoice-transaction-search.test.mjs`
+
+- Auxiliares comuns aos casos 13–18:
+  - `pesquisarNaFatura` digita o termo e confirma que ele filtra de fato
+    (exatamente 1 de ≥ 2 lançamentos da competência visível). Dezembro
+    ganhou um 2º lançamento (`Uber Dezembro`) para "natal" filtrar de
+    verdade.
+  - `trocarMesELerFatura(dir)` chama o `changeMonth(dir)` real e lê a
+    fatura nova imediatamente, sem digitar nem limpar nada no meio.
+  - `limpezaOk` agrupa as asserções que dependem da limpeza: período
+    esperado, campo vazio, query efetiva vazia (o campo é a única fonte do
+    termo), todos os lançamentos da nova competência visíveis, sem
+    "Nenhum lançamento encontrado…", sem itens do mês anterior.
+- Cada caso 13–18 faz o próprio `loadState`; nenhum depende de outro.
+- **Caso 17:** setembro com "amazon" ativo e filtrando → `changeMonth(1)`
+  → **nova asserção `limpezaOk(troca, '10/2026')`** imediatamente após a
+  troca. Só depois repete o objetivo original: "NETFLIX" filtra, "amazon"
+  mostra a mensagem legítima de sem resultado, Limpar restaura,
+  `state.despesas` intacto.
+- **Caso 18:** mantém o objetivo original (troca de cartão e
+  sair/reabrir limpam e mostram a fatura completa), intercalado com duas
+  trocas reais com pesquisa ativa e confirmada:
+  - out "netflix" → `changeMonth(-1)` → **nova asserção
+    `limpezaOk(trocaVolta, '9/2026')`**;
+  - set "farmacia" → `changeMonth(1)` → **nova asserção
+    `limpezaOk(trocaIda, '10/2026')`**;
+  - mais `state.despesas` byte a byte intacto ao final.
+- `FINFLOW_ONLY_CHECKS=ID[,ID]` (opcional, só neste arquivo) roda casos
+  isolados; sem a variável, o arquivo roda inteiro como antes.
+
+### Controle negativo (mutação)
+
+`index.html` substituído temporariamente pelo de
+`ae9b5bdf3e01b23d9325a60b73dc62a12fbb8455`: `git diff ae9b5bd 98ed826 --
+index.html` são exatamente as 4 linhas da limpeza. Blob mutante
+`72a4ed7…` = blob de `ae9b5bd`. Cada caso rodou em processo próprio
+(`FINFLOW_ONLY_CHECKS=<ID>`):
+
+| Caso | Sem a limpeza | HEAD corrigido |
+|---|---|---|
+| 13 set→out | FAIL (exit 1) | PASS |
+| 14 out→set | FAIL (exit 1) | PASS |
+| 15 dez→jan | FAIL (exit 1) | PASS |
+| 16 jan→dez | FAIL (exit 1) | PASS |
+| 17 pesquisa após troca | FAIL (exit 1) | PASS |
+| 18 cartão/reabrir + trocas | FAIL (exit 1) | PASS |
+
+Causa das falhas sem a limpeza, pelos detalhes registrados:
+- `campoVazio:false`;
+- `queryInterna` igual ao termo antigo;
+- `novosVisiveis:false`;
+- `semMsgFalsa:false`.
+
+No 17 e no 18, as partes originais continuaram `true`
+(`filtraNetflix`, `semMatchLegitimo`, `limparRestaura`, `cartaoLimpa`,
+`reabrirLimpa`). A falha vem só da ausência da limpeza em `changeMonth()`.
+
+Depois da mutação, `index.html` foi restaurado de cópia de segurança. O
+hash `be7f62c…` é igual ao blob do HEAD e `git diff --quiet index.html`
+passou.
+
+### Resultados
+
+```
+node tests/financial-engine/gate5-invoice-transaction-search.test.mjs
+gate5-invoice-transaction-search: TOTAL=18 PASS=18 FAIL=0
+
+node tests/financial-engine/run-all.mjs
+FINFLOW FINANCIAL-ENGINE SUITE: TOTAL_PASS=627 TOTAL_FAIL=0
+
+git diff --check   -> sem saída, exit 0
+```
+
+Diff desta rodada: só
+`tests/financial-engine/gate5-invoice-transaction-search.test.mjs` (commit
+de testes) e este handoff (commit documental).
+
+### Limitações
+
+- Comparação com backup real continua não executada (sem backup no
+  ambiente).
 - Decisão final cabe à reauditoria Codex.
