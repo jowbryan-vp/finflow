@@ -171,3 +171,121 @@ não foi tocado, como em correções anteriores.
 - Comparação com backup real não executada (arquivo indisponível neste
   ambiente); ver seção acima.
 - Working tree limpa ao final; nenhum push, merge ou alteração em `main`.
+
+---
+
+## Correção pós-auditoria Codex — P2 (filtro residual ao trocar mês/ano)
+
+Fluxo: Claude corrige → Codex reaudita. Esta seção é só a entrega da
+correção; não é aprovação. O relatório de auditoria
+(`docs/audits/INVOICE-TRANSACTION-SEARCH-CODEX-AUDIT-2026-09-23.md`) não foi
+editado.
+
+### Proveniência
+
+- Branch: `fix/invoice-transaction-search` (sem checkout/merge/rebase/push;
+  `main` não tocada).
+- Hash-base recebido: `ae9b5bdf3e01b23d9325a60b73dc62a12fbb8455`
+  (`docs: registra auditoria da pesquisa na fatura`), confirmado antes de
+  qualquer edição, com working tree limpa e diff vazio.
+- Commit funcional: `98ed82663521310f3d1aac9dc0577b0313ff3ec4`
+  (`fix: limpa pesquisa da fatura ao trocar mes/ano (P2 auditoria Codex)`).
+- Commit documental: este acréscimo ao handoff (ver `git log -1`).
+
+### Causa-raiz
+
+`changeMonth(dir)` altera `currentMonth/currentYear` e chama `renderAll()`,
+mas não esvaziava `#cartaoFaturaSearchInput`. `renderFaturaCartoes()` lê o
+termo diretamente do campo a cada render — não existe outra variável de
+estado da pesquisa —, então o termo da competência anterior era reaplicado
+à nova fatura, que podia abrir com "Nenhum lançamento encontrado com esse
+termo nesta fatura." falso. As limpezas já existentes cobriam só troca de
+cartão (`selecionarFaturaCartao`) e saída da aba (`navigate`).
+
+`changeMonth()` é o único código que altera `currentMonth/currentYear`
+após a inicialização (conferido por busca em `index.html`), portanto é o
+único ponto a corrigir — inclusive para as viradas dez→jan e jan→dez, que
+passam pelo mesmo caminho.
+
+### Correção
+
+`index.html`, `changeMonth()`: esvazia `#cartaoFaturaSearchInput` depois de
+ajustar mês/ano e antes de `updatePeriodLabel(); renderAll();` (+4 linhas,
+mesma convenção de `selecionarFaturaCartao`/`navigate`). Como o campo é a
+única fonte do termo, limpar o campo limpa campo visual e estado interno
+juntos. Nenhuma alteração em total (`calcByCardForMonth`), status
+(`isFaturaPaga`), ordenação (`ordenarItensFaturaDesc`), `state.despesas`,
+`matchFaturaSearch`, busca global, importador de PDF, RRT, escritório,
+contas ou transferências.
+
+### Arquivos alterados
+
+- `index.html` — +4 linhas em `changeMonth()`.
+- `tests/financial-engine/gate5-invoice-transaction-search.test.mjs` —
+  +6 casos (e cabeçalho de critérios atualizado). `run-all.mjs` já
+  registrava o arquivo; não foi alterado.
+
+### Testes novos
+
+Fixture com lançamentos exclusivos por competência (set/out/dez 2026,
+jan 2027), todos comprados antes do fechamento do Nubank (dia 3). Os casos
+13–16 abrem a fatura, pesquisam um termo exclusivo do mês de origem,
+confirmam o filtro ativo, chamam o `changeMonth(±1)` real e verificam:
+período correto; campo vazio e query efetiva vazia; todos os lançamentos
+da nova competência visíveis; ausência de "Nenhum lançamento
+encontrado…"; nenhum item do mês anterior; `calcByCardForMonth` igual à
+soma completa da fixture e esse total no resumo; status "Pendente";
+`state.despesas` byte a byte inalterado.
+
+13. `INVOICE_SEARCH_13_SEP_TO_OCT_CLEARS_SEARCH` — setembro → outubro.
+14. `INVOICE_SEARCH_14_OCT_TO_SEP_CLEARS_SEARCH` — outubro → setembro.
+15. `INVOICE_SEARCH_15_DEC_TO_JAN_CLEARS_SEARCH` — dez/2026 → jan/2027.
+16. `INVOICE_SEARCH_16_JAN_TO_DEC_CLEARS_SEARCH` — jan/2027 → dez/2026.
+17. `INVOICE_SEARCH_17_SEARCH_WORKS_AFTER_MONTH_CHANGE` — após a troca,
+    pesquisar filtra, sem correspondência mostra a mensagem legítima,
+    limpar restaura; `state.despesas` intacto.
+18. `INVOICE_SEARCH_18_CARD_SWITCH_AND_REOPEN_STILL_CLEAR` — troca de
+    cartão e sair/reabrir a aba continuam limpando e exibindo tudo.
+
+`NO_SCRIPT_ERRORS` continua ao final cobrindo todos os casos (console
+vazio).
+
+Reprodução confirmada: com `index.html` do HEAD-base (correção removida
+temporariamente via `git stash` só desse arquivo), os casos 13–18 falham
+(`campoVazio:false`); com a correção, passam.
+
+### Resultados
+
+```
+node tests/financial-engine/gate5-invoice-transaction-search.test.mjs
+gate5-invoice-transaction-search: TOTAL=18 PASS=18 FAIL=0
+
+node tests/financial-engine/run-all.mjs
+FINFLOW FINANCIAL-ENGINE SUITE: TOTAL_PASS=627 TOTAL_FAIL=0
+
+git diff --check   -> sem saída, exit 0
+```
+
+### Verificação prática no navegador
+
+Chromium via harness isolado do projeto (`index.html` real, fixture
+sintética; o app normal exige login Google, não contornado). Interação
+real: digitação no campo (`page.fill`) e clique nos botões `‹`/`›` do
+cabeçalho de período:
+
+- Set 2026 + "amazon" → `›` → Out 2026: campo vazio, "Netflix Outubro"
+  visível, total R$ 55,90, status Pendente.
+- Out + "netflix" → `‹` → Set: campo vazio, "Amazon Prime" visível.
+- Dez 2026 + "natal" → `›` → Jan 2027: campo vazio, "Material Escolar
+  Janeiro" visível.
+- Jan 2027 + "escolar" → `‹` → Dez 2026: campo vazio, "Presente Natal
+  Dezembro" visível.
+- `state.despesas` idêntico ao início; nenhum erro de console.
+
+### Limitações
+
+- Comparação com backup real continua não executada (nenhum backup
+  disponível no ambiente).
+- Verificação no navegador feita no harness isolado com fixture sintética,
+  não na instância autenticada do app.
+- Decisão final cabe à reauditoria Codex.
