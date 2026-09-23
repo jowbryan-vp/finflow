@@ -235,8 +235,7 @@ Demais verificações:
   partir de hoje".
 - **Retirada extraordinária do escritório:** fica em "outras entradas". Ela
   é sempre realizada no ato, então nunca afeta o previsto nem os cenários.
-- **Painel "Destinação" e gráfico anual:** continuam usando
-  `getTotalsForMonth`, inalterados.
+- **Painel "Destinação" e gráfico anual:** corrigidos na rodada de correção (abaixo).
 - **Verificação no navegador:** feita no harness isolado com dados
   sintéticos. O app real exige login Google, que não foi contornado.
 
@@ -261,3 +260,93 @@ Demais verificações:
    comportamento.
 5. Se houver backup real disponível, rodar
    `tests/financial-engine/compare-real-backup.mjs`.
+
+## Rodada de correção após FAIL da auditoria Codex (2026-09-23)
+
+- **Branch:** `fix/personal-cash-projection-scenarios`.
+- **Hash-base:** `d72e68f1084999813a34df0e2ad24c3b73c97ec1`.
+- **Commit funcional:** `bdb65ffc52139263c96efa8d14d4478ad477face`.
+- **Commit documental:** este (ver `git log -1`).
+- Sem push, merge ou alteração na `main` (`origin/main` em `71edc74…`;
+  `origin/fix/invoice-transaction-search` em `2eaf646…`).
+- Dois arquivos não rastreados de outro trabalho (`baseline-home.log`,
+  `debug1.mjs`) foram movidos, com autorização, para o scratchpad fora do repo.
+
+### Achado 1 (P1) — falso repasse pessoal
+
+- **Causa-raiz:** `classifyPersonalIncome` confiava em `incomeNature` sozinho e o
+  seletor manual oferecia "Repasse pessoal do escritório".
+- **Correção:** `isStructuralOfficeTransfer` exige `origem==='office_distribution'`
+  + `officeTransferId` não vazio + repasse real em `state.office.repasses`.
+  Natureza falsa vira `other` (valor, conta, data e status intactos) na leitura
+  (`classifyPersonalIncome`), na gravação (`scheduleSave`), na migração/importação
+  (`sanitizeIncomeNatures` em `migrateState`) e na interface (opção removida,
+  com explicação; gravação recusa mesmo com interface adulterada). A migração
+  antiga, que gravava a natureza só por origem+id, agora também exige o repasse.
+- **Receita inválida:** neutralizada, não rejeitada, para não perder o lançamento.
+
+### Achado 2 (P1) — contradição em "Destinação"
+
+- **Causa-raiz:** o painel usava `getTotalsForMonth` (`emCaixaDisponivel`/
+  `calcProjecaoFutura`), implementação paralela ao saldo acumulado do motor pessoal.
+- **Correção:** `renderDestinacaoSaldoTile` consome `getPersonalMonthProjection`.
+  Cenário obrigatório: 1.000 + 1.000 − 0 = R$ 2.000,00 nos dois painéis.
+  Passado: mostra "Saldo histórico das contas ao fim de <mês>", corte do razão
+  já existente (`calcSaldoContaAte`), rotulado como métrica diferente e nunca o
+  saldo atual; o saldo acumulado segue indisponível. Texto com período, fórmula
+  e diferença entre saldo atual, resultado e acumulado.
+- **Ajuste em teste legado:** `CASH_UI_04` (Gate 5) comparava o futuro com o
+  valor legado que a decisão de produto substituiu; passou a comparar com o motor
+  pessoal e mantém a exigência de rótulo de projeção. `CASH_UI_03` (passado) segue intacto.
+
+### Achado 3 (P2) — gráfico anual
+
+- **Causa-raiz:** o gráfico usava `previstoEntradas`/`totalDespPrevisao`, que incluem
+  o já recebido/pago, sob o nome "Previsto".
+- **Correção:** título "Ano corrente — realizado e previsto" e 4 séries de
+  `getPersonalMonthFlows` (`getPersonalYearSeries`); tooltip com mês, série e valor;
+  `aria-label` no canvas. Salário 4.000 recebido + despesa 3.000 paga: realizadas
+  4.000/3.000, previstas 0/0.
+
+### Testes e resultados
+
+`personal-cash-projection-scenarios.test.mjs` passou de 55 para 81 casos (+26:
+`FIX_P1_01..11`, `FIX_DEST_01..08`, `FIX_CHART_01..07`).
+
+```
+node tests/financial-engine/personal-cash-projection-scenarios.test.mjs
+  TOTAL=81 PASS=81 FAIL=0
+node tests/financial-engine/gate5-invoice-transaction-search.test.mjs   TOTAL=18 PASS=18 FAIL=0
+node tests/financial-engine/gate5-cash-balance-ui.test.mjs              TOTAL=9  PASS=9  FAIL=0
+node tests/financial-engine/run-all.mjs   TOTAL_PASS=708 TOTAL_FAIL=0   (682 anteriores + 26)
+git diff --check   -> sem saída
+```
+
+- **Falha antes, passa depois:** com o `index.html` de `d72e68f` e os testes novos,
+  24 casos falharam (os `FIX_*` relevantes e os dois testes ajustados);
+  com a correção, 81/81. Os três cenários originais da auditoria estão em
+  `FIX_P1_01/05/11`, `FIX_DEST_01` e `FIX_CHART_01`.
+- **Sensibilidade (mutações temporárias, arquivo restaurado e conferido por `cmp`):**
+
+  | Mutação | Casos que falharam |
+  |---|---|
+  | `incomeNature` sozinho libera repasse (leitura e saneamento) | 8 (`PCP_35_36`, `FIX_P1_03/04/05/06/07/10/11`) |
+  | Destinação volta a mostrar o saldo atual | 6 (`FIX_DEST_01/02/03/04/06/07`) |
+  | Gráfico chama realizado de "Previsto" | 5 (`FIX_CHART_01/02/03/04/06`) |
+
+- **Navegador (Chromium, harness isolado, dados sintéticos):** 1440, 1024, 768 e 390 px
+  sem rolagem lateral, sem corte no painel nem no gráfico, console vazio.
+  Migração repetida, round-trip de exportação/importação e backup manipulado
+  cobertos por `FIX_P1_03/04/09`.
+
+### Limitações
+
+- **Backup real:** indisponível no ambiente; comparação não executada.
+- **Coerência do vínculo:** verifica só a existência de um repasse com o mesmo
+  `officeTransferId`; não confere valor nem estado. Uma receita antiga com
+  origem+id sem repasse correspondente deixa de contar como repasse (fica em `other`).
+- **Passado em "Destinação":** o corte histórico (`calcSaldoContaAte`) é o mesmo do
+  Gate 5; se a auditoria preferir indisponibilidade total, é uma troca localizada.
+- **Gráfico:** testado com o stub de Chart.js do harness (config inspecionada, não
+  pixels); a aparência real das barras empilhadas depende do Chart.js do CDN.
+- **Aplicação real:** exige login Google, não contornado.

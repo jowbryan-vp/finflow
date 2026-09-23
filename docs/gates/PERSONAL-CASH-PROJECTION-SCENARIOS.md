@@ -50,8 +50,10 @@ regra olha a descrição.
 3. `id === salário principal` → `salary`. O salário principal é o
    `financialPreferences.primarySalaryId`, ou o único salário recorrente do
    modelo atual quando só existe um.
-4. `origem === 'office_distribution'` com `officeTransferId` → `office_personal_transfer`.
-5. `incomeNature` explícito e válido → esse valor. Um `salary` explícito em
+4. Vínculo estrutural completo (ver seção 6) → `office_personal_transfer`.
+5. `incomeNature` explícito e válido → esse valor, exceto `office_personal_transfer`
+   sem vínculo estrutural, que é falso e cai em `other` (ou `reimbursement` se
+   `tipo === 'repasse'`). Um `salary` explícito em
    lançamento que não é o principal fica em `other`.
 6. `tipo === 'repasse'` ("Reembolso de compra no cartão") → `reimbursement`.
 7. Qualquer outro caso → `other` ("outras entradas confirmadas").
@@ -96,17 +98,33 @@ O que já foi recebido não é somado de novo nos cenários.
 
 - **Campo:** opcional, com os valores `salary`, `office_personal_transfer`,
   `reimbursement` e `other`. Quando ausente, a receita fica sem classificação.
-- **Gravação:**
-  - pelo usuário, no seletor "Natureza da receita" dos formulários de
-    criação e de edição (legado e modelo atual);
-  - automaticamente, nas duas gerações estruturadas de repasse pessoal do
-    escritório.
-- **Migração:** só grava o campo quando ele está ausente e a receita tem
-  `origem === 'office_distribution'` com `officeTransferId`. É idempotente.
-  Nada é classificado por descrição, e valores, datas, contas e status
-  ficam intocados.
-- **Backup:** exportação e importação preservam o campo, porque o JSON
-  completo do perfil já é serializado.
+- **Repasse pessoal exige vínculo estrutural.** Só é repasse quando a receita
+  tem, ao mesmo tempo, `origem === 'office_distribution'`, `officeTransferId`
+  string não vazia e um repasse real em `state.office.repasses` com esse mesmo
+  `officeTransferId` (`isStructuralOfficeTransfer`). `incomeNature` sozinho
+  nunca basta, nem origem sozinha, nem id sozinho, nem id sem repasse
+  correspondente. Nunca se olha a descrição.
+- **Causa-raiz do achado:** `classifyPersonalIncome` aceitava qualquer
+  `incomeNature` válido, e o seletor manual oferecia "Repasse pessoal do
+  escritório"; uma "Venda avulsa" declarando essa natureza entrava no repasse
+  pendente e no pior cenário.
+- **Receita inválida:** é neutralizada (não rejeitada, para não perder o
+  lançamento) como `other`. Valor, conta, data, status e demais campos ficam
+  intactos; nenhum `officeTransferId` é inventado.
+- **Camadas de defesa:**
+  - leitura/cálculo: `classifyPersonalIncome` ignora a natureza falsa;
+  - gravação: `scheduleSave` chama `sanitizeIncomeNatures` antes de cache/Drive;
+  - migração/importação/restauração: `migrateState` (chamada por
+    `migrateAppData`) grava `office_personal_transfer` só com vínculo
+    comprovado e neutraliza a falsa; idempotente;
+  - interface: a criação e as duas edições não oferecem a opção; ela só
+    aparece, desabilitada, em receita que já tem o vínculo. O formulário
+    explica que o repasse é criado automaticamente pelo Caixa do Escritório;
+    `applyIncomeNatureFromSelect` recusa o valor mesmo se a interface for adulterada.
+- **Geração automática:** as duas gerações estruturadas do repasse (regra
+  legada e v2) criam receita e repasse juntos e continuam gravando a natureza.
+- **Backup:** exportação e importação preservam o campo; um backup legítimo
+  (com o repasse em `state.office`) mantém a classificação.
 
 ## 7. Lançamentos sem data comprovada
 
@@ -116,3 +134,30 @@ listados em "Pendências a conferir", com o valor e o motivo:
 - recebimento sem data válida;
 - despesa sem competência;
 - despesa com cartão não cadastrado.
+
+## 8. Painel "Destinação" (fonte única)
+
+"Saldo que permanece nas contas" usa `getPersonalMonthProjection().saldoAcumulado`,
+a mesma fonte do cartão "Saldo acumulado estimado"; não há mais cálculo
+paralelo (antes usava `getTotalsForMonth`/`calcProjecaoFutura`, que divergia).
+
+- **Atual ou futura:** saldo atual das contas pessoais + resultado pendente de
+  cada competência até o fim da selecionada. O texto mostra período, fórmula
+  (`Saldo atual X + resultado pendente Y`) e diz que não é o saldo de hoje
+  nem o resultado do mês.
+- **Passada:** o saldo acumulado não existe. O painel mostra outra métrica,
+  rotulada "Saldo histórico das contas ao fim de <competência>", que é o corte
+  do razão já existente (`calcSaldoContaAte`), nunca o saldo atual.
+- Contas e reservas do escritório, e recebíveis, ficam de fora.
+- Sem contas cadastradas, o bloco "Guardar em Caixa" continua como antes.
+
+## 9. Gráfico anual "Ano corrente — realizado e previsto"
+
+Quatro séries por mês, todas de `getPersonalMonthFlows` (as mesmas funções dos
+cartões mensais, via `getPersonalYearSeries`): Entradas realizadas, Entradas
+previstas, Saídas realizadas, Saídas previstas. Barras empilhadas por lado
+(entradas e saídas); realizado é sólido e previsto é claro com borda
+tracejada, além da legenda em texto. O tooltip mostra mês/ano, a série pelo
+nome e o valor. "Previsto" nunca inclui valor realizado. Antes usava
+`previstoEntradas`/`totalDespPrevisao` de `getTotalsForMonth`, que incluem o
+já recebido/pago.
