@@ -29,10 +29,16 @@
 //          (achado P2, INVOICE-TRANSACTION-SEARCH-CODEX-AUDIT-2026-09-23)
 //   17. pesquisa normal continua funcionando após a troca de mês
 //   18. troca de cartão e sair/reabrir a aba continuam limpando a pesquisa
+//   13-18 passam, cada um, por troca real via changeMonth(±1) com pesquisa
+//   ativa e falham individualmente sem a limpeza (reauditoria P3)
 import { openHarness, makeRunner, baseSyntheticState } from './harness.mjs';
 
 const { page, loadState, close, consoleErrors } = await openHarness();
-const { check, results } = makeRunner('gate5-invoice-transaction-search');
+const { check: checkBase, results } = makeRunner('gate5-invoice-transaction-search');
+// FINFLOW_ONLY_CHECKS=ID1,ID2 roda só esses casos (ex.: controle negativo
+// caso a caso da reauditoria P3). Sem a variável, roda tudo, como antes.
+const ONLY_CHECKS = process.env.FINFLOW_ONLY_CHECKS ? process.env.FINFLOW_ONLY_CHECKS.split(',') : null;
+const check = (id, fn, detail) => (ONLY_CHECKS && !ONLY_CHECKS.includes(id) ? Promise.resolve(null) : checkBase(id, fn, detail));
 
 await page.clock.setFixedTime(new Date(2026, 8, 17, 12)); // 17/09/2026
 
@@ -243,8 +249,15 @@ await check('INVOICE_SEARCH_11_PDF_IMPORTER_STILL_ABSENT', async () => {
 // docs/audits/INVOICE-TRANSACTION-SEARCH-CODEX-AUDIT-2026-09-23.md: changeMonth
 // trocava a competência sem limpar #cartaoFaturaSearchInput, e o render
 // seguinte reaplicava o termo antigo à fatura nova ("Nenhum lançamento
-// encontrado…" falso). Cada competência abaixo tem lançamentos exclusivos,
-// todos comprados antes do fechamento do Nubank (dia 3) do próprio mês.
+// encontrado…" falso). Cada competência abaixo tem ao menos 2 lançamentos
+// exclusivos (pra que o termo filtre de fato), todos comprados antes do
+// fechamento do Nubank (dia 3) do próprio mês.
+//
+// Reauditoria (INVOICE-TRANSACTION-SEARCH-CODEX-REAUDIT-2026-09-23, P3): cada
+// caso 13–18 carrega o próprio estado e passa por ao menos uma troca REAL
+// via changeMonth(±1) com pesquisa ativa, verificando a fatura nova
+// imediatamente depois — sem digitar nem limpar o campo no meio —, então
+// cada um fica vermelho sozinho se a limpeza sair de changeMonth().
 const despMes = (id, desc, valor, mes, ano, dia) => ({
   id, desc, cat: 'geral', subcat: 'Geral', cartao: 'nu', conta: null,
   valor, parcelas: 1, mesInicio: mes, anoInicio: ano,
@@ -257,81 +270,94 @@ const FIXTURE_MESES = [
   despMes('o1', 'Netflix Outubro', 55.9, 10, 2026, 2),
   despMes('o2', 'Padaria Outubro', 20.1, 10, 2026, 1),
   despMes('z1', 'Presente Natal Dezembro', 150, 12, 2026, 1),
+  despMes('z2', 'Uber Dezembro', 30, 12, 2026, 2),
   despMes('j1', 'Material Escolar Janeiro', 210.5, 1, 2027, 1),
   despMes('j2', 'IPVA Janeiro', 400, 1, 2027, 2),
 ];
 
-// Abre (mes/ano) na aba Fatura do Nubank, pesquisa `termo`, confirma o filtro,
-// troca a competência via changeMonth(dir) real e devolve o que a nova fatura
-// mostra. O total esperado é somado direto da fixture (conjunto completo).
-async function trocarMesComPesquisa({ mes, ano, termo, dir }) {
-  return page.evaluate(({ mes, ano, termo, dir, fixture }) => {
-    currentMonth = mes; currentYear = ano;
-    navigate('cartoes'); selecionarFaturaCartao('nu');
-    const despesasAntes = JSON.stringify(state.despesas);
+// Digita `termo` na fatura do Nubank (abrindo mes/ano antes, se `abrir`) e
+// confirma que ele está FILTRANDO: exatamente 1 dos lançamentos da
+// competência continua impresso.
+async function pesquisarNaFatura({ mes, ano, termo, abrir = true }) {
+  return page.evaluate(({ mes, ano, termo, abrir, fixture }) => {
+    if (abrir) { currentMonth = mes; currentYear = ano; navigate('cartoes'); selecionarFaturaCartao('nu'); }
     const input = document.getElementById('cartaoFaturaSearchInput');
     input.value = termo; input.dispatchEvent(new Event('input'));
-    const doMesOrigem = fixture.filter((d) => d.mesInicio === mes && d.anoInicio === ano);
-    const htmlFiltrado = document.getElementById('cartaoFaturaItens').innerHTML;
-    const filtroAtivoAntes = doMesOrigem.filter((d) => htmlFiltrado.includes(d.desc)).length === 1;
+    const doMes = fixture.filter((d) => d.mesInicio === currentMonth && d.anoInicio === currentYear);
+    const html = document.getElementById('cartaoFaturaItens').innerHTML;
+    return doMes.length >= 2 && doMes.filter((d) => html.includes(d.desc)).length === 1;
+  }, { mes, ano, termo, abrir, fixture: FIXTURE_MESES });
+}
 
+// Executa o changeMonth(dir) real e lê a fatura nova IMEDIATAMENTE depois.
+async function trocarMesELerFatura(dir) {
+  return page.evaluate(({ dir, fixture }) => {
+    const origem = fixture.filter((d) => d.mesInicio === currentMonth && d.anoInicio === currentYear);
     changeMonth(dir);
-
     const doMesNovo = fixture.filter((d) => d.mesInicio === currentMonth && d.anoInicio === currentYear);
+    const input = document.getElementById('cartaoFaturaSearchInput');
     const html = document.getElementById('cartaoFaturaItens').innerHTML;
     const resumo = document.getElementById('cartaoFaturaResumo').innerHTML;
     const totalEsperado = Math.round(doMesNovo.reduce((s, d) => s + d.valor, 0) * 100) / 100;
-    const totalCalc = Math.round((calcByCardForMonth(currentMonth, currentYear)['nu'] || 0) * 100) / 100;
     return {
-      filtroAtivoAntes,
       periodo: `${currentMonth}/${currentYear}`,
-      campoVazio: document.getElementById('cartaoFaturaSearchInput').value === '',
+      campoVazio: input.value === '',
       // O termo é lido do campo a cada render (não há outra variável de
-      // estado): a query efetiva que renderFaturaCartoes aplicaria agora.
-      queryInterna: (document.getElementById('cartaoFaturaSearchInput')?.value || '').trim().toLowerCase(),
-      novosVisiveis: doMesNovo.length > 0 && doMesNovo.every((d) => html.includes(d.desc)),
+      // estado): esta é a query efetiva que renderFaturaCartoes aplica.
+      queryInterna: (input.value || '').trim().toLowerCase(),
+      novosVisiveis: doMesNovo.length >= 2 && doMesNovo.every((d) => html.includes(d.desc)),
       semMsgFalsa: !/nenhum lançamento encontrado/i.test(html),
-      semItensDoMesAnterior: doMesOrigem.every((d) => !html.includes(d.desc)),
-      totalEsperado, totalCalc,
+      semItensDoMesAnterior: origem.every((d) => !html.includes(d.desc)),
+      totalEsperado,
+      totalCalc: Math.round((calcByCardForMonth(currentMonth, currentYear)['nu'] || 0) * 100) / 100,
       totalNoResumo: resumo.includes(fmtBRL(totalEsperado)),
       statusPendente: resumo.includes('Pendente'),
-      despesasInalteradas: JSON.stringify(state.despesas) === despesasAntes,
     };
-  }, { mes, ano, termo, dir, fixture: FIXTURE_MESES });
+  }, { dir, fixture: FIXTURE_MESES });
 }
-const trocaOk = (r, periodo) => r.filtroAtivoAntes && r.periodo === periodo && r.campoVazio && r.queryInterna === ''
-  && r.novosVisiveis && r.semMsgFalsa && r.semItensDoMesAnterior
-  && r.totalCalc === r.totalEsperado && r.totalNoResumo && r.statusPendente && r.despesasInalteradas;
+const lerDespesas = () => page.evaluate(() => JSON.stringify(state.despesas));
+// Asserções que dependem diretamente da limpeza em changeMonth(): sem ela o
+// termo antigo continua no campo e a fatura nova sai filtrada/"vazia".
+const limpezaOk = (r, periodo) => r.periodo === periodo && r.campoVazio && r.queryInterna === ''
+  && r.novosVisiveis && r.semMsgFalsa && r.semItensDoMesAnterior;
+const faturaCompletaOk = (r) => r.totalCalc === r.totalEsperado && r.totalNoResumo && r.statusPendente;
 
-await check('INVOICE_SEARCH_13_SEP_TO_OCT_CLEARS_SEARCH', async () => {
+async function casoTrocaMes({ mes, ano, termo, dir, periodo }) {
   await loadState(baseSyntheticState({ despesas: FIXTURE_MESES }));
-  const r = await trocarMesComPesquisa({ mes: 9, ano: 2026, termo: 'amazon', dir: 1 });
-  return { ok: trocaOk(r, '10/2026'), detail: `setembro com "amazon" -> changeMonth(1): campo/estado vazios, "Netflix Outubro" e "Padaria Outubro" visíveis, sem "nenhum lançamento encontrado", total = soma completa de outubro, state.despesas intacto — obtido=${JSON.stringify(r)}` };
-}, 'setembro -> outubro com pesquisa ativa abre outubro completo, sem filtro residual');
+  const despesasAntes = await lerDespesas();
+  const filtroAtivoAntes = await pesquisarNaFatura({ mes, ano, termo });
+  const r = await trocarMesELerFatura(dir);
+  const despesasInalteradas = (await lerDespesas()) === despesasAntes;
+  const ok = filtroAtivoAntes && limpezaOk(r, periodo) && faturaCompletaOk(r) && despesasInalteradas;
+  return { ok, detail: `${mes}/${ano} com "${termo}" -> changeMonth(${dir}) -> ${periodo}: campo/query vazios, todos os lançamentos da nova competência visíveis, sem "nenhum lançamento encontrado", total = soma completa, state.despesas intacto — obtido=${JSON.stringify({ filtroAtivoAntes, ...r, despesasInalteradas })}` };
+}
 
-await check('INVOICE_SEARCH_14_OCT_TO_SEP_CLEARS_SEARCH', async () => {
-  const r = await trocarMesComPesquisa({ mes: 10, ano: 2026, termo: 'netflix', dir: -1 });
-  return { ok: trocaOk(r, '9/2026'), detail: `outubro com "netflix" -> changeMonth(-1): setembro completo, sem filtro residual — obtido=${JSON.stringify(r)}` };
-}, 'outubro -> setembro com pesquisa ativa abre setembro completo, sem filtro residual');
+await check('INVOICE_SEARCH_13_SEP_TO_OCT_CLEARS_SEARCH',
+  () => casoTrocaMes({ mes: 9, ano: 2026, termo: 'amazon', dir: 1, periodo: '10/2026' }),
+  'setembro -> outubro com pesquisa ativa abre outubro completo, sem filtro residual');
 
-await check('INVOICE_SEARCH_15_DEC_TO_JAN_CLEARS_SEARCH', async () => {
-  const r = await trocarMesComPesquisa({ mes: 12, ano: 2026, termo: 'natal', dir: 1 });
-  return { ok: trocaOk(r, '1/2027'), detail: `dezembro/2026 com "natal" -> changeMonth(1) vira janeiro/2027 completo, sem filtro residual — obtido=${JSON.stringify(r)}` };
-}, 'virada dezembro -> janeiro (troca de ano) limpa a pesquisa');
+await check('INVOICE_SEARCH_14_OCT_TO_SEP_CLEARS_SEARCH',
+  () => casoTrocaMes({ mes: 10, ano: 2026, termo: 'netflix', dir: -1, periodo: '9/2026' }),
+  'outubro -> setembro com pesquisa ativa abre setembro completo, sem filtro residual');
 
-await check('INVOICE_SEARCH_16_JAN_TO_DEC_CLEARS_SEARCH', async () => {
-  const r = await trocarMesComPesquisa({ mes: 1, ano: 2027, termo: 'escolar', dir: -1 });
-  return { ok: trocaOk(r, '12/2026'), detail: `janeiro/2027 com "escolar" -> changeMonth(-1) volta a dezembro/2026 completo, sem filtro residual — obtido=${JSON.stringify(r)}` };
-}, 'virada janeiro -> dezembro (troca de ano) limpa a pesquisa');
+await check('INVOICE_SEARCH_15_DEC_TO_JAN_CLEARS_SEARCH',
+  () => casoTrocaMes({ mes: 12, ano: 2026, termo: 'natal', dir: 1, periodo: '1/2027' }),
+  'virada dezembro -> janeiro (troca de ano) limpa a pesquisa');
 
+await check('INVOICE_SEARCH_16_JAN_TO_DEC_CLEARS_SEARCH',
+  () => casoTrocaMes({ mes: 1, ano: 2027, termo: 'escolar', dir: -1, periodo: '12/2026' }),
+  'virada janeiro -> dezembro (troca de ano) limpa a pesquisa');
+
+// 17: objetivo próprio = a pesquisa volta a funcionar na competência nova.
+// Antes de reusá-la, a troca real (com "amazon" ativo) precisa entregar
+// outubro já limpo e completo — sem sobrescrever o termo antes de checar.
 await check('INVOICE_SEARCH_17_SEARCH_WORKS_AFTER_MONTH_CHANGE', async () => {
-  const r = await page.evaluate(() => {
-    currentMonth = 9; currentYear = 2026;
-    navigate('cartoes'); selecionarFaturaCartao('nu');
-    const antes = JSON.stringify(state.despesas);
+  await loadState(baseSyntheticState({ despesas: FIXTURE_MESES }));
+  const despesasAntes = await lerDespesas();
+  const filtroAtivoAntes = await pesquisarNaFatura({ mes: 9, ano: 2026, termo: 'amazon' });
+  const troca = await trocarMesELerFatura(1);
+  const depois = await page.evaluate(() => {
     const input = document.getElementById('cartaoFaturaSearchInput');
-    input.value = 'amazon'; input.dispatchEvent(new Event('input'));
-    changeMonth(1);
     input.value = 'NETFLIX'; input.dispatchEvent(new Event('input'));
     const filtrado = document.getElementById('cartaoFaturaItens').innerHTML;
     input.value = 'amazon'; input.dispatchEvent(new Event('input'));
@@ -342,30 +368,46 @@ await check('INVOICE_SEARCH_17_SEARCH_WORKS_AFTER_MONTH_CHANGE', async () => {
       filtraNetflix: filtrado.includes('Netflix Outubro') && !filtrado.includes('Padaria Outubro'),
       semMatchLegitimo: /nenhum lançamento encontrado/i.test(semMatch),
       limparRestaura: limpo.includes('Netflix Outubro') && limpo.includes('Padaria Outubro'),
-      despesasInalteradas: JSON.stringify(state.despesas) === antes,
     };
   });
-  const ok = r.filtraNetflix && r.semMatchLegitimo && r.limparRestaura && r.despesasInalteradas;
-  return { ok, detail: `depois da troca de mês, pesquisar/limpar continua funcionando normalmente na nova fatura — obtido=${JSON.stringify(r)}` };
+  const despesasInalteradas = (await lerDespesas()) === despesasAntes;
+  const ok = filtroAtivoAntes && limpezaOk(troca, '10/2026')
+    && depois.filtraNetflix && depois.semMatchLegitimo && depois.limparRestaura && despesasInalteradas;
+  return { ok, detail: `set com "amazon" -> changeMonth(1): outubro precisa abrir limpo e completo; depois "NETFLIX" filtra, "amazon" mostra a mensagem legítima de sem resultado e Limpar restaura — obtido=${JSON.stringify({ filtroAtivoAntes, troca, ...depois, despesasInalteradas })}` };
 }, 'pesquisa normal continua funcionando na nova competência após a troca de mês');
 
+// 18: objetivo próprio = troca de cartão e sair/reabrir a aba continuam
+// limpando. Intercalado com trocas reais de competência com pesquisa ativa
+// (volta e ida), pra provar que as três limpezas convivem sem regressão.
 await check('INVOICE_SEARCH_18_CARD_SWITCH_AND_REOPEN_STILL_CLEAR', async () => {
-  const r = await page.evaluate(() => {
-    currentMonth = 10; currentYear = 2026;
-    navigate('cartoes'); selecionarFaturaCartao('nu');
+  await loadState(baseSyntheticState({ despesas: FIXTURE_MESES }));
+  const despesasAntes = await lerDespesas();
+  const listaCompleta = (descs) => page.evaluate((descs) => {
     const input = document.getElementById('cartaoFaturaSearchInput');
-    input.value = 'netflix'; input.dispatchEvent(new Event('input'));
-    selecionarFaturaCartao('semfecha'); selecionarFaturaCartao('nu');
-    const aposCartao = { vazio: input.value === '', html: document.getElementById('cartaoFaturaItens').innerHTML };
-    input.value = 'netflix'; input.dispatchEvent(new Event('input'));
-    navigate('dashboard'); navigate('cartoes'); selecionarFaturaCartao('nu');
-    const aposReabrir = { vazio: input.value === '', html: document.getElementById('cartaoFaturaItens').innerHTML };
-    const completo = (h) => h.includes('Netflix Outubro') && h.includes('Padaria Outubro');
-    return { cartaoLimpa: aposCartao.vazio && completo(aposCartao.html), reabrirLimpa: aposReabrir.vazio && completo(aposReabrir.html) };
-  });
-  const ok = r.cartaoLimpa && r.reabrirLimpa;
-  return { ok, detail: `trocar de cartão e sair/reabrir a aba continuam limpando a pesquisa e exibindo a fatura completa — obtido=${JSON.stringify(r)}` };
-}, 'troca de cartão e fechar/reabrir a fatura continuam limpando a pesquisa');
+    const html = document.getElementById('cartaoFaturaItens').innerHTML;
+    return input.value === '' && descs.every((d) => html.includes(d));
+  }, descs);
+  const OUT = ['Netflix Outubro', 'Padaria Outubro'], SET = ['Amazon Prime', 'Farmacia Setembro'];
+
+  const filtroCartao = await pesquisarNaFatura({ mes: 10, ano: 2026, termo: 'netflix' });
+  await page.evaluate(() => { selecionarFaturaCartao('semfecha'); selecionarFaturaCartao('nu'); });
+  const cartaoLimpa = filtroCartao && await listaCompleta(OUT);
+
+  const filtroMes1 = await pesquisarNaFatura({ termo: 'netflix', abrir: false });
+  const trocaVolta = await trocarMesELerFatura(-1);
+
+  const filtroReabrir = await pesquisarNaFatura({ termo: 'amazon', abrir: false });
+  await page.evaluate(() => { navigate('dashboard'); navigate('cartoes'); selecionarFaturaCartao('nu'); });
+  const reabrirLimpa = filtroReabrir && await listaCompleta(SET);
+
+  const filtroMes2 = await pesquisarNaFatura({ termo: 'farmacia', abrir: false });
+  const trocaIda = await trocarMesELerFatura(1);
+
+  const despesasInalteradas = (await lerDespesas()) === despesasAntes;
+  const ok = cartaoLimpa && filtroMes1 && limpezaOk(trocaVolta, '9/2026') && reabrirLimpa
+    && filtroMes2 && limpezaOk(trocaIda, '10/2026') && despesasInalteradas;
+  return { ok, detail: `out "netflix" -> troca de cartão limpa; "netflix" -> changeMonth(-1) abre set limpo; "amazon" -> sair/reabrir limpa; "farmacia" -> changeMonth(1) abre out limpo — obtido=${JSON.stringify({ cartaoLimpa, filtroMes1, trocaVolta, reabrirLimpa, filtroMes2, trocaIda, despesasInalteradas })}` };
+}, 'troca de cartão e fechar/reabrir continuam limpando a pesquisa, intercaladas com trocas reais de mês');
 
 await check('NO_SCRIPT_ERRORS', async () => ({ ok: consoleErrors.length === 0, detail: `erros de console acumulados: ${JSON.stringify(consoleErrors)}` }), 'nenhum erro de execução ao longo da correção do campo de pesquisa da fatura');
 
