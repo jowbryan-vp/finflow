@@ -13,9 +13,23 @@ import { fileURLToPath } from 'node:url';
 import { openHarness, makeRunner, baseSyntheticState } from './harness.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const { page, loadState, close, consoleErrors } = await openHarness();
+const { page, loadState: rawLoadState, close, consoleErrors } = await openHarness();
 const { check, results } = makeRunner('personal-cash-projection-scenarios');
 
+// Como na geração real do escritório, todo repasse pessoal coerente
+// (officeTransferId === 'off_'+id) tem o repasse correspondente em
+// state.office.repasses. Vínculos incoerentes (ex.: 'off_fantasma') ficam sem.
+const loadState = (s) => {
+  const out = JSON.parse(JSON.stringify(s));
+  out.office = out.office || {};
+  out.office.repasses = out.office.repasses || [];
+  for (const r of out.receitas || []) {
+    if (r.origem === 'office_distribution' && r.officeTransferId === 'off_' + r.id
+      && !out.office.repasses.some((rp) => rp.officeTransferId === r.officeTransferId))
+      out.office.repasses.push({ id: 'rp_' + r.id, tipo: 'planejado', valor: r.valor, estado: 'previsto', dataPrevista: r.dataPrevista, dataRecebimento: null, officeTransferId: r.officeTransferId });
+  }
+  return rawLoadState(out);
+};
 await page.clock.setFixedTime(new Date(2026, 8, 17, 12)); // 17/09/2026
 const TODAY = '2026-09-17';
 
@@ -394,14 +408,14 @@ await check('PCP_35_36_NOT_BY_DESCRIPTION', async () => {
     unico('c', 'Reembolso Amazon', 300, '2026-09-10'),
     { id: 'd', tipo: 'salario', nome: 'Salário', valor: 400, mes: 9, ano: 2026, conta: 'c1', recorrente: false, tributavel: false, recebidaMeses: {} },
     unico('e', 'Venda bicicleta', 500, '2026-09-10', { incomeNature: 'reimbursement' }),
-    unico('f', 'Pagamento cliente', 600, '2026-09-10', { incomeNature: 'office_personal_transfer' }),
+    unico('f', 'Pagamento cliente', 600, '2026-09-10', { incomeNature: 'office_personal_transfer' }), // sem vínculo estrutural
   ] }));
   const p = await proj(9, 2026);
   const nat = Object.fromEntries(p.items.entradasPendentes.map((i) => [i.id, i.nature]));
   const ok = nat.a === 'other' && nat.b === 'other' && nat.c === 'other' && nat.d === 'other'
-    && nat.e === 'reimbursement' && nat.f === 'office_personal_transfer' && p.entradas.pendentes.salary === 0;
+    && nat.e === 'reimbursement' && nat.f === 'other' && p.entradas.pendentes.salary === 0;
   return { ok, detail: JSON.stringify(nat) };
-}, 'descrições com "salário", "repasse" ou "reembolso" não classificam sozinhas; só campos estruturados');
+}, 'descrições não classificam; incomeNature=repasse sem vínculo estrutural vira other');
 await check('PCP_35_NON_PRIMARY_SALARY_IS_OTHER', async () => {
   await loadState(baseSyntheticState({ receitas: [sal('s1', 4000), sal('s2', 1500)], financialPreferences: { primarySalaryId: 's1' } }));
   const p = await proj(9, 2026);
@@ -415,6 +429,7 @@ await check('PCP_37_38_MIGRATION', async () => {
     { ...officeRec('rep', 2990.99, '2026-09-25') }] });
   const r = await page.evaluate((raw) => {
     delete raw.receitas[2].incomeNature;
+    raw.office = { ...(raw.office || {}), repasses: [{ id: 'rp', tipo: 'planejado', valor: 2990.99, estado: 'previsto', officeTransferId: 'off_rep' }] };
     migrateAppData(JSON.parse(JSON.stringify(raw)));
     const uma = JSON.stringify(state);
     const valoresAntes = JSON.stringify(raw.receitas.map((x) => [x.id, x.valor, x.mes, x.ano, x.conta, x.estado, x.dataPrevista]));
@@ -613,7 +628,7 @@ await check('PCP_EXTRA_NATURE_FORM', async () => {
     saveEditReceitaNovoModelo(a.id);
     return { a: a.incomeNature ?? null, b: b.incomeNature ?? null, opts: [...document.getElementById('recNatureza').options].map((o) => o.value) };
   });
-  const ok = r.b === 'other' && r.a === null && JSON.stringify(r.opts) === JSON.stringify(['', 'salary', 'office_personal_transfer', 'reimbursement', 'other']);
+  const ok = r.b === 'other' && r.a === null && JSON.stringify(r.opts) === JSON.stringify(['', 'salary', 'reimbursement', 'other']);
   return { ok, detail: JSON.stringify(r) };
 }, 'natureza escolhida explicitamente na criação/edição; vazio remove a classificação; nome não classifica');
 await check('PCP_EXTRA_OFFICE_GENERATION_NATURE', async () => {
@@ -621,6 +636,353 @@ await check('PCP_EXTRA_OFFICE_GENERATION_NATURE', async () => {
   const n = (src.match(/origem:'office_distribution', officeTransferId, incomeNature:'office_personal_transfer'/g) || []).length;
   return { ok: n === 2, detail: `pontos de geração com incomeNature=${n}` };
 }, 'as duas gerações estruturadas de repasse pessoal gravam a natureza automaticamente');
+
+// ══════════════════════════════════════════════════════════════════════════
+// CORREÇÃO P1 — falso repasse pessoal (natureza sem vínculo estrutural)
+// ══════════════════════════════════════════════════════════════════════════
+const vendaAvulsa = (extra = {}) => unico('venda', 'Venda avulsa', 1234.56, '2026-09-20', { incomeNature: 'office_personal_transfer', ...extra });
+const repasseBucket = (p) => p.entradas.pendentes.office_personal_transfer;
+
+await check('FIX_P1_01_MANUAL_CREATE_REJECTED', async () => {
+  await loadState(baseSyntheticState({ receitas: [sal('sal', 4000)], financialPreferences: { primarySalaryId: 'sal' } }));
+  const r = await page.evaluate(() => {
+    currentMonth = 9; currentYear = 2026; navigate('receitas');
+    const sel = document.getElementById('recNatureza');
+    const opts = [...sel.options].map((o) => o.value);
+    // força o valor proibido (interface adulterada): a gravação deve recusar
+    const o = document.createElement('option'); o.value = 'office_personal_transfer'; sel.appendChild(o);
+    document.getElementById('recTipo').value = 'outro'; onRecTipoChange();
+    document.getElementById('recNome').value = 'Venda avulsa';
+    document.getElementById('recValor').value = '1234.56';
+    document.getElementById('recDataPrevista').value = '2026-09-20';
+    sel.value = 'office_personal_transfer';
+    addReceita();
+    const nova = state.receitas[state.receitas.length - 1];
+    return { opts, nature: nova.incomeNature ?? null, valor: nova.valor, hint: document.getElementById('recNatureza').parentElement.innerText };
+  });
+  const p = await proj(9, 2026);
+  const ok = !r.opts.includes('office_personal_transfer') && r.nature !== 'office_personal_transfer' && r.valor === 1234.56
+    && repasseBucket(p) === 0 && /automaticamente/.test(r.hint);
+  return { ok, detail: JSON.stringify({ ...r, repasse: repasseBucket(p) }) };
+}, 'criação manual não oferece nem grava repasse; explica que é automático');
+
+await check('FIX_P1_02_EDIT_TO_TRANSFER_REJECTED', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('venda', 'Venda avulsa', 1234.56, '2026-09-20')] }));
+  const r = await page.evaluate(() => {
+    openEditReceita('venda');
+    const sel = document.getElementById('eRecNatureza2');
+    const opts = [...sel.options].map((o) => o.value);
+    const o = document.createElement('option'); o.value = 'office_personal_transfer'; sel.appendChild(o);
+    sel.value = 'office_personal_transfer';
+    saveEditReceitaNovoModelo('venda');
+    const x = state.receitas.find((q) => q.id === 'venda');
+    return { opts, nature: x.incomeNature ?? null, valor: x.valor, estado: x.estado, data: x.dataPrevista, conta: x.conta };
+  });
+  const p = await proj(9, 2026);
+  const ok = !r.opts.includes('office_personal_transfer') && r.nature !== 'office_personal_transfer' && r.valor === 1234.56
+    && r.estado === 'previsto' && r.data === '2026-09-20' && r.conta === 'c1' && repasseBucket(p) === 0;
+  return { ok, detail: JSON.stringify({ ...r, repasse: repasseBucket(p) }) };
+}, 'edição de receita comum não vira repasse');
+
+await check('FIX_P1_03_MANIPULATED_IMPORT', async () => {
+  const raw = baseSyntheticState({ receitas: [sal('sal', 4000), vendaAvulsa()], financialPreferences: { primarySalaryId: 'sal' } });
+  const r = await page.evaluate((raw) => {
+    const antes = JSON.stringify(raw.receitas.map((x) => [x.id, x.valor, x.mes, x.ano, x.conta, x.estado, x.dataPrevista]));
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    const depois = JSON.stringify(state.receitas.map((x) => [x.id, x.valor, x.mes, x.ano, x.conta, x.estado, x.dataPrevista]));
+    return { nat: state.receitas.find((x) => x.id === 'venda').incomeNature, igual: antes === depois };
+  }, raw);
+  const p = await proj(9, 2026);
+  const ok = r.nat === 'other' && r.igual && repasseBucket(p) === 0 && p.entradas.pendentes.other === 123456;
+  return { ok, detail: JSON.stringify({ ...r, ent: p.entradas.pendentes }) };
+}, 'importação manipulada é neutralizada como other, sem mexer em valor/conta/data/status');
+
+await check('FIX_P1_04_MIGRATION_FALSE_NATURE_AND_REPEAT', async () => {
+  const raw = baseSyntheticState({ receitas: [vendaAvulsa(), officeRec('rep', 2990.99, '2026-09-25')] });
+  raw.office = { repasses: [{ id: 'rp', tipo: 'planejado', valor: 2990.99, estado: 'previsto', officeTransferId: 'off_rep' }] };
+  const r = await page.evaluate((raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    const um = JSON.stringify(state);
+    migrateState(); migrateState(); migrateState();
+    return { nat: state.receitas.map((x) => x.incomeNature), idem: um === JSON.stringify(state), n: sanitizeIncomeNatures(state) };
+  }, raw);
+  const ok = r.nat[0] === 'other' && r.nat[1] === 'office_personal_transfer' && r.idem && r.n === 0;
+  return { ok, detail: JSON.stringify(r) };
+}, 'migração neutraliza a falsa, mantém a real e é idempotente (repetida 3x)');
+
+await check('FIX_P1_05_ONLY_ORIGEM', async () => {
+  await loadState(baseSyntheticState({ receitas: [vendaAvulsa({ origem: 'office_distribution' })] }));
+  const p = await proj(9, 2026);
+  const nat = await page.evaluate(() => state.receitas[0].incomeNature);
+  return { ok: repasseBucket(p) === 0 && nat === 'other', detail: JSON.stringify({ nat, b: p.entradas.pendentes }) };
+}, 'natureza falsa com apenas origem');
+
+await check('FIX_P1_06_ONLY_TRANSFER_ID', async () => {
+  await loadState(baseSyntheticState({ receitas: [vendaAvulsa({ officeTransferId: 'off_venda' })] }));
+  const p = await proj(9, 2026);
+  const nat = await page.evaluate(() => state.receitas[0].incomeNature);
+  return { ok: repasseBucket(p) === 0 && nat === 'other', detail: JSON.stringify({ nat, b: p.entradas.pendentes }) };
+}, 'natureza falsa com apenas officeTransferId');
+
+await check('FIX_P1_07_BOTH_BUT_INCOHERENT_REFERENCE', async () => {
+  await loadState(baseSyntheticState({ receitas: [
+    vendaAvulsa({ origem: 'office_distribution', officeTransferId: 'off_fantasma' }),
+    unico('vazio', 'Sem id', 10, '2026-09-20', { incomeNature: 'office_personal_transfer', origem: 'office_distribution', officeTransferId: '  ' }),
+  ] }));
+  const p = await proj(9, 2026);
+  const nat = await page.evaluate(() => state.receitas.map((x) => x.incomeNature));
+  return { ok: repasseBucket(p) === 0 && nat.every((n) => n === 'other'), detail: JSON.stringify({ nat, b: p.entradas.pendentes }) };
+}, 'origem + id, mas sem repasse real correspondente (ou id vazio): falso');
+
+await check('FIX_P1_08_REAL_AUTOMATIC_TRANSFER_KEPT', async () => {
+  await loadState(mainState());
+  const p = await proj(9, 2026);
+  const nat = await page.evaluate(() => state.receitas.find((x) => x.id === 'rep').incomeNature ?? null);
+  const ok = repasseBucket(p) === 299099 && p.cenarios.pior.repasseCents === 299099 && nat === 'office_personal_transfer';
+  return { ok, detail: JSON.stringify({ nat, repasse: repasseBucket(p) }) };
+}, 'repasse real (origem + id + repasse existente) continua classificado');
+
+await check('FIX_P1_09_LEGIT_BACKUP_KEPT', async () => {
+  await loadState(mainState());
+  const r = await page.evaluate(() => {
+    const antes = getPersonalMonthProjection(9, 2026, { today: '2026-09-17' });
+    const json = JSON.stringify(buildSaveObject());
+    migrateAppData(JSON.parse(json));
+    const depois = getPersonalMonthProjection(9, 2026, { today: '2026-09-17' });
+    return { igual: JSON.stringify(antes) === JSON.stringify(depois), nat: state.receitas.find((x) => x.id === 'rep').incomeNature, json2: JSON.stringify(buildSaveObject()) === json };
+  });
+  return { ok: r.igual && r.nat === 'office_personal_transfer' && r.json2, detail: JSON.stringify(r) };
+}, 'backup legítimo: round-trip preserva repasse e projeção');
+
+await check('FIX_P1_10_WRITE_LAYER_SAVE', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('venda', 'Venda avulsa', 1234.56, '2026-09-20')] }));
+  const r = await page.evaluate(() => {
+    state.receitas[0].incomeNature = 'office_personal_transfer'; // dado corrompido em memória
+    scheduleSave();
+    const cache = JSON.parse(localStorage.getItem('finflow_local_cache'));
+    const x = cache.perfis[cache.perfilAtivo].data.receitas[0];
+    return { emCache: x.incomeNature, valor: x.valor };
+  });
+  return { ok: r.emCache === 'other' && r.valor === 1234.56, detail: JSON.stringify(r) };
+}, 'a gravação (scheduleSave) não persiste natureza falsa');
+
+await check('FIX_P1_11_READ_LAYER_WITHOUT_MIGRATION', async () => {
+  // dado corrompido injetado depois da migração: só a camada de leitura protege
+  await loadState(baseSyntheticState({ receitas: [sal('sal', 4000), unico('venda', 'Venda avulsa', 1234.56, '2026-09-20')], despesas: [desp('d', 'Aluguel', 1000, { fixa: true })], financialPreferences: { primarySalaryId: 'sal' } }));
+  const base = await proj(9, 2026);
+  await page.evaluate(() => { state.receitas.find((x) => x.id === 'venda').incomeNature = 'office_personal_transfer'; });
+  const p = await proj(9, 2026);
+  const ok = repasseBucket(p) === 0 && p.entradas.pendentes.other === 123456
+    && p.cenarios.pior.resultadoCents === base.cenarios.pior.resultadoCents && p.cenarios.melhor.resultadoCents === base.cenarios.melhor.resultadoCents
+    && p.cenarios.pior.resultadoCents === 300000;
+  return { ok, detail: JSON.stringify({ pior: p.cenarios.pior, melhor: p.cenarios.melhor }) };
+}, 'pior e melhor cenário não são inflados pelo falso repasse (R$ 1.234,56 fora dos dois)');
+
+// ══════════════════════════════════════════════════════════════════════════
+// CORREÇÃO P1 — painel "Destinação" com a mesma fonte do saldo acumulado
+// ══════════════════════════════════════════════════════════════════════════
+const fmtBR = (c) => (c < 0 ? '− ' : '') + 'R$ ' + (Math.abs(c) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const destino = async (mes, ano) => {
+  await openDash(mes, ano);
+  return page.evaluate(() => ({
+    acum: document.getElementById('pmSaldoAcumulado')?.innerText ?? null,
+    dest: document.getElementById('destSaldoContas')?.innerText ?? null,
+    painel: document.getElementById('dashExcedentePanel').innerText,
+  }));
+};
+
+await check('FIX_DEST_01_REQUIRED_SCENARIO', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('f', 'Receita futura', 1000, '2026-10-10')] }));
+  const p = await proj(10, 2026);
+  const d = await destino(10, 2026);
+  const ok = p.saldoAgoraCents === 100000 && p.entradas.pendentes.total === 100000 && p.saidas.pendentes.total === 0
+    && p.saldoAcumulado.cents === 200000 && d.acum === 'R$ 2.000,00' && d.dest === 'R$ 2.000,00';
+  return { ok, detail: JSON.stringify({ acum: d.acum, dest: d.dest, cents: p.saldoAcumulado.cents }) };
+}, 'saldo 1.000 + receita futura 1.000 − saídas 0 = 2.000 nos DOIS painéis');
+
+await check('FIX_DEST_02_NEGATIVE_RESULT', async () => {
+  await loadState(baseSyntheticState({ despesas: [desp('d', 'Reforma', 1500, { mes: 10 })] }));
+  const p = await proj(10, 2026);
+  const d = await destino(10, 2026);
+  const ok = p.saldoAcumulado.cents === -50000 && d.acum === '− R$ 500,00' && d.dest === '− R$ 500,00';
+  return { ok, detail: JSON.stringify({ acum: d.acum, dest: d.dest }) };
+}, 'saldo acumulado negativo idêntico nos dois painéis, com sinal');
+
+await check('FIX_DEST_03_CURRENT_COMPETENCE', async () => {
+  await loadState(mainState());
+  const p = await proj(9, 2026);
+  const d = await destino(9, 2026);
+  const ok = d.dest === d.acum && d.dest === fmtBR(p.saldoAcumulado.cents) && p.saldoAcumulado.cents === 37477 - 482149;
+  return { ok, detail: JSON.stringify({ acum: d.acum, dest: d.dest }) };
+}, 'competência atual: mesmo valor, saldo atual + resultado pendente do mês');
+
+await check('FIX_DEST_04_INTERMEDIATE_MONTH', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('a', 'Set', 100, '2026-09-25'), unico('b', 'Out', 200, '2026-10-10'), unico('c', 'Nov', 400, '2026-11-10')],
+    despesas: [desp('d', 'Nov', 50, { mes: 11 })] }));
+  const p = await proj(11, 2026);
+  const d = await destino(11, 2026);
+  const ok = p.saldoAcumulado.cents === 100000 + 10000 + 20000 + 35000 && d.dest === 'R$ 1.650,00' && d.acum === d.dest && p.saldoAcumulado.months.length === 3;
+  return { ok, detail: JSON.stringify({ d: d.dest, months: p.saldoAcumulado.months }) };
+}, 'mês futuro intermediário: cada competência conta uma vez (1.000+100+200+350)');
+
+await check('FIX_DEST_05_PAST_NOT_CURRENT_BALANCE', async () => {
+  // Saldo atual (1.000 + 100 recebido em ago + 50 em set) ≠ saldo ao fim de agosto.
+  await loadState(baseSyntheticState({ receitas: [unico('a', 'Ago', 100, '2026-08-10', { estado: 'recebido', dataRecebimento: '2026-08-10' }), unico('b', 'Set', 50, '2026-09-10', { estado: 'recebido', dataRecebimento: '2026-09-10' })] }));
+  const r = await page.evaluate(() => {
+    currentMonth = 8; currentYear = 2026; navigate('dashboard'); renderDashboard();
+    const hist = state.contas.reduce((t, c) => t + toCents(calcSaldoContaAte(c.id, 8, 2026)), 0);
+    const atual = state.contas.reduce((t, c) => t + toCents(calcSaldoConta(c.id)), 0);
+    const tile = document.getElementById('destSaldoContas').closest('.mini-tile').innerText;
+    return { hist, atual, tile, acum: document.getElementById('pmSaldoAcumulado').innerText, destVal: document.getElementById('destSaldoContas').innerText };
+  });
+  const ok = r.hist !== r.atual && r.destVal === fmtBR(r.hist) && r.destVal !== fmtBR(r.atual) && /histórico/i.test(r.tile) && !/Saldo que permanece/i.test(r.tile)
+    && /Não disponível para competência passada/.test(r.acum);
+  return { ok, detail: JSON.stringify(r) };
+}, 'competência passada: métrica histórica claramente rotulada (corte do razão), nunca o saldo atual; acumulado indisponível');
+
+await check('FIX_DEST_06_INFLOWS_OUTFLOWS_AND_TEXT', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('a', 'Out', 900, '2026-10-10')], despesas: [desp('d', 'Out', 250, { mes: 10 })] }));
+  const d = await destino(10, 2026);
+  const ok = d.dest === 'R$ 1.650,00' && d.acum === d.dest && /Saldo atual R\$ 1\.000,00 \+ resultado pendente R\$ 650,00/.test(d.painel)
+    && /até o fim de/.test(d.painel) && /Não é o saldo de hoje nem o resultado do mês/.test(d.painel);
+  return { ok, detail: d.painel.replace(/\n/g, ' | ').slice(0, 600) };
+}, 'entradas e saídas; texto explica período, fórmula e diferença entre saldo atual/resultado/acumulado');
+
+await check('FIX_DEST_07_OFFICE_AND_RESERVES_EXCLUDED', async () => {
+  const base = baseSyntheticState({ receitas: [unico('a', 'Out', 500, '2026-10-10')] });
+  await loadState(base);
+  const d1 = await destino(10, 2026);
+  await loadState({ ...base, office: { ativo: true, contas: [{ id: 'oc', name: 'Escritório', saldoInicial: 99999 }],
+    reservas: [{ id: 'res', nome: 'Reserva', saldoInicial: 5000 }], recebiveis: [{ id: 'rb', valor: 8000, estado: 'previsto', dataPrevista: '2026-10-05' }] } });
+  const d2 = await destino(10, 2026);
+  return { ok: d1.dest === 'R$ 1.500,00' && d2.dest === d1.dest && d2.acum === d1.acum, detail: JSON.stringify({ d1: d1.dest, d2: d2.dest }) };
+}, 'contas empresariais, reservas e recebíveis do escritório não entram');
+
+await check('FIX_DEST_08_NO_MUTATION', async () => {
+  await loadState(mainState());
+  const r = await page.evaluate(() => {
+    const antes = JSON.stringify(state);
+    for (const [m, y] of [[9, 2026], [10, 2026], [8, 2026], [12, 2026], [1, 2027]]) { currentMonth = m; currentYear = y; navigate('dashboard'); renderDashboard(); }
+    return JSON.stringify(state) === antes;
+  });
+  return { ok: r, detail: `state inalterado=${r}` };
+}, 'renderizar o painel e o gráfico não muda o state');
+
+// ══════════════════════════════════════════════════════════════════════════
+// CORREÇÃO P2 — gráfico anual: realizado × previsto
+// ══════════════════════════════════════════════════════════════════════════
+const chartData = () => page.evaluate(() => {
+  const c = chartBar.config;
+  const card = document.querySelector('#chartBar').closest('.card');
+  return { title: card.querySelector('.card-title').innerText + ' | ' + card.querySelector('.card-sub').innerText,
+    labels: c.data.labels, ds: c.data.datasets.map((d) => ({ label: d.label, data: d.data, stack: d.stack })) };
+});
+const serie = (cd, label) => cd.ds.find((d) => d.label === label).data;
+const paidSep = { '2026-09': true };
+const recebido = (id, nome, valor, data) => unico(id, nome, valor, data, { estado: 'recebido', dataRecebimento: data });
+
+await check('FIX_CHART_01_REQUIRED_SCENARIO_REALIZED_ONLY', async () => {
+  await loadState(baseSyntheticState({ receitas: [recebido('sr', 'Salário recebido', 4000, '2026-09-05')], despesas: [desp('d', 'Aluguel', 3000, { pagoMeses: paidSep })] }));
+  await openDash(9, 2026);
+  const cd = await chartData();
+  const set = (l) => serie(cd, l)[8];
+  const cards = await page.evaluate(() => ['pmEntradasPrevistas', 'pmSaidasPrevistas', 'pmEntradasRecebidas', 'pmSaidasPagas'].map((i) => document.getElementById(i).innerText));
+  const ok = set('Entradas realizadas') === 4000 && set('Entradas previstas') === 0 && set('Saídas realizadas') === 3000 && set('Saídas previstas') === 0
+    && cards[0] === 'R$ 0,00' && cards[1] === 'R$ 0,00' && cards[2] === 'R$ 4.000,00' && cards[3] === 'R$ 3.000,00';
+  return { ok, detail: JSON.stringify({ cd: cd.ds.map((d) => [d.label, d.data[8]]), cards }) };
+}, 'salário recebido 4.000 e despesa paga 3.000: previstos zerados, realizados corretos');
+
+await check('FIX_CHART_02_PREDICTED_ONLY', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('a', 'A receber', 700, '2026-09-25')], despesas: [desp('d', 'A pagar', 300, {})] }));
+  await openDash(9, 2026);
+  const cd = await chartData();
+  const ok = serie(cd, 'Entradas previstas')[8] === 700 && serie(cd, 'Saídas previstas')[8] === 300 && serie(cd, 'Entradas realizadas')[8] === 0 && serie(cd, 'Saídas realizadas')[8] === 0;
+  return { ok, detail: JSON.stringify(cd.ds.map((d) => [d.label, d.data[8]])) };
+}, 'só previstos');
+
+await check('FIX_CHART_03_MIXED_CARD_TRANSFER_OFFICE', async () => {
+  const s = baseSyntheticState({
+    receitas: [recebido('r1', 'Recebida', 600, '2026-09-03'), unico('r2', 'Pendente', 400, '2026-09-28'), reemb('rb', 50, 9, 2026)],
+    despesas: [desp('p1', 'Paga', 200, { pagoMeses: paidSep }), desp('p2', 'Pendente', 100, {}), desp('cc', 'Notebook', 900, { cartao: 'nu', dataCompra: '2026-09-01' })],
+    movimentacoesContas: [{ id: 't1', contaId: 'c1', valor: -500, data: '2026-09-10', obs: 'Transf', transferId: 'tt' }],
+    office: { ativo: true, contas: [{ id: 'oc', name: 'Esc', saldoInicial: 50000 }], recebiveis: [{ id: 'rb1', valor: 9999, estado: 'previsto', dataPrevista: '2026-09-12' }] },
+  });
+  await loadState(s);
+  await openDash(9, 2026);
+  const cd = await chartData();
+  const f = await page.evaluate(() => getPersonalMonthFlows(9, 2026));
+  // 100 pendente + fatura 900 (sem somar a compra do cartão de novo); transferência e escritório fora
+  const ok = serie(cd, 'Entradas realizadas')[8] === 600 && serie(cd, 'Entradas previstas')[8] === 450
+    && serie(cd, 'Saídas realizadas')[8] === 200 && serie(cd, 'Saídas previstas')[8] === 1000
+    && serie(cd, 'Entradas realizadas')[8] === f.entradas.realizadas.total / 100 && serie(cd, 'Saídas previstas')[8] === f.saidas.pendentes.total / 100;
+  return { ok, detail: JSON.stringify({ ds: cd.ds.map((d) => [d.label, d.data[8]]) }) };
+}, 'mistura; fatura sem dupla contagem; transferência e escritório fora');
+
+await check('FIX_CHART_04_EMPTY_MONTH_MULTI_MONTH_YEAR_CHANGE', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('a', 'Jan', 100, '2026-01-10'), unico('b', 'Dez', 300, '2026-12-10'), unico('c', 'Jan27', 900, '2027-01-10')],
+    despesas: [desp('d', 'Mar', 40, { mes: 3 })] }));
+  await openDash(9, 2026);
+  const c26 = await chartData();
+  await openDash(1, 2027);
+  const c27 = await chartData();
+  const ok = c26.labels.length === 12 && serie(c26, 'Entradas previstas')[0] === 100 && serie(c26, 'Entradas previstas')[11] === 300 && serie(c26, 'Saídas previstas')[2] === 40
+    && serie(c26, 'Entradas previstas')[5] === 0 && serie(c26, 'Saídas previstas')[5] === 0 && serie(c26, 'Entradas realizadas')[5] === 0
+    && serie(c27, 'Entradas previstas')[0] === 900 && serie(c27, 'Entradas previstas')[11] === 0;
+  return { ok, detail: JSON.stringify({ a: serie(c26, 'Entradas previstas'), b: serie(c27, 'Entradas previstas') }) };
+}, 'mês sem movimento, vários meses e troca de ano (2026 → 2027)');
+
+await check('FIX_CHART_05_CONSISTENT_WITH_CARDS_EVERY_MONTH', async () => {
+  await loadState(mainState());
+  const r = await page.evaluate(() => {
+    const out = [];
+    const cents = (txt) => Math.round(Number(txt.replace(/[^\d,]/g, '').replace(',', '.')) * 100);
+    for (let m = 1; m <= 12; m++) {
+      currentMonth = m; currentYear = 2026; navigate('dashboard'); renderDashboard();
+      const c = chartBar.config.data.datasets, t = (id) => document.getElementById(id).innerText;
+      out.push(cents(t('pmEntradasPrevistas')) === Math.round(c[1].data[m - 1] * 100) && cents(t('pmSaidasPrevistas')) === Math.round(c[3].data[m - 1] * 100)
+        && cents(t('pmEntradasRecebidas')) === Math.round(c[0].data[m - 1] * 100) && cents(t('pmSaidasPagas')) === Math.round(c[2].data[m - 1] * 100));
+    }
+    return out;
+  });
+  return { ok: r.length === 12 && r.every(Boolean), detail: JSON.stringify(r) };
+}, 'ao selecionar cada competência, gráfico e cartões reconciliam exatamente');
+
+await check('FIX_CHART_06_TITLE_LEGEND_TOOLTIP', async () => {
+  await loadState(baseSyntheticState({ receitas: [recebido('sr', 'Salário recebido', 4000, '2026-09-05')] }));
+  await openDash(9, 2026);
+  const r = await page.evaluate(() => {
+    const c = chartBar.config;
+    const cb = c.options.plugins.tooltip.callbacks;
+    const ds = c.data.datasets;
+    return {
+      titleCard: document.querySelector('#chartBar').closest('.card').innerText,
+      labels: ds.map((d) => d.label),
+      tipTitle: cb.title([{ dataIndex: 8 }]),
+      tipLabel: cb.label({ dataset: ds[0], parsed: { y: 4000 } }),
+      previstoNoRealizado: ds.filter((d) => /realizad/i.test(d.label)).some((d) => /previst/i.test(d.label)),
+      aria: document.getElementById('chartBar').getAttribute('aria-label'),
+    };
+  });
+  const ok = /Ano corrente — realizado e previsto/.test(r.titleCard) && !/Ano corrente — projeção/.test(r.titleCard)
+    && JSON.stringify(r.labels) === JSON.stringify(['Entradas realizadas', 'Entradas previstas', 'Saídas realizadas', 'Saídas previstas'])
+    && /Setembro 2026/.test(r.tipTitle) && r.tipLabel === 'Entradas realizadas: R$ 4.000,00' && !r.previstoNoRealizado && /realizado e previsto/.test(r.aria);
+  return { ok, detail: JSON.stringify(r) };
+}, 'título "realizado e previsto", 4 legendas por texto, tooltip com mês, natureza e valor');
+
+await check('FIX_CHART_07_NARROW_NO_TRUNCATION', async () => {
+  await loadState(mainState());
+  await page.setViewportSize({ width: 390, height: 900 });
+  await openDash(9, 2026);
+  const r = await page.evaluate(() => {
+    const card = document.querySelector('#chartBar').closest('.card');
+    const sub = card.querySelector('.card-sub'), ttl = card.querySelector('.card-title');
+    const over = (e) => e.scrollWidth > e.clientWidth + 1 || getComputedStyle(e).textOverflow === 'ellipsis';
+    return { pagina: document.documentElement.scrollWidth <= window.innerWidth, cardCabe: card.getBoundingClientRect().right <= window.innerWidth + 1,
+      subCortado: over(sub), tituloCortado: over(ttl) };
+  });
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  return { ok: r.pagina && r.cardCabe && !r.subCortado && !r.tituloCortado, detail: JSON.stringify(r) };
+}, 'em 390 px: sem rolagem lateral e sem título/subtítulo truncado');
 
 // ── 51. Console ───────────────────────────────────────────────────────────
 await check('PCP_51_NO_SCRIPT_ERRORS', async () => ({ ok: consoleErrors.length === 0, detail: JSON.stringify(consoleErrors) }), 'nenhum erro de console');

@@ -583,7 +583,7 @@ select option{background:var(--card)}
             <div class="chart-wrap" style="height:260px"><canvas id="chartDonut"></canvas></div>
           </div>
           <div class="card">
-            <div class="card-header"><div><div class="card-title">📈 Entradas vs Saídas</div><div class="card-sub">Ano corrente — projeção</div></div></div>
+            <div class="card-header"><div><div class="card-title">📈 Entradas vs Saídas</div><div class="card-sub">Ano corrente — realizado e previsto</div></div></div>
             <div class="chart-wrap" style="height:260px"><canvas id="chartBar"></canvas></div>
           </div>
         </div>
@@ -632,6 +632,7 @@ select option{background:var(--card)}
                 <div class="form-group">
                   <label for="recNatureza">Natureza da receita</label>
                   <select id="recNatureza"></select>
+                  <div class="form-hint" style="font-size:11px;color:var(--muted);margin-top:4px">"Repasse pessoal do escritório" é criado automaticamente pela distribuição do Caixa do Escritório e não pode ser escolhido aqui.</div>
                 </div>
                 <div class="form-group" id="recNomeGroup" style="display:none">
                   <label>Nome / Descrição</label>
@@ -1604,6 +1605,8 @@ async function runSaveCycle(useKeepalive) {
 }
 
 function scheduleSave() {
+  // Camada de gravação: nenhuma natureza falsa de repasse chega ao cache/Drive.
+  if(typeof sanitizeIncomeNatures==='function') sanitizeIncomeNatures(state);
   // Always cache locally first
   localStorage.setItem('finflow_local_cache', JSON.stringify(buildSaveObject()));
   // Marca que existe uma versão local mais nova do que a última confirmada no
@@ -1868,7 +1871,6 @@ function migrateState() {
     // estruturalmente inequívoca — receita pessoal gerada pelo repasse do
     // escritório (origem+officeTransferId). Nunca por descrição; idempotente;
     // demais registros antigos continuam sem classificação.
-    if(r.incomeNature===undefined&&r.origem==='office_distribution'&&r.officeTransferId) r.incomeNature='office_personal_transfer';
   });
   if (!state.movimentacoesCofrinhos) state.movimentacoesCofrinhos = [];
   // motivoResgate: só existe pra resgates NOVOS (Gate 2, seção 17) — nunca
@@ -2033,6 +2035,15 @@ function migrateState() {
   // receitas pessoais derivadas do escritório (tipo repasse_escritorio/retirada_escritorio):
   // nunca precisam de inferência aqui — já nascem com todos os campos do
   // novo modelo (certeza/estado/datas/officeTransferId) no momento da criação.
+  // Natureza da receita (projeção pessoal), depois de state.office pronto:
+  // só grava 'office_personal_transfer' com vínculo estrutural comprovado
+  // (origem + officeTransferId + repasse real); nunca por descrição. Natureza
+  // de repasse SEM vínculo (backup manipulado/dado corrompido) vira 'other'.
+  // Idempotente; não altera valor, data, conta nem status.
+  state.receitas.forEach(r=>{
+    if(r.incomeNature===undefined&&isStructuralOfficeTransfer(r,state)) r.incomeNature='office_personal_transfer';
+  });
+  sanitizeIncomeNatures(state);
 }
 
 // ════════════════════════════════════════════════
@@ -2957,11 +2968,35 @@ function getPrimarySalaryId(){
 // salário principal (por id) > vínculo com o repasse do escritório
 // (origem+officeTransferId) > natureza explícita > tipo estruturado
 // 'repasse' (Reembolso de compra no cartão) > outras.
+// Uma receita só é "repasse pessoal do escritório" quando TEM vínculo
+// estrutural: origem 'office_distribution' + officeTransferId não vazio +
+// (quando o modelo permite verificar) um repasse real de state.office com
+// esse mesmo officeTransferId. incomeNature sozinho NUNCA basta.
+function isStructuralOfficeTransfer(r, st){
+  if(!r||r.origem!=='office_distribution') return false;
+  const id=r.officeTransferId;
+  if(typeof id!=='string'||!id.trim()) return false;
+  const repasses=((st||state).office||{}).repasses;
+  return Array.isArray(repasses)&&repasses.some(rp=>rp&&rp.officeTransferId===id);
+}
+// Camada de gravação/migração/importação: neutraliza (→ 'other') a natureza
+// falsa de repasse. Não toca em valor, conta, data, status nem em outros
+// campos. Idempotente. Devolve quantos registros foram neutralizados.
+function sanitizeIncomeNatures(st){
+  let n=0;
+  for(const r of (st&&st.receitas)||[]){
+    if(r&&r.incomeNature==='office_personal_transfer'&&!isStructuralOfficeTransfer(r,st)){ r.incomeNature='other'; n++; }
+  }
+  return n;
+}
 function classifyPersonalIncome(r, primarySalaryId){
   if(r.tipo==='resgate') return 'internal';
   if(r.certeza==='potencial') return 'potential';
   if(primarySalaryId&&r.id===primarySalaryId) return 'salary';
-  if(r.origem==='office_distribution'&&r.officeTransferId) return 'office_personal_transfer';
+  const structural=isStructuralOfficeTransfer(r);
+  if(structural) return 'office_personal_transfer';
+  // Camada de leitura: natureza de repasse sem vínculo estrutural é falsa.
+  if(r.incomeNature==='office_personal_transfer') return r.tipo==='repasse'?'reimbursement':'other';
   // 'salary' explícito num lançamento que NÃO é o salário principal continua
   // em "outras entradas": o cenário conservador só conta o principal.
   if(isValidIncomeNature(r.incomeNature)) return r.incomeNature==='salary'?'other':r.incomeNature;
@@ -4681,6 +4716,48 @@ function renderFinancialOutlook(){
   document.getElementById('dashPrevisaoMedia').innerHTML=`<div class="card"><div class="card-title">Gastos variáveis ainda estimados: ${fmtBRL(p.variable.total)}</div><p class="card-sub">${p.variable.unavailable?'Histórico insuficiente: são necessários lançamentos nos três meses completos anteriores. Não foi adicionada estimativa.':'Média por categoria, descontando tudo o que já foi lançado no mês. Para períodos parciais, o restante é distribuído proporcionalmente pelos dias restantes; é uma hipótese de planejamento.'}</p>${(p.variable.months||[]).map(m=>`<details><summary>${esc(m.month)} · ${fmtBRL(m.total)}</summary>${m.categories.map(c=>`<p>${esc(state.categories.find(cat=>cat.id===c.category)?.name||c.category)}: média ${fmtBRL(c.expected)} · lançado ${fmtBRL(c.registered)} · restante no período ${fmtBRL(c.remaining)}</p>`).join('')}</details>`).join('')}</div>`;
 }
 
+// Série anual do gráfico: 4 séries por mês, todas de getPersonalMonthFlows
+// (a mesma função dos cartões mensais). Valores em reais (centavos/100).
+function getPersonalYearSeries(ano){
+  const out={labels:[],entradasRealizadas:[],entradasPrevistas:[],saidasRealizadas:[],saidasPrevistas:[],cents:[]};
+  for(let m=1;m<=12;m++){
+    const f=getPersonalMonthFlows(m,ano);
+    out.labels.push(MONTHS[m-1].slice(0,3));
+    out.entradasRealizadas.push(f.entradas.realizadas.total/100);
+    out.entradasPrevistas.push(f.entradas.pendentes.total/100);
+    out.saidasRealizadas.push(f.saidas.realizadas.total/100);
+    out.saidasPrevistas.push(f.saidas.pendentes.total/100);
+    out.cents.push({entradasRealizadas:f.entradas.realizadas.total,entradasPrevistas:f.entradas.pendentes.total,saidasRealizadas:f.saidas.realizadas.total,saidasPrevistas:f.saidas.pendentes.total});
+  }
+  return out;
+}
+
+// Tile "Saldo que permanece nas contas" do painel Destinação. Mesma fonte do
+// cartão "Saldo acumulado estimado": getPersonalMonthProjection().saldoAcumulado.
+function renderDestinacaoSaldoTile(){
+  const p=getPersonalMonthProjection(currentMonth,currentYear);
+  const acum=p.saldoAcumulado;
+  const periodoLabel=`${MONTHS[currentMonth-1]} ${currentYear}`;
+  const title='Saldo que permanece nas contas';
+  if(acum.reason==='past_competence'){
+    // Métrica histórica DIFERENTE: corte real do razão até o fim daquela
+    // competência (calcSaldoContaAte), nunca o saldo atual reaproveitado nem
+    // uma projeção. O saldo acumulado estimado não existe para o passado.
+    const histCents=(state.contas||[]).reduce((t,c)=>t+toCents(calcSaldoContaAte(c.id,currentMonth,currentYear)),0);
+    return `<div class="mini-tile"><div class="mini-label">Saldo histórico das contas ao fim de ${esc(periodoLabel)}</div><div id="destSaldoContas" class="mini-value" style="font-size:18px">${fmtCentsBRL(histCents)}</div><div class="mini-note">Competência passada: valor do histórico de lançamentos até o fim do mês, não é o saldo atual nem uma projeção. O saldo acumulado estimado não se aplica ao passado.</div></div>`;
+  }
+  if(!acum.available){
+    return `<div class="mini-tile"><div class="mini-label">${title}</div><div id="destSaldoContas" class="mini-value" style="font-size:14px">Não disponível para uma competência tão distante</div><div class="mini-note">Limite de ${PERSONAL_PROJECTION_MAX_MONTHS} meses a partir de hoje.</div></div>`;
+  }
+  const upTo=p.period==='current'?'até o fim deste mês':`até o fim de ${esc(periodoLabel)}`;
+  const formula=`Saldo atual ${fmtCentsBRL(p.saldoAgoraCents)} + resultado pendente ${fmtCentsBRL(acum.cents-p.saldoAgoraCents)}`;
+  return `<div class="mini-tile" title="Estimativa: mesmo valor do cartão Saldo acumulado estimado">
+    <div class="mini-label">${title}</div>
+    <div id="destSaldoContas" class="mini-value" style="font-size:18px">${fmtCentsBRL(acum.cents)}</div>
+    <div class="mini-note">Projeção estimada ${upTo}, contas pessoais (sem escritório e sem reservas): ${formula}. Não é o saldo de hoje nem o resultado do mês.</div>
+  </div>`;
+}
+
 // Resumo pessoal por competência. Só apresenta o que
 // getPersonalMonthProjection devolve — nenhuma regra financeira aqui e
 // nenhuma escrita em state.
@@ -4800,7 +4877,7 @@ function renderDashboard(){
     <div class="card" style="margin-bottom:20px">
       <div class="card-header">
         <div class="card-title">🎯 Destinação — ${MONTHS[currentMonth-1]} ${currentYear}</div>
-        <div class="card-sub">Contribuição · Cofrinho · Caixa acumulado</div>
+        <div class="card-sub">Contribuição · Cofrinho · Saldo estimado nas contas pessoais</div>
       </div>
       <div class="mini-grid" style="grid-template-columns:repeat(3,1fr)">
         <div class="mini-tile">
@@ -4823,12 +4900,7 @@ function renderDashboard(){
             <button class="btn btn-warn btn-sm" style="flex:1" onclick="navigate('cofrinho')">&#8617; Resgatar</button>
           </div>
         </div>
-        ${(state.contas&&state.contas.length>0)?`
-        <div class="mini-tile" title="Informativo: já está incluído no saldo das contas, não soma de novo">
-          <div class="mini-label">Saldo que permanece nas contas</div>
-          <div class="mini-value" style="font-size:18px">${fmtBRL(emCaixaDisponivel)}</div>
-          <div class="mini-note">${isProjecaoFutura?'Projeção a partir do saldo atual das contas':'Já incluído no saldo das contas — não é um lançamento'}</div>
-        </div>` : `
+        ${(state.contas&&state.contas.length>0)?renderDestinacaoSaldoTile():`
         <div class="mini-tile">
           <div class="mini-label">Guardar em Caixa</div>
           <div class="mini-value" style="font-size:18px">${fmtBRL(excedenteMes)}</div>
@@ -4897,29 +4969,34 @@ function renderDashboard(){
     ctx.fillText('Sem despesas neste mês',ctx.canvas.width/2,ctx.canvas.height/2);
   }
 
-  // ── Bar chart ──
-  const barRec=[],barDesp=[],barLabels=[];
-  for(let m=1;m<=12;m++){
-    const mt=getTotalsForMonth(m,currentYear);
-    barLabels.push(MONTHS[m-1].slice(0,3));
-    barRec.push(mt.previstoEntradas);
-    barDesp.push(mt.totalDespPrevisao);
-  }
+  // ── Bar chart: realizado × previsto, mesmas funções dos cartões mensais ──
+  const barSeries=getPersonalYearSeries(currentYear);
   if(chartBar){ chartBar.destroy(); chartBar=null; }
-  chartBar=new Chart(document.getElementById('chartBar').getContext('2d'),{
+  const barCanvas=document.getElementById('chartBar');
+  barCanvas.setAttribute('role','img');
+  barCanvas.setAttribute('aria-label',`Entradas e saídas de ${currentYear}, por mês, separando realizado e previsto`);
+  chartBar=new Chart(barCanvas.getContext('2d'),{
     type:'bar',
     data:{
-      labels:barLabels,
+      labels:barSeries.labels,
       datasets:[
-        {label:'Previsto Entradas',data:barRec,backgroundColor:'rgba(56,226,180,.7)',borderRadius:4},
-        {label:'Previsto Saídas',  data:barDesp,backgroundColor:'rgba(255,95,109,.6)',borderRadius:4}
+        {label:'Entradas realizadas',data:barSeries.entradasRealizadas,stack:'entradas',backgroundColor:'rgba(56,226,180,.9)',borderRadius:2},
+        {label:'Entradas previstas',data:barSeries.entradasPrevistas,stack:'entradas',backgroundColor:'rgba(56,226,180,.25)',borderColor:'rgba(56,226,180,.9)',borderWidth:1,borderDash:[4,3],borderRadius:2},
+        {label:'Saídas realizadas',data:barSeries.saidasRealizadas,stack:'saidas',backgroundColor:'rgba(255,95,109,.9)',borderRadius:2},
+        {label:'Saídas previstas',data:barSeries.saidasPrevistas,stack:'saidas',backgroundColor:'rgba(255,95,109,.25)',borderColor:'rgba(255,95,109,.9)',borderWidth:1,borderDash:[4,3],borderRadius:2}
       ]
     },
     options:{
-      plugins:{legend:{labels:{color:'#7c84a0',font:{family:'Inter',size:11},boxWidth:10,padding:12}}},
+      plugins:{
+        legend:{labels:{color:'#7c84a0',font:{family:'Inter',size:11},boxWidth:10,padding:12}},
+        tooltip:{callbacks:{
+          title:items=>items.length?`${MONTHS[items[0].dataIndex]} ${currentYear}`:'',
+          label:c=>`${c.dataset.label}: ${fmtBRL(c.parsed.y)}`
+        }}
+      },
       scales:{
-        x:{ticks:{color:'#7c84a0',font:{family:'Inter',size:11}},grid:{color:'rgba(42,48,80,.5)'}},
-        y:{ticks:{color:'#7c84a0',font:{family:'Inter',size:11},callback:v=>'R$'+v.toLocaleString('pt-BR')},grid:{color:'rgba(42,48,80,.5)'}}
+        x:{stacked:true,ticks:{color:'#7c84a0',font:{family:'Inter',size:11}},grid:{color:'rgba(42,48,80,.5)'}},
+        y:{stacked:true,ticks:{color:'#7c84a0',font:{family:'Inter',size:11},callback:v=>'R$'+v.toLocaleString('pt-BR')},grid:{color:'rgba(42,48,80,.5)'}}
       },
       maintainAspectRatio:false
     }
@@ -5191,13 +5268,24 @@ function renderParcelasReceita(){
 // Natureza da receita (projeção pessoal): escolha explícita do usuário.
 // Vazio = sem classificação (não grava o campo). Nunca inferida do nome.
 const INCOME_NATURE_LABELS={salary:'Salário',office_personal_transfer:'Repasse pessoal do escritório',reimbursement:'Reembolso',other:'Outra entrada'};
-function incomeNatureOptionsHTML(selected){
+// 'Repasse pessoal do escritório' só nasce da distribuição estrutural do
+// escritório: nunca é escolha manual. Só aparece (desabilitada) numa receita
+// que já tem o vínculo estrutural.
+function incomeNatureOptionsHTML(selected,r){
+  const manual=INCOME_NATURES.filter(v=>v!=='office_personal_transfer');
+  const keep=r&&isStructuralOfficeTransfer(r);
   return `<option value="" ${isValidIncomeNature(selected)?'':'selected'}>Sem classificação</option>`+
-    INCOME_NATURES.map(v=>`<option value="${v}" ${selected===v?'selected':''}>${INCOME_NATURE_LABELS[v]}</option>`).join('');
+    manual.map(v=>`<option value="${v}" ${selected===v?'selected':''}>${INCOME_NATURE_LABELS[v]}</option>`).join('')+
+    (keep?`<option value="office_personal_transfer" selected disabled>${INCOME_NATURE_LABELS.office_personal_transfer} (criado automaticamente pelo escritório)</option>`:'');
 }
 function applyIncomeNatureFromSelect(r,selectId){
   const el=document.getElementById(selectId);
   if(!el) return;
+  if(el.value==='office_personal_transfer'){
+    // Não fabricável manualmente: só mantém se o vínculo estrutural já existe.
+    if(!isStructuralOfficeTransfer(r)&&r.incomeNature==='office_personal_transfer') r.incomeNature='other';
+    return;
+  }
   if(isValidIncomeNature(el.value)) r.incomeNature=el.value; else delete r.incomeNature;
 }
 function addReceita(){
@@ -5522,7 +5610,7 @@ function openEditReceita(id){
       </div>
       <div class="form-group"><label>Ano</label><input type="number" id="eRecAno" value="${r.ano}" min="2020" max="2040"></div>
       <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta">${contaOpts}</select></div>
-      <div class="form-group full"><label for="eRecNatureza">Natureza da receita</label><select id="eRecNatureza">${incomeNatureOptionsHTML(r.incomeNature)}</select></div>
+      <div class="form-group full"><label for="eRecNatureza">Natureza da receita</label><select id="eRecNatureza">${incomeNatureOptionsHTML(r.incomeNature,r)}</select></div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eRecFixo" style="width:auto" ${r.recorrente?'checked':''} onchange="onERecFixoChange()"><label for="eRecFixo">Recorrente (mensal)</label></div>
       ${legacySalaryConversionHTML(r)}
     </div>
@@ -5613,7 +5701,7 @@ function openEditReceitaNovoModelo(id){
         <div class="form-group full"><label>Nome</label><input type="text" id="eRecNome2" value="${esc(r.nome||'')}"></div>
         <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor2" value="${r.valor}" min="0" step="0.01"></div>
         <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
-        <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature)}</select></div>
+        <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature,r)}</select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
@@ -5646,7 +5734,7 @@ function openEditReceitaNovoModelo(id){
           </div>
         </div>
         <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
-        <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature)}</select></div>
+        <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature,r)}</select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>

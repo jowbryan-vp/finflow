@@ -61,7 +61,9 @@ await check('CASH_UI_04_FUTURE_LABELED_AS_PROJECTION', async () => {
   const r = await page.evaluate(() => {
     currentMonth = 12; currentYear = 2026; renderDashboard();
     const totals = getTotalsForMonth(12, 2026);
-    return { shown: document.getElementById('dashExcedentePanel').innerText, expected: fmtBRL(totals.emCaixaDisponivel), isFuturo: totals.isProjecaoFutura };
+    // Painel "Destinação" consome o motor pessoal (mesma fonte do "Saldo acumulado estimado").
+    const proj = getPersonalMonthProjection(12, 2026);
+    return { shown: document.getElementById('dashExcedentePanel').innerText, expected: fmtCentsBRL(proj.saldoAcumulado.cents), isFuturo: totals.isProjecaoFutura };
   });
   const ok = r.isFuturo && r.shown.includes(r.expected) && /proje[cç][aã]o/i.test(r.shown) && !/saldo real/i.test(r.shown);
   return { ok, detail: `mês futuro (dezembro/2026): deve rotular como projeção, nunca como saldo real — expected=${r.expected}, painel="${r.shown.replace(/\n+/g, ' | ')}"` };
