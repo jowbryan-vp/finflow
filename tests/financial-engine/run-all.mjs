@@ -223,6 +223,13 @@ const FILES = [
   // (calcByCardForMonth), status de pagamento nem a ordenação
   // (ordenarItensFaturaDesc, Gate 5).
   'gate5-invoice-transaction-search.test.mjs',
+  // Projeção pessoal por competência + pior/melhor cenário (branch
+  // fix/personal-cash-projection-scenarios, base 2eaf646;
+  // docs/gates/PERSONAL-CASH-PROJECTION-SCENARIOS.md): resultado do mês =
+  // entradas previstas − saídas previstas, sem o saldo atual; saldo
+  // acumulado separado; natureza estruturada da receita (incomeNature),
+  // nunca inferida da descrição; escritório fora do pessoal.
+  'personal-cash-projection-scenarios.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

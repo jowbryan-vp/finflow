@@ -116,6 +116,21 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .mini-value.red{color:var(--danger)}
 .mini-value.blue{color:var(--accent)}
 .mini-note{font-size:9px;color:var(--muted);margin-top:3px}
+/* Resumo pessoal por competência: títulos financeiros sempre completos
+   (quebram linha, nunca reticências) e grade que reflui em várias linhas. */
+.pm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:12px;margin-bottom:12px}
+.pm-tile{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;min-width:0}
+.pm-title{font-size:12px;font-weight:600;letter-spacing:.02em;color:var(--muted);margin-bottom:6px;white-space:normal;overflow-wrap:anywhere;text-overflow:clip}
+.pm-value{font-family:var(--mono);font-size:20px;font-weight:700;overflow-wrap:anywhere}
+.pm-value.pos{color:var(--accent2)}
+.pm-value.neg{color:var(--danger)}
+.pm-value.zero{color:var(--text)}
+.pm-note{font-size:11px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
+.pm-formula{font-family:var(--mono);font-size:12px;margin-top:6px;overflow-wrap:anywhere}
+.pm-table{width:100%;border-collapse:collapse;font-size:13px}
+.pm-table td{padding:5px 4px;border-bottom:1px solid var(--border);vertical-align:top;overflow-wrap:anywhere}
+.pm-table td.num{text-align:right;font-family:var(--mono);white-space:nowrap}
+.pm-table tr.total td{font-weight:700;border-bottom:none}
 
 .section-title{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 12px;display:flex;align-items:center;gap:10px}
 .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
@@ -545,11 +560,12 @@ select option{background:var(--card)}
 
       <!-- DASHBOARD -->
       <div id="page-dashboard" class="page active">
-        <div id="dashHero"></div>
+        <div id="dashResumoMensal"></div>
+        <div id="dashDetalhamento"></div>
+        <div id="dashHero" style="margin-top:20px"></div>
         <div id="dashResumoPagar"></div>
         <div id="dashProjecaoFinanceira"></div>
         <div id="dashPrevisaoMedia"></div>
-        <div id="dashDetalhamento"></div>
         <div class="section-title">Contas &amp; Compromissos</div>
         <div class="two-col">
           <div id="dashSaldoContas"></div>
@@ -612,6 +628,10 @@ select option{background:var(--card)}
                     <option value="outro">Outro</option>
                     <option value="repasse">Reembolso de compra no cartão</option>
                   </select>
+                </div>
+                <div class="form-group">
+                  <label for="recNatureza">Natureza da receita</label>
+                  <select id="recNatureza"></select>
                 </div>
                 <div class="form-group" id="recNomeGroup" style="display:none">
                   <label>Nome / Descrição</label>
@@ -1844,6 +1864,11 @@ function migrateState() {
     if(r.tipo==='extra'&&!r.parcelas) r.parcelas=null;
     if(r.tipo==='extra'&&r.parcelas&&!Array.isArray(r.parcelas)) r.parcelas=null;
     if(!r.recebidaMeses) r.recebidaMeses={}; // {mesKey: true/false} para salario/decimo/ferias/repasse/extra não parcelado
+    // Natureza da receita (projeção pessoal): só grava quando a origem é
+    // estruturalmente inequívoca — receita pessoal gerada pelo repasse do
+    // escritório (origem+officeTransferId). Nunca por descrição; idempotente;
+    // demais registros antigos continuam sem classificação.
+    if(r.incomeNature===undefined&&r.origem==='office_distribution'&&r.officeTransferId) r.incomeNature='office_personal_transfer';
   });
   if (!state.movimentacoesCofrinhos) state.movimentacoesCofrinhos = [];
   // motivoResgate: só existe pra resgates NOVOS (Gate 2, seção 17) — nunca
@@ -2893,6 +2918,210 @@ function getChronologicalProjection(referenceDate,endDate){
   return {referenceDate,endDate,available,obligations,contracted,potentials,committed:available-obligations,
     projected:available-obligations+contracted,events,undated,issues,timeline,minimum,firstShortfall,
     incomplete:undated.length>0||issues.length>0,cycle:getCurrentFinancialCycle(referenceDate)};
+}
+
+// ════════════════════════════════════════════════
+// PROJEÇÃO PESSOAL POR COMPETÊNCIA (docs/gates/
+// PERSONAL-CASH-PROJECTION-SCENARIOS.md). Visão MENSAL: tudo aqui usa só a
+// competência pedida (mes/ano) — nunca o intervalo "a partir de hoje" de
+// getChronologicalProjection, que continua existindo separado. Puro: lê
+// state e os helpers canônicos já existentes (getReceitasForMonth,
+// receitaRecebida, getDespesasForMonth, calcByCardForMonth,
+// calcContribuicao, calcSaldoConta, getRepassesForMonth) e nunca grava nada.
+// Todos os valores monetários saem em CENTAVOS inteiros (sufixo Cents).
+// ════════════════════════════════════════════════
+
+// Natureza explícita da receita (campo opcional r.incomeNature). Ausente =
+// sem classificação (dados antigos continuam exatamente como estão).
+const INCOME_NATURES=['salary','office_personal_transfer','reimbursement','other'];
+function isValidIncomeNature(v){ return INCOME_NATURES.includes(v); }
+function toCents(v){ const n=Number(v); return Number.isFinite(n)?Math.round(n*100):0; }
+// "R$ 1.234,56" / "− R$ 1.234,56" — o sinal negativo nunca é omitido.
+function fmtCentsBRL(cents){
+  const c=Math.round(Number(cents)||0);
+  return (c<0?'− ':'')+fmtBRL(Math.abs(c)/100);
+}
+
+// Mesmo critério do seletor "Salário principal do ciclo" e de
+// getCurrentFinancialCycle: o id escolhido, ou o único candidato quando só
+// existe um salário recorrente do modelo atual.
+function getPrimarySalaryId(){
+  const candidates=(state.receitas||[]).filter(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
+  const selected=state.financialPreferences?.primarySalaryId;
+  if(selected&&candidates.some(r=>r.id===selected)) return selected;
+  return candidates.length===1?candidates[0].id:null;
+}
+
+// Classifica uma receita SÓ por campos estruturados — nunca pela descrição.
+// Ordem: movimento interno (resgate legado de cofrinho) > potencial >
+// salário principal (por id) > vínculo com o repasse do escritório
+// (origem+officeTransferId) > natureza explícita > tipo estruturado
+// 'repasse' (Reembolso de compra no cartão) > outras.
+function classifyPersonalIncome(r, primarySalaryId){
+  if(r.tipo==='resgate') return 'internal';
+  if(r.certeza==='potencial') return 'potential';
+  if(primarySalaryId&&r.id===primarySalaryId) return 'salary';
+  if(r.origem==='office_distribution'&&r.officeTransferId) return 'office_personal_transfer';
+  // 'salary' explícito num lançamento que NÃO é o salário principal continua
+  // em "outras entradas": o cenário conservador só conta o principal.
+  if(isValidIncomeNature(r.incomeNature)) return r.incomeNature==='salary'?'other':r.incomeNature;
+  if(r.tipo==='repasse') return 'reimbursement';
+  return 'other';
+}
+
+function getTodayISO(){
+  const n=new Date();
+  return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;
+}
+
+// Fluxos de UMA competência, separados em realizado × pendente. Sem saldo.
+function getPersonalMonthFlows(mes,ano){
+  const primarySalaryId=getPrimarySalaryId();
+  const k=mesKey(mes,ano);
+  const blankIn=()=>({salary:0,office_personal_transfer:0,reimbursement:0,other:0,total:0});
+  const blankOut=()=>({expense:0,invoice:0,contribution:0,total:0});
+  const entradas={realizadas:blankIn(),pendentes:blankIn()};
+  const saidas={realizadas:blankOut(),pendentes:blankOut()};
+  const items={entradasRealizadas:[],entradasPendentes:[],saidasRealizadas:[],saidasPendentes:[],potenciais:[],internas:[]};
+  let potenciaisCents=0;
+
+  for(const r of getReceitasForMonth(mes,ano)){
+    if(r.estado==='cancelado') continue;
+    const amountCents=toCents(valorReceita(r));
+    if(!amountCents) continue;
+    const received=!!receitaRecebida(r,mes,ano);
+    let nature=classifyPersonalIncome(r,primarySalaryId);
+    const item={id:r.id,label:r.nome||'Receita',amountCents,nature,received};
+    if(nature==='internal'){ items.internas.push({...item,kind:'resgate_cofrinho'}); continue; }
+    if(nature==='potential'){
+      // Potencial nunca entra em previsto/cenário. Se de fato já caiu na
+      // conta, é caixa real: conta no realizado como "outras entradas".
+      if(!received){ potenciaisCents+=amountCents; items.potenciais.push(item); continue; }
+      nature='other'; item.nature='other';
+    }
+    const bucket=received?entradas.realizadas:entradas.pendentes;
+    bucket[nature]+=amountCents; bucket.total+=amountCents;
+    (received?items.entradasRealizadas:items.entradasPendentes).push(item);
+  }
+  // Reembolso de despesa compartilhada ainda não recebido: vem da divisão
+  // (d.split) — não é receita gravada. Ao ser recebido, a divisão sai daqui
+  // (recebido:true) e, se lançado como receita, passa a existir só como
+  // receita tipo 'repasse' — nunca os dois ao mesmo tempo.
+  for(const rp of getRepassesForMonth(mes,ano)){
+    if(rp.recebido) continue;
+    const amountCents=toCents(rp.valorPessoa);
+    if(!amountCents) continue;
+    entradas.pendentes.reimbursement+=amountCents; entradas.pendentes.total+=amountCents;
+    items.entradasPendentes.push({id:`split:${rp.despesaId}:${rp.personId}:${k}`,label:`${rp.personName}: ${rp.desc||'Despesa compartilhada'}`,amountCents,nature:'reimbursement',received:false,source:'split'});
+  }
+
+  // Saídas. Cartão de crédito entra SÓ pela fatura (calcByCardForMonth, com
+  // ajuste manual) — a mesma fonte que o pagamento da fatura debita da conta;
+  // as compras individuais nunca são somadas junto. Dinheiro/PIX entra por
+  // parcela, pelo status pagoMeses daquela competência.
+  for(const d of getDespesasForMonth(mes,ano)){
+    if(isCartaoDeCredito(d.cartao)) continue;
+    const amountCents=toCents(d._valorParcela);
+    if(!amountCents) continue;
+    const item={id:`expense:${d.id}:${k}`,label:d.desc||'Despesa',amountCents,kind:'expense',paid:!!d._pago};
+    const bucket=d._pago?saidas.realizadas:saidas.pendentes;
+    bucket.expense+=amountCents; bucket.total+=amountCents;
+    (d._pago?items.saidasRealizadas:items.saidasPendentes).push(item);
+  }
+  const byCard=calcByCardForMonth(mes,ano);
+  for(const card of state.cards||[]){
+    if(!isCartaoDeCredito(card.id)) continue;
+    const amountCents=toCents(byCard[card.id]);
+    if(!amountCents) continue;
+    const paid=isFaturaPaga(card.id,mes,ano);
+    const item={id:`invoice:${card.id}:${k}`,label:`Fatura ${card.name}`,amountCents,kind:'invoice',paid};
+    const bucket=paid?saidas.realizadas:saidas.pendentes;
+    bucket.invoice+=amountCents; bucket.total+=amountCents;
+    (paid?items.saidasRealizadas:items.saidasPendentes).push(item);
+  }
+  const contribCents=toCents(calcContribuicao(mes,ano));
+  if(contribCents){
+    const paid=isContribuicaoPaga(mes,ano);
+    const bucket=paid?saidas.realizadas:saidas.pendentes;
+    bucket.contribution+=contribCents; bucket.total+=contribCents;
+    (paid?items.saidasRealizadas:items.saidasPendentes).push({id:`contribution:${k}`,label:'Contribuição',amountCents:contribCents,kind:'contribution',paid});
+  }
+  // Depósito em cofrinho é patrimônio reservado (transferência própria), não
+  // despesa: só informativo, fora de entradas/saídas/resultados.
+  for(const m of state.movimentacoesCofrinhos||[]){
+    if(m.mes!==mes||m.ano!==ano||m.saldoInicialFlag) continue;
+    const amountCents=toCents(m.valor);
+    if(amountCents) items.internas.push({id:m.id,label:m.obs||(m.tipo==='resgate'?'Resgate do cofrinho':'Depósito no cofrinho'),amountCents,kind:m.tipo==='resgate'?'resgate_cofrinho':'deposito_cofrinho'});
+  }
+
+  const resultadoProjetadoCents=entradas.pendentes.total-saidas.pendentes.total;
+  const resultadoCompletoCents=(entradas.realizadas.total+entradas.pendentes.total)-(saidas.realizadas.total+saidas.pendentes.total);
+  const piorResultado=entradas.pendentes.salary+entradas.pendentes.office_personal_transfer-saidas.pendentes.total;
+  const cenarios={
+    pior:{salarioCents:entradas.pendentes.salary,repasseCents:entradas.pendentes.office_personal_transfer,reembolsosCents:null,
+      saidasCents:saidas.pendentes.total,resultadoCents:piorResultado},
+    melhor:{salarioCents:entradas.pendentes.salary,repasseCents:entradas.pendentes.office_personal_transfer,reembolsosCents:entradas.pendentes.reimbursement,
+      saidasCents:saidas.pendentes.total,resultadoCents:piorResultado+entradas.pendentes.reimbursement},
+  };
+  return {mes,ano,primarySalaryId,entradas,saidas,potenciaisCents,items,resultadoProjetadoCents,resultadoCompletoCents,cenarios};
+}
+
+// Lançamentos sem data/competência comprovada: ficam FORA de qualquer mês
+// (nunca ganham competência inventada) e são listados para conferência.
+function getPersonalUndatedPendencies(){
+  const out=[];
+  for(const r of state.receitas||[]){
+    if(r.estado==='cancelado') continue;
+    if(r.certeza!==undefined&&!r.recorrencia){
+      if(r.estado==='recebido'){
+        if(!isValidISODateString(r.dataRecebimento)) out.push({id:r.id,label:r.nome||'Receita',amountCents:toCents(r.valor),reason:'invalid_received_date'});
+      } else if(!isValidISODateString(r.dataPrevista)){
+        out.push({id:r.id,label:r.nome||'Receita',amountCents:toCents(r.valor),reason:'missing_revenue_date'});
+      }
+    } else if(r.certeza===undefined&&!(Array.isArray(r.parcelas)&&r.parcelas.length)&&!(r.mes&&r.ano)){
+      out.push({id:r.id,label:r.nome||'Receita',amountCents:toCents(r.valor),reason:'missing_revenue_date'});
+    }
+  }
+  for(const d of state.despesas||[]){
+    if(!(d.mesInicio&&d.anoInicio))
+      out.push({id:d.id,label:d.desc||'Despesa',amountCents:toCents(d.valor),reason:'missing_expense_month'});
+    else if(d.cartao&&d.cartao!=='dinheiro'&&!(state.cards||[]).some(c=>c.id===d.cartao))
+      out.push({id:d.id,label:d.desc||'Despesa',amountCents:toCents(d.valor),reason:'missing_card'});
+  }
+  return out;
+}
+
+const PERSONAL_PROJECTION_MAX_MONTHS=120;
+// Projeção completa da competência (mes/ano). options.today ('YYYY-MM-DD',
+// opcional) fixa "hoje" para testes; padrão = data real do navegador.
+function getPersonalMonthProjection(mes,ano,options){
+  const today=(options&&isValidISODateString(options.today))?options.today:getTodayISO();
+  const [ty,tm]=today.split('-').map(Number);
+  const serial=ano*12+mes-1, todaySerial=ty*12+tm-1;
+  const period=serial<todaySerial?'past':serial===todaySerial?'current':'future';
+  const flows=getPersonalMonthFlows(mes,ano);
+  // Saldo disponível agora: só contas pessoais (state.contas). Contas,
+  // reservas e recebíveis do escritório vivem em state.office e nunca entram;
+  // cofrinho é patrimônio reservado, fora do saldo das contas.
+  const saldoAgoraCents=(state.contas||[]).reduce((s,c)=>s+toCents(calcSaldoConta(c.id)),0);
+  let saldoAcumulado;
+  if(period==='past'){
+    saldoAcumulado={available:false,reason:'past_competence',cents:null,months:[]};
+  } else if(serial-todaySerial>=PERSONAL_PROJECTION_MAX_MONTHS){
+    saldoAcumulado={available:false,reason:'too_far',cents:null,months:[]};
+  } else {
+    // Saldo de hoje + resultado pendente de cada competência desde o mês
+    // atual até a selecionada (inclusive). Cada mês intermediário conta uma
+    // única vez, pela mesma função de fluxos — nunca pelo saldo de novo.
+    let acc=saldoAgoraCents; const months=[];
+    for(let s=todaySerial;s<=serial;s++){
+      const m=s%12+1, y=Math.floor(s/12);
+      const r=s===serial?flows.resultadoProjetadoCents:getPersonalMonthFlows(m,y).resultadoProjetadoCents;
+      acc+=r; months.push({month:mesKey(m,y),resultadoProjetadoCents:r});
+    }
+    saldoAcumulado={available:true,reason:null,cents:acc,months};
+  }
+  return {...flows,today,period,saldoAgoraCents,saldoAcumulado,pendenciasSemData:getPersonalUndatedPendencies()};
 }
 
 // ════════════════════════════════════════════════
@@ -4418,7 +4647,7 @@ function renderFinancialOutlook(){
   const metric=(id,title,value,note)=>`<div class="hero-tile"><div class="hero-label">${title}</div><div id="${id}" class="hero-value ${value<0?'red':'blue'}">${fmtBRL(value)}</div><div class="hero-sub">${note}</div></div>`;
   document.getElementById('dashHero').innerHTML=`
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div><div class="card-title">Seu planejamento a partir de hoje</div><div class="card-sub">${dateLabel(today)} até ${dateLabel(end)} · os relatórios mensais continuam abaixo</div></div></div>
+      <div class="card-header"><div><div class="card-title">Fluxo de caixa a partir de hoje</div><div class="card-sub" id="outlookPeriodo">De ${dateLabel(today)} até ${dateLabel(end)} · visão acumulada por data, não é o resultado da competência — os números do mês estão no resumo pessoal acima</div></div></div>
       <div class="form-grid">
         <div class="form-group"><label for="primarySalarySelect">Salário principal do ciclo</label><select id="primarySalarySelect" onchange="setFinancialPreference('primarySalaryId',this.value)"><option value="">${salaries.length?'Escolha o salário principal':'Nenhum salário recorrente cadastrado'}</option>${salaries.map(r=>`<option value="${esc(r.id)}" ${r.id===primary?'selected':''}>${esc(r.nome||'Salário')}</option>`).join('')}</select></div>
         <div class="form-group"><label for="projectionEndDate">Planejar até</label><input id="projectionEndDate" type="date" min="${today}" value="${end}" onchange="setFinancialPreference('projectionEndDate',this.value)"></div>
@@ -4436,8 +4665,8 @@ function renderFinancialOutlook(){
     </div>
     <div class="hero-grid">
       ${metric('outlookAvailable','Disponível agora',p.available,'Saldo registrado nas contas pessoais. Reservas e escritório ficam separados.')}
-      ${metric('outlookCommitted','Após obrigações',p.committed,`Disponível menos ${fmtBRL(p.obligations)} a pagar. Não inclui receitas pendentes.`)}
-      ${metric('outlookProjected','Saldo projetado',p.projected,`Inclui ${fmtBRL(p.contracted)} a receber e desconta ${fmtBRL(p.variable.total)} de estimativa variável.`)}
+      ${metric('outlookCommitted','Após obrigações do período',p.committed,`Disponível menos ${fmtBRL(p.obligations)} a pagar. Não inclui receitas pendentes.`)}
+      ${metric('outlookProjected',`Saldo projetado em ${dateLabel(end)} (fim do período)`,p.projected,`Inclui ${fmtBRL(p.contracted)} a receber e desconta ${fmtBRL(p.variable.total)} de estimativa variável.`)}
     </div>
     <div class="info-box" id="outlookQuality">${!state.contas.length?'Cadastre contas pessoais para ter um saldo inicial. ':''}${p.incomplete?'Projeção incompleta: confira datas, cadastros e histórico abaixo.':'Projeção baseada nos lançamentos registrados e na hipótese de gastos indicada abaixo.'} O saldo inicial é o registrado agora; não é uma reconstrução do saldo diário histórico.</div>
     <div class="card" style="margin-top:16px"><div class="card-title">Receitas potenciais: <span id="outlookPotentials">${fmtBRL(p.potentials)}</span></div><p class="card-sub">Apresentadas separadamente. Não aumentam o disponível nem o saldo projetado.</p></div>`;
@@ -4450,6 +4679,84 @@ function renderFinancialOutlook(){
     ${p.undated.length?`<details><summary>Ver lançamentos sem data definida (${p.undated.length})</summary>${p.undated.map(e=>`<p>${esc(e.label)} · ${esc(e.month)} · ${fmtBRL(e.amount)}${e.kind==='potential'?' · potencial; fora do saldo':''}</p>`).join('')}<p>Obrigações incluídas no saldo final de forma conservadora; o dia de pagamento precisa ser confirmado.</p></details>`:''}
     ${p.issues.length?`<details open><summary>Cadastros para conferir (${p.issues.length})</summary>${[...new Set(p.issues.map(i=>issueNames[i.reason]||'Cadastro incompleto'))].map(label=>`<p>${esc(label)}</p>`).join('')}</details>`:''}</div>`;
   document.getElementById('dashPrevisaoMedia').innerHTML=`<div class="card"><div class="card-title">Gastos variáveis ainda estimados: ${fmtBRL(p.variable.total)}</div><p class="card-sub">${p.variable.unavailable?'Histórico insuficiente: são necessários lançamentos nos três meses completos anteriores. Não foi adicionada estimativa.':'Média por categoria, descontando tudo o que já foi lançado no mês. Para períodos parciais, o restante é distribuído proporcionalmente pelos dias restantes; é uma hipótese de planejamento.'}</p>${(p.variable.months||[]).map(m=>`<details><summary>${esc(m.month)} · ${fmtBRL(m.total)}</summary>${m.categories.map(c=>`<p>${esc(state.categories.find(cat=>cat.id===c.category)?.name||c.category)}: média ${fmtBRL(c.expected)} · lançado ${fmtBRL(c.registered)} · restante no período ${fmtBRL(c.remaining)}</p>`).join('')}</details>`).join('')}</div>`;
+}
+
+// Resumo pessoal por competência. Só apresenta o que
+// getPersonalMonthProjection devolve — nenhuma regra financeira aqui e
+// nenhuma escrita em state.
+function renderPersonalMonthSummary(){
+  const p=getPersonalMonthProjection(currentMonth,currentYear);
+  const periodoLabel=`${MONTHS[currentMonth-1]} ${currentYear}`;
+  const tone=c=>c>0?'pos':c<0?'neg':'zero';
+  // Nunca só cor: o texto diz se é sobra, falta ou equilíbrio.
+  const toneText=c=>c>0?'Resultado positivo (sobra)':c<0?'Resultado negativo (falta)':'Resultado zero (equilíbrio)';
+  const tile=(id,title,cents,note,signed)=>`<div class="pm-tile"><div class="pm-title">${title}</div><div id="${id}" class="pm-value ${signed?tone(cents):'zero'}">${fmtCentsBRL(cents)}</div>${note?`<div class="pm-note">${note}</div>`:''}</div>`;
+  const ent=p.entradas, sai=p.saidas;
+  const formula=`${fmtCentsBRL(ent.pendentes.total)} − ${fmtCentsBRL(sai.pendentes.total)} = ${fmtCentsBRL(p.resultadoProjetadoCents)}`;
+  const acum=p.saldoAcumulado;
+  const acumTile=acum.available
+    ?tile('pmSaldoAcumulado','Saldo acumulado estimado',acum.cents,
+      `Saldo disponível agora + resultado pendente ${p.period==='current'?'até o fim deste mês':`de ${acum.months.length} competências (mês atual até ${periodoLabel})`}. ${toneText(acum.cents).replace('Resultado','Saldo')}.`,true)
+    :`<div class="pm-tile"><div class="pm-title">Saldo acumulado estimado</div><div id="pmSaldoAcumulado" class="pm-value zero">${acum.reason==='past_competence'?'Não disponível para competência passada':'Não disponível para uma competência tão distante'}</div><div class="pm-note">${acum.reason==='past_competence'?'O saldo diário histórico não é reconstruído. Use o resultado completo do mês.':`Limite de ${PERSONAL_PROJECTION_MAX_MONTHS} meses a partir de hoje.`}</div></div>`;
+  document.getElementById('dashResumoMensal').innerHTML=`
+    <div class="section-title" style="margin-top:0">Resumo pessoal — competência ${periodoLabel}</div>
+    <div class="info-box" style="margin-bottom:12px">Todos os valores abaixo usam só a competência ${periodoLabel}. O saldo disponível agora é mostrado separado e não entra no resultado do mês.</div>
+    <div class="pm-grid" id="pmLinha1">
+      ${tile('pmSaldoAgora','Saldo disponível agora',p.saldoAgoraCents,'Contas pessoais. Escritório, reservas e cofrinho ficam fora.',true)}
+      ${tile('pmEntradasPrevistas','Entradas previstas',ent.pendentes.total,'Ainda não recebidas nesta competência.',false)}
+      ${tile('pmSaidasPrevistas','Saídas previstas',sai.pendentes.total,'Ainda não pagas nesta competência.',false)}
+      <div class="pm-tile"><div class="pm-title">Resultado projetado do mês</div><div id="pmResultadoProjetado" class="pm-value ${tone(p.resultadoProjetadoCents)}">${fmtCentsBRL(p.resultadoProjetadoCents)}</div><div id="pmResultadoFormula" class="pm-formula">${formula}</div><div id="pmResultadoTexto" class="pm-note">${toneText(p.resultadoProjetadoCents)} · entradas previstas − saídas previstas</div></div>
+    </div>
+    <div class="pm-grid" id="pmLinha2">
+      ${tile('pmEntradasRecebidas','Entradas já recebidas',ent.realizadas.total,'Já caíram na conta nesta competência.',false)}
+      ${tile('pmSaidasPagas','Saídas já pagas',sai.realizadas.total,'Já pagas nesta competência.',false)}
+      <div class="pm-tile"><div class="pm-title">Resultado completo do mês</div><div id="pmResultadoCompleto" class="pm-value ${tone(p.resultadoCompletoCents)}">${fmtCentsBRL(p.resultadoCompletoCents)}</div><div class="pm-formula">(${fmtCentsBRL(ent.realizadas.total)} + ${fmtCentsBRL(ent.pendentes.total)}) − (${fmtCentsBRL(sai.realizadas.total)} + ${fmtCentsBRL(sai.pendentes.total)})</div><div class="pm-note">${toneText(p.resultadoCompletoCents)} · inclui o que já aconteceu no mês</div></div>
+      ${acumTile}
+    </div>`;
+
+  const row=(label,cents,cls)=>`<tr${cls?` class="${cls}"`:''}><td>${label}</td><td class="num">${cents===null?'não considerados':fmtCentsBRL(cents)}</td></tr>`;
+  const list=arr=>arr.length?arr.map(i=>`<tr><td>${esc(i.label)}</td><td class="num">${fmtCentsBRL(i.amountCents)}</td></tr>`).join(''):'<tr><td colspan="2">Nenhum lançamento.</td></tr>';
+  const natureLabel={salary:'Salário principal',office_personal_transfer:'Repasse pessoal do escritório',reimbursement:'Reembolsos',other:'Outras entradas confirmadas'};
+  const byNature=(items,nature)=>items.filter(i=>i.nature===nature);
+  const compEntrada=(bucket,items,prefix)=>['salary','office_personal_transfer','reimbursement','other'].map(n=>
+    `<details><summary>${natureLabel[n]}: <span id="${prefix}_${n}">${fmtCentsBRL(bucket[n])}</span></summary><table class="pm-table">${list(byNature(items,n))}</table></details>`).join('');
+  const kindLabel={expense:'Despesas (Dinheiro/PIX, fixas e parcelas)',invoice:'Faturas de cartão',contribution:'Contribuição'};
+  const compSaida=(bucket,items,prefix)=>['expense','invoice','contribution'].map(k=>
+    `<details><summary>${kindLabel[k]}: <span id="${prefix}_${k}">${fmtCentsBRL(bucket[k])}</span></summary><table class="pm-table">${list(items.filter(i=>i.kind===k))}</table></details>`).join('');
+  const cen=(id,titulo,c,nota)=>`<div class="pm-tile" id="${id}"><div class="pm-title">${titulo}</div><table class="pm-table">
+      ${row('Salário principal',c.salarioCents)}${row('Repasse pessoal do escritório',c.repasseCents)}${row('Reembolsos',c.reembolsosCents)}
+      <tr><td>Saídas previstas</td><td class="num">${fmtCentsBRL(-c.saidasCents)}</td></tr>
+      <tr class="total"><td>Resultado</td><td class="num"><span class="pm-value ${tone(c.resultadoCents)}" style="font-size:15px">${fmtCentsBRL(c.resultadoCents)}</span></td></tr></table>
+      <div class="pm-note">${nota} ${toneText(c.resultadoCents)}.</div></div>`;
+  const semSalario=!p.primarySalaryId&&(state.receitas||[]).some(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
+  const reasonLabel={missing_revenue_date:'Receita sem data prevista',invalid_received_date:'Recebimento sem data válida',missing_expense_month:'Despesa sem competência',missing_card:'Despesa com cartão não cadastrado'};
+  document.getElementById('dashDetalhamento').innerHTML=`
+    <div class="two-col" style="align-items:start">
+      <div class="card"><div class="card-title">Composição das entradas — ${periodoLabel}</div>
+        <p class="card-sub">Previstas (ainda não recebidas): <strong id="pmCompEntradasPendentes">${fmtCentsBRL(ent.pendentes.total)}</strong></p>
+        <div id="pmCompEntradas">${compEntrada(ent.pendentes,p.items.entradasPendentes,'pmEntPend')}</div>
+        <p class="card-sub" style="margin-top:10px">Já recebidas: <strong>${fmtCentsBRL(ent.realizadas.total)}</strong></p>
+        <div>${compEntrada(ent.realizadas,p.items.entradasRealizadas,'pmEntReal')}</div>
+        <p class="card-sub" style="margin-top:10px">Receitas potenciais (fora de todos os resultados e cenários): <strong id="pmPotenciais">${fmtCentsBRL(p.potenciaisCents)}</strong></p>
+        ${p.items.potenciais.length?`<details><summary>Ver receitas potenciais (${p.items.potenciais.length})</summary><table class="pm-table">${list(p.items.potenciais)}</table></details>`:''}
+      </div>
+      <div class="card"><div class="card-title">Composição das saídas — ${periodoLabel}</div>
+        <p class="card-sub">Previstas (ainda não pagas): <strong id="pmCompSaidasPendentes">${fmtCentsBRL(sai.pendentes.total)}</strong></p>
+        <div id="pmCompSaidas">${compSaida(sai.pendentes,p.items.saidasPendentes,'pmSaiPend')}</div>
+        <p class="card-sub" style="margin-top:10px">Já pagas: <strong>${fmtCentsBRL(sai.realizadas.total)}</strong></p>
+        <div>${compSaida(sai.realizadas,p.items.saidasRealizadas,'pmSaiReal')}</div>
+        <p class="pm-note">Compras no cartão entram só pela fatura do mês (nunca compra e fatura juntas). Transferências entre contas e depósitos/resgates de cofrinho não são despesa nem receita.</p>
+      </div>
+    </div>
+    <div class="section-title">Cenários da competência ${periodoLabel}</div>
+    ${semSalario?'<div class="info-box" style="margin-bottom:12px">Há mais de um salário recorrente: escolha o salário principal do ciclo (seção “Fluxo de caixa a partir de hoje”) para que ele entre nos cenários.</div>':''}
+    <div class="pm-grid">
+      ${cen('pmPiorCenario','Pior cenário',p.cenarios.pior,'Salário principal pendente + repasse pessoal pendente − saídas previstas. Sem reembolsos, potenciais ou outras entradas.')}
+      ${cen('pmMelhorCenario','Melhor cenário',p.cenarios.melhor,'Pior cenário + reembolsos pendentes. Sem receitas potenciais.')}
+    </div>
+    <div class="card" id="pmPendencias"><div class="card-title">Pendências a conferir (${p.pendenciasSemData.length})</div>
+      ${p.pendenciasSemData.length?`<p class="card-sub">Estes lançamentos não têm data ou competência comprovada e <strong>não estão incluídos</strong> em nenhum valor acima. Nada foi alterado ou excluído.</p><table class="pm-table">${p.pendenciasSemData.map(i=>`<tr><td>${esc(i.label)} · ${reasonLabel[i.reason]||'Cadastro incompleto'}</td><td class="num">${fmtCentsBRL(i.amountCents)}</td></tr>`).join('')}</table>`:'<p class="card-sub">Nenhum lançamento sem data.</p>'}
+    </div>`;
 }
 
 function renderDashboard(){
@@ -4467,35 +4774,10 @@ function renderDashboard(){
   const contribuicaoAjustada=state.contribuicaoAjustes?.[k]!==undefined;
   const pendentesCount=getReceitasPrevistasForMonth(currentMonth,currentYear).length;
 
+  // Resumo pessoal da competência selecionada (entradas/saídas/resultados/
+  // cenários) — separado do fluxo "a partir de hoje" logo abaixo.
+  renderPersonalMonthSummary();
   renderFinancialOutlook();
-
-  // ── Detalhamento do mês: previsto x real, lado a lado ──
-  document.getElementById('dashDetalhamento').innerHTML=`
-    <div class="card">
-      <div class="card-header"><div class="card-title">📋 Detalhamento do mês</div></div>
-      <div class="mini-grid">
-        <div class="mini-tile" style="cursor:pointer" onclick="navigateReceitasFiltro('previstas')" title="Clique para ver receitas pendentes">
-          <div class="mini-label" style="color:var(--accent2)">Previsão de Entrada</div>
-          <div class="mini-value green">${fmtBRL(previstoEntradas)}</div>
-          <div class="mini-note">${pendentesCount>0?`${pendentesCount} pendente${pendentesCount>1?'s':''}`:'Tudo recebido ✓'}</div>
-        </div>
-        <div class="mini-tile" style="cursor:pointer" onclick="navigateReceitasFiltro('recebidas')" title="Clique para ver receitas recebidas">
-          <div class="mini-label" style="color:var(--accent2)">Entrada Real</div>
-          <div class="mini-value green">${fmtBRL(emCaixaEntradas)}</div>
-          <div class="mini-note">Já recebidas</div>
-        </div>
-        <div class="mini-tile" style="cursor:pointer" onclick="navigateDespesasFiltro('todas')" title="Clique para ver todas as despesas">
-          <div class="mini-label" style="color:var(--danger)">Previsão de Saída</div>
-          <div class="mini-value red">${fmtBRL(totalDespPrevisao)}</div>
-          <div class="mini-note">Todas as despesas lançadas</div>
-        </div>
-        <div class="mini-tile" style="cursor:pointer" onclick="navigateDespesasFiltro('pagas')" title="Clique para ver despesas pagas">
-          <div class="mini-label" style="color:var(--danger)">Saída Real</div>
-          <div class="mini-value red">${fmtBRL(emCaixaSaidas)}</div>
-          <div class="mini-note">Já pagas</div>
-        </div>
-      </div>
-    </div>`;
 
   document.getElementById('dashSaldoContas').innerHTML=renderSaldoContasCard();
   renderProximosVencimentos();
@@ -4906,6 +5188,18 @@ function renderParcelasReceita(){
   });
   list.innerHTML=html;
 }
+// Natureza da receita (projeção pessoal): escolha explícita do usuário.
+// Vazio = sem classificação (não grava o campo). Nunca inferida do nome.
+const INCOME_NATURE_LABELS={salary:'Salário',office_personal_transfer:'Repasse pessoal do escritório',reimbursement:'Reembolso',other:'Outra entrada'};
+function incomeNatureOptionsHTML(selected){
+  return `<option value="" ${isValidIncomeNature(selected)?'':'selected'}>Sem classificação</option>`+
+    INCOME_NATURES.map(v=>`<option value="${v}" ${selected===v?'selected':''}>${INCOME_NATURE_LABELS[v]}</option>`).join('');
+}
+function applyIncomeNatureFromSelect(r,selectId){
+  const el=document.getElementById(selectId);
+  if(!el) return;
+  if(isValidIncomeNature(el.value)) r.incomeNature=el.value; else delete r.incomeNature;
+}
 function addReceita(){
   const tipo=document.getElementById('recTipo').value;
   const nome=document.getElementById('recNome').value.trim()||(tipo==='repasse'?'Reembolso de compra no cartão':tipo);
@@ -4953,8 +5247,10 @@ function addReceita(){
     novaRec={id:uid(),tipo,nome,valor,mes,ano,conta,recorrente:rec,isRepasse:tipo==='repasse',createdAt:uid()};
     if(parcelado) novaRec.parcelas=recParcelasData.map(p=>({...p}));
   }
+  applyIncomeNatureFromSelect(novaRec,'recNatureza');
   state.receitas.push(novaRec);
   scheduleSave();renderReceitas();toast('Receita adicionada!');
+  if(document.getElementById('recNatureza')) document.getElementById('recNatureza').value='';
   document.getElementById('recValor').value='';document.getElementById('recNome').value='';
   recParcelasData=[];
   if(document.getElementById('recParcelado')) document.getElementById('recParcelado').checked=false;
@@ -4966,6 +5262,8 @@ function addReceita(){
 function renderReceitas(){
   document.getElementById('recPeriodLabel').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
   document.getElementById('recMes').value=currentMonth;document.getElementById('recAno').value=currentYear;
+  const recNaturezaSel=document.getElementById('recNatureza');
+  if(recNaturezaSel&&!recNaturezaSel.options.length) recNaturezaSel.innerHTML=incomeNatureOptionsHTML('');
   const recContaSel=document.getElementById('recConta');
   if(recContaSel){
     recContaSel.innerHTML = state.contas.length
@@ -5224,6 +5522,7 @@ function openEditReceita(id){
       </div>
       <div class="form-group"><label>Ano</label><input type="number" id="eRecAno" value="${r.ano}" min="2020" max="2040"></div>
       <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta">${contaOpts}</select></div>
+      <div class="form-group full"><label for="eRecNatureza">Natureza da receita</label><select id="eRecNatureza">${incomeNatureOptionsHTML(r.incomeNature)}</select></div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eRecFixo" style="width:auto" ${r.recorrente?'checked':''} onchange="onERecFixoChange()"><label for="eRecFixo">Recorrente (mensal)</label></div>
       ${legacySalaryConversionHTML(r)}
     </div>
@@ -5282,6 +5581,7 @@ function saveEditReceita(id){
   r.conta=contaSelecionada!==undefined?(contaSelecionada||null):(r.conta||null);
   r.recorrente=novoRecorrente;
   r.isRepasse=r.tipo==='repasse';
+  applyIncomeNatureFromSelect(r,'eRecNatureza');
   if(converter){
     r.competenciaMes=r.mes; r.competenciaAno=r.ano;
     r.certeza='recorrente';
@@ -5313,6 +5613,7 @@ function openEditReceitaNovoModelo(id){
         <div class="form-group full"><label>Nome</label><input type="text" id="eRecNome2" value="${esc(r.nome||'')}"></div>
         <div class="form-group"><label>Valor (R$)</label><input type="number" id="eRecValor2" value="${r.valor}" min="0" step="0.01"></div>
         <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
+        <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature)}</select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
@@ -5345,6 +5646,7 @@ function openEditReceitaNovoModelo(id){
           </div>
         </div>
         <div class="form-group full"><label>Conta bancária (destino)</label><select id="eRecConta2">${contaOpts}</select></div>
+        <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature)}</select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
         <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
@@ -5368,6 +5670,7 @@ function saveEditReceitaNovoModelo(id){
   r.valor=parseFloat(document.getElementById('eRecValor2').value)||0;
   const contaSel=document.getElementById('eRecConta2')?.value;
   r.conta=contaSel!==undefined?(contaSel||null):(r.conta||null);
+  applyIncomeNatureFromSelect(r,'eRecNatureza2');
   if(!r.recorrencia){
     // Evento único: continua sendo o MESMO evento lógico — nunca cria uma
     // segunda receita ao transicionar previsto -> recebido (seção 24).
@@ -9037,7 +9340,7 @@ function syncDerivedPersonalTransferLegacy(recebivel, projeto){
     id:uid(), tipo:'repasse_escritorio', nome:'Repasse do Escritório'+(projeto?(' — '+projeto.nome):''),
     valor:valorRepasse, certeza:'contratado', estado:'previsto', dataPrevista, dataRecebimento:null,
     competenciaMes:mes||null, competenciaAno:ano||null, mes:mes||null, ano:ano||null, conta:null,
-    origem:'office_distribution', officeTransferId, createdAt:uid(),
+    origem:'office_distribution', officeTransferId, incomeNature:'office_personal_transfer', createdAt:uid(),
   });
 }
 
@@ -9178,7 +9481,7 @@ function syncDerivedPersonalTransferV2(recebivel, projeto){
     id:uid(), tipo:'repasse_escritorio', nome:'Repasse do Escritório'+(projeto?(' — '+projeto.nome):''),
     valor:valorRepasse, certeza:'contratado', estado:'previsto', dataPrevista, dataRecebimento:null,
     competenciaMes:mesN||null, competenciaAno:anoN||null, mes:mesN||null, ano:anoN||null, conta:null,
-    origem:'office_distribution', officeTransferId, createdAt:uid(),
+    origem:'office_distribution', officeTransferId, incomeNature:'office_personal_transfer', createdAt:uid(),
   });
 }
 
