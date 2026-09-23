@@ -2320,6 +2320,10 @@ function changeMonth(dir){
   currentMonth+=dir;
   if(currentMonth>12){currentMonth=1;currentYear++;}
   if(currentMonth<1){currentMonth=12;currentYear--;}
+  // Troca de competência: o termo pesquisado na fatura anterior não deve
+  // continuar filtrando (silenciosamente) a fatura do novo mês/ano.
+  const faturaSearchInput=document.getElementById('cartaoFaturaSearchInput');
+  if(faturaSearchInput) faturaSearchInput.value='';
   updatePeriodLabel(); renderAll();
 }
 function updatePeriodLabel(){
