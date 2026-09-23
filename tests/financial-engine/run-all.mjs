@@ -212,6 +212,17 @@ const FILES = [
   // legado nunca ganha o campo. Motor de cálculo/reconciliação/rateio
   // Sainte-Laguë intocados.
   'gate6-1-project-rrt-requirement.test.mjs',
+  // Correção — "Pesquisar Lançamento" de volta na aba Fatura (branch
+  // fix/invoice-transaction-search, base 9896327): a área "Cartões /
+  // Faturas" não tinha nenhum campo pra localizar uma compra específica
+  // dentro da fatura aberta (só existia a busca GLOBAL de Receitas/
+  // Despesas, que varre todos os meses). #cartaoFaturaSearchInput +
+  // matchFaturaSearch filtram só a apresentação da lista "Compras e
+  // parcelas desta fatura" (descrição, categoria, subcategoria, cartão,
+  // valor e data), case-insensitive, sem tocar state.despesas, total
+  // (calcByCardForMonth), status de pagamento nem a ordenação
+  // (ordenarItensFaturaDesc, Gate 5).
+  'gate5-invoice-transaction-search.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

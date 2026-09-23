@@ -1072,6 +1072,10 @@ select option{background:var(--card)}
             <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
             Nova compra no cartão
           </button>
+          <div class="form-group full mt-16" style="max-width:360px;display:flex;gap:8px;align-items:center;margin-bottom:0">
+            <input type="text" id="cartaoFaturaSearchInput" placeholder="🔍 Pesquisar lançamento nesta fatura…" oninput="renderFaturaCartoes()" style="flex:1">
+            <button type="button" class="btn btn-ghost btn-sm" onclick="limparPesquisaFatura()">Limpar</button>
+          </div>
           <div id="cartaoFaturaItens" class="mt-16"></div>
         </div>
         <div class="two-col" style="align-items:start">
@@ -2304,6 +2308,7 @@ function navigate(page){
   if(page!=='despesas') despCartaoFiltro=null;
   if(page!=='receitas') window._recFiltro='todas';
   if(page!=='despesas') window._despFiltro='todas';
+  if(page!=='cartoes'){ const faturaSearchInput=document.getElementById('cartaoFaturaSearchInput'); if(faturaSearchInput) faturaSearchInput.value=''; }
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
@@ -6473,6 +6478,10 @@ function ordenarItensFaturaDesc(itens){
 // compras, nenhuma regra financeira nova aqui).
 function selecionarFaturaCartao(cardId){
   window._faturaCartaoSelecionado=cardId;
+  // Troca de fatura: um termo pesquisado na fatura anterior não deve
+  // continuar filtrando (silenciosamente) a fatura de outro cartão.
+  const searchInput=document.getElementById('cartaoFaturaSearchInput');
+  if(searchInput) searchInput.value='';
   renderFaturaCartoes();
 }
 function renderFaturaCartoes(){
@@ -6496,7 +6505,12 @@ function renderFaturaCartoes(){
   const byCard=calcByCardForMonth(currentMonth,currentYear);
   const total=byCard[cardId]||0;
   const paga=isFaturaPaga(cardId,currentMonth,currentYear);
+  // `itens` sempre traz TODAS as compras da fatura, sem filtro nenhum — total,
+  // status de pagamento e resumo acima usam esse array intacto. A pesquisa
+  // (cartaoFaturaSearchInput) só decide o que é IMPRESSO na lista abaixo.
   const itens=getDespesasForMonth(currentMonth,currentYear).filter(d=>d.cartao===cardId);
+  const faturaSearchQuery=(document.getElementById('cartaoFaturaSearchInput')?.value||'').trim().toLowerCase();
+  const itensExibidos=faturaSearchQuery?itens.filter(d=>matchFaturaSearch(d,faturaSearchQuery)):itens;
 
   const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
   // Achado 4: sem valor, não há o que pagar — "Marcar como Paga" some (nunca
@@ -6526,9 +6540,35 @@ function renderFaturaCartoes(){
         <div style="display:flex;gap:6px;margin-top:4px">${acaoBtn}</div>
       </div>
     </div>`;
-  document.getElementById('cartaoFaturaItens').innerHTML = itens.length
-    ? `<div class="card-title" style="font-size:13px;margin-bottom:8px">Compras e parcelas desta fatura</div><div class="item-list">${ordenarItensFaturaDesc(itens).map(d=>despItemHTML(d)).join('')}</div>`
-    : '<div class="empty-state">Nenhuma compra nesta fatura ainda.</div>';
+  document.getElementById('cartaoFaturaItens').innerHTML = !itens.length
+    ? '<div class="empty-state">Nenhuma compra nesta fatura ainda.</div>'
+    : (itensExibidos.length
+      ? `<div class="card-title" style="font-size:13px;margin-bottom:8px">Compras e parcelas desta fatura</div><div class="item-list">${ordenarItensFaturaDesc(itensExibidos).map(d=>despItemHTML(d)).join('')}</div>`
+      : '<div class="empty-state">Nenhum lançamento encontrado com esse termo nesta fatura.</div>');
+}
+// Pesquisar Lançamento (fatura): compara só contra o que já é exibido em
+// cada compra da fatura aberta — descrição, categoria, subcategoria, cartão,
+// valor da parcela e data da compra — sem diferenciar maiúsculas/minúsculas.
+// Não muta d nem state.despesas; é puramente leitura, chamada só pra decidir
+// o que renderFaturaCartoes imprime na lista.
+function matchFaturaSearch(d,query){
+  if(!query) return true;
+  const cat=state.categories.find(c=>c.id===d.cat);
+  const card=state.cards.find(c=>c.id===d.cartao);
+  const camposTexto=[d.desc,cat?.name,d.subcat,card?.name].filter(Boolean).map(s=>String(s).toLowerCase());
+  if(camposTexto.some(s=>s.includes(query))) return true;
+  const valorParcela=d._valorParcela!=null?d._valorParcela:d.valor;
+  if(fmtBRL(valorParcela).toLowerCase().includes(query)) return true;
+  if(d.dataCompra&&isValidISODateString(d.dataCompra)){
+    const [ano,mes,dia]=d.dataCompra.split('-');
+    if(`${dia}/${mes}/${ano}`.includes(query)||d.dataCompra.toLowerCase().includes(query)) return true;
+  }
+  return false;
+}
+function limparPesquisaFatura(){
+  const searchInput=document.getElementById('cartaoFaturaSearchInput');
+  if(searchInput) searchInput.value='';
+  renderFaturaCartoes();
 }
 
 // Compra nova no cartão: mesmo state.despesas, mesmo modelo de dados de
