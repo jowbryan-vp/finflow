@@ -1605,8 +1605,6 @@ async function runSaveCycle(useKeepalive) {
 }
 
 function scheduleSave() {
-  // Camada de gravação: nenhuma natureza falsa de repasse chega ao cache/Drive.
-  if(typeof sanitizeIncomeNatures==='function') sanitizeIncomeNatures(state);
   // Always cache locally first
   localStorage.setItem('finflow_local_cache', JSON.stringify(buildSaveObject()));
   // Marca que existe uma versão local mais nova do que a última confirmada no
@@ -2069,12 +2067,18 @@ function migrateAppData(raw){
   }
   state = perfis[perfilAtivo].data || {};
   migrateState();
+  // Perfis inativos (backup multiperfil) também são saneados na entrada.
+  for(const id in perfis) sanitizeIncomeNatures(perfis[id]&&perfis[id].data);
   renderPerfilSwitcher();
 }
 // Monta o objeto completo que vai pro Drive/localStorage/export — sempre grava o
 // state em memória de volta no perfil ativo antes de serializar.
 function buildSaveObject(){
   if(perfilAtivo && perfis[perfilAtivo]) perfis[perfilAtivo].data = state;
+  // Fronteira única de persistência (cache, Drive, exportação): nenhum perfil,
+  // ativo ou não, sai com natureza falsa de repasse pessoal. Cada perfil é
+  // validado contra o próprio state.office.
+  for(const id in perfis) sanitizeIncomeNatures(perfis[id]&&perfis[id].data);
   return { version:2, perfilAtivo, perfis };
 }
 function renderPerfilSwitcher(){
@@ -2984,7 +2988,7 @@ function isStructuralOfficeTransfer(r, st){
 // campos. Idempotente. Devolve quantos registros foram neutralizados.
 function sanitizeIncomeNatures(st){
   let n=0;
-  for(const r of (st&&st.receitas)||[]){
+  for(const r of Array.isArray(st&&st.receitas)?st.receitas:[]){
     if(r&&r.incomeNature==='office_personal_transfer'&&!isStructuralOfficeTransfer(r,st)){ r.incomeNature='other'; n++; }
   }
   return n;

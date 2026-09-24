@@ -984,6 +984,144 @@ await check('FIX_CHART_07_NARROW_NO_TRUNCATION', async () => {
   return { ok: r.pagina && r.cardCabe && !r.subCortado && !r.tituloCortado, detail: JSON.stringify(r) };
 }, 'em 390 px: sem rolagem lateral e sem título/subtítulo truncado');
 
+// ══════════════════════════════════════════════════════════════════════════
+// CORREÇÃO P2 — invariante de persistência (todos os perfis, todos os caminhos)
+// ══════════════════════════════════════════════════════════════════════════
+const NAT = 'office_personal_transfer';
+const perfilRaw = () => {
+  const legit = officeRec('rep', 2990.99, '2026-09-25');
+  const mk = (id, receitas, repasses) => ({ id, name: id, color: '#abc', data: baseSyntheticState({ receitas, office: { repasses } }) });
+  return {
+    version: 2, perfilAtivo: 'pa',
+    perfis: {
+      pa: mk('pa', [vendaAvulsa(), { ...legit }], [{ id: 'rp', tipo: 'planejado', valor: 2990.99, estado: 'previsto', officeTransferId: 'off_rep' }]),
+      // perfil inativo: falso + o "repasse" do perfil A não existe aqui (validação é por perfil)
+      pb: mk('pb', [vendaAvulsa({ id: 'vb', origem: 'office_distribution', officeTransferId: 'off_rep' }), { ...legit, id: 'rep_b', officeTransferId: 'off_rep_b', incomeNature: 'office_personal_transfer' }], []),
+    },
+  };
+};
+// natureza de cada receita de cada perfil, a partir de um objeto serializado
+const natsOf = (obj) => Object.fromEntries(Object.entries(obj.perfis).map(([id, p]) => [id, Object.fromEntries((p.data.receitas || []).map((r) => [r.id, r.incomeNature ?? null]))]));
+// Sem rede real: nenhum salvamento do harness pode chegar ao Drive.
+await page.evaluate(() => { window.driveRequest = async () => { throw new Error('offline (teste)'); }; });
+const cacheObj = () => page.evaluate(() => JSON.parse(localStorage.getItem('finflow_local_cache')));
+
+await check('FIX_PERSIST_01_ACTIVE_PROFILE_TAMPERED', async () => {
+  await loadState(baseSyntheticState({ receitas: [unico('venda', 'Venda avulsa', 1234.56, '2026-09-20')] }));
+  const r = await page.evaluate(() => {
+    const antes = JSON.stringify({ ...state.receitas[0], incomeNature: null });
+    state.receitas[0].incomeNature = 'office_personal_transfer';
+    const obj = buildSaveObject();
+    const x = obj.perfis[obj.perfilAtivo].data.receitas[0];
+    return { nat: x.incomeNature, resto: JSON.stringify({ ...x, incomeNature: null }) === antes };
+  });
+  return { ok: r.nat === 'other' && r.resto, detail: JSON.stringify(r) };
+}, 'perfil ativo adulterado: serialização converte para other sem tocar nos demais campos');
+
+await check('FIX_PERSIST_02_INACTIVE_PROFILE_MULTIPROFILE_BACKUP', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate((raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    const emMemoria = Object.fromEntries(Object.entries(perfis).map(([id, p]) => [id, Object.fromEntries(p.data.receitas.map((x) => [x.id, x.incomeNature ?? null]))]));
+    scheduleSave(); clearTimeout(saveTimer);
+    const cache = JSON.parse(localStorage.getItem('finflow_local_cache'));
+    return { emMemoria, cache: Object.fromEntries(Object.entries(cache.perfis).map(([id, p]) => [id, Object.fromEntries(p.data.receitas.map((x) => [x.id, x.incomeNature ?? null]))])) };
+  }, perfilRaw());
+  const esperado = { pa: { venda: 'other', rep: NAT }, pb: { vb: 'other', rep_b: 'other', venda: 'other' } };
+  const ok = r.cache.pa.venda === 'other' && r.cache.pa.rep === NAT && r.cache.pb.vb === 'other' && r.cache.pb.rep_b === 'other'
+    && r.emMemoria.pb.vb === 'other' && r.emMemoria.pb.rep_b === 'other' && !JSON.stringify(r.cache.pb).includes('"' + NAT + '"');
+  return { ok, detail: JSON.stringify(r) };
+}, 'backup multiperfil: perfil inativo também é saneado (memória e cache), cada um contra o próprio office.repasses');
+
+await check('FIX_PERSIST_03_TAMPERED_AFTER_MIGRATION', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate((raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    perfis.pb.data.receitas[0].incomeNature = 'office_personal_transfer'; // depois da migração
+    perfis.pb.data.receitas[1].incomeNature = 'office_personal_transfer';
+    state.receitas[0].incomeNature = 'office_personal_transfer';
+    const obj = buildSaveObject();
+    return Object.fromEntries(Object.entries(obj.perfis).map(([id, p]) => [id, p.data.receitas.map((x) => x.incomeNature)]));
+  }, perfilRaw());
+  const ok = r.pa[0] === 'other' && r.pa[1] === NAT && r.pb[0] === 'other' && r.pb[1] === 'other';
+  return { ok, detail: JSON.stringify(r) };
+}, 'adulteração posterior à migração, inclusive em perfil inativo, é neutralizada ao serializar');
+
+await check('FIX_PERSIST_04_BUILD_SAVE_OBJECT_ALL_PROFILES', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate((raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    for (const id in perfis) for (const x of perfis[id].data.receitas) x.incomeNature = 'office_personal_transfer';
+    return JSON.stringify(buildSaveObject());
+  }, perfilRaw());
+  const obj = JSON.parse(r);
+  const n = natsOf(obj);
+  const ok = n.pa.venda === 'other' && n.pa.rep === NAT && n.pb.vb === 'other' && n.pb.rep_b === 'other';
+  return { ok, detail: JSON.stringify(n) };
+}, 'buildSaveObject: só o repasse com vínculo completo do próprio perfil sobrevive');
+
+await check('FIX_PERSIST_05_EXPORT', async () => {
+  await loadState(baseSyntheticState());
+  const txt = await page.evaluate(async (raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    perfis.pb.data.receitas[0].incomeNature = 'office_personal_transfer';
+    state.receitas[0].incomeNature = 'office_personal_transfer';
+    let blob = null;
+    const oc = URL.createObjectURL, ck = HTMLAnchorElement.prototype.click;
+    URL.createObjectURL = (b) => { blob = b; return 'blob:x'; };
+    HTMLAnchorElement.prototype.click = function () {};
+    try { exportData(); } finally { URL.createObjectURL = oc; HTMLAnchorElement.prototype.click = ck; }
+    return blob.text();
+  }, perfilRaw());
+  const n = natsOf(JSON.parse(txt));
+  const ok = n.pa.venda === 'other' && n.pa.rep === NAT && n.pb.vb === 'other' && n.pb.rep_b === 'other';
+  return { ok, detail: JSON.stringify(n) };
+}, 'exportação (arquivo JSON) não emite natureza falsa em nenhum perfil');
+
+await check('FIX_PERSIST_06_DIRECT_SAVE', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate(async (raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    perfis.pb.data.receitas[0].incomeNature = 'office_personal_transfer';
+    state.receitas[0].incomeNature = 'office_personal_transfer';
+    localStorage.removeItem('finflow_local_cache');
+    const ce = console.error; console.error = () => {}; // falha de rede simulada é esperada
+    try { await saveToDrive(false); } catch (e) { /* sem rede no harness: o snapshot local já foi gravado */ } finally { console.error = ce; }
+    return localStorage.getItem('finflow_local_cache');
+  }, perfilRaw());
+  const n = natsOf(JSON.parse(r));
+  const ok = n.pa.venda === 'other' && n.pa.rep === NAT && n.pb.vb === 'other' && n.pb.rep_b === 'other';
+  return { ok, detail: JSON.stringify(n) };
+}, 'salvamento direto (saveToDrive) grava snapshot saneado em todos os perfis');
+
+await check('FIX_PERSIST_07_SCHEDULE_SAVE_TAMPERED_AFTER_MIGRATION', async () => {
+  await loadState(baseSyntheticState());
+  await page.evaluate((raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    perfis.pb.data.receitas[0].incomeNature = 'office_personal_transfer';
+    scheduleSave(); clearTimeout(saveTimer);
+  }, perfilRaw());
+  const n = natsOf(await cacheObj());
+  return { ok: n.pb.vb === 'other' && n.pb.rep_b === 'other' && n.pa.rep === NAT, detail: JSON.stringify(n) };
+}, 'scheduleSave cobre também perfil inativo adulterado depois da migração');
+
+await check('FIX_PERSIST_08_LEGIT_PRESERVED_AND_09_OTHER_FIELDS_UNTOUCHED', async () => {
+  await loadState(baseSyntheticState());
+  const r = await page.evaluate((raw) => {
+    migrateAppData(JSON.parse(JSON.stringify(raw)));
+    const antes = JSON.stringify(perfis.pa.data.receitas.map(({ incomeNature, ...o }) => o)) + JSON.stringify(perfis.pb.data.receitas.map(({ incomeNature, ...o }) => o));
+    const obj = JSON.parse(JSON.stringify(buildSaveObject()));
+    const depois = JSON.stringify(obj.perfis.pa.data.receitas.map(({ incomeNature, ...o }) => o)) + JSON.stringify(obj.perfis.pb.data.receitas.map(({ incomeNature, ...o }) => o));
+    const key = (rs) => JSON.stringify(rs.map((x) => [x.id, x.nome, x.valor, x.conta, x.estado, x.dataPrevista, x.mes, x.ano]));
+    const orig = key(raw.perfis.pa.data.receitas) + key(raw.perfis.pb.data.receitas);
+    const fin = key(obj.perfis.pa.data.receitas) + key(obj.perfis.pb.data.receitas);
+    const again = JSON.stringify(buildSaveObject()) === JSON.stringify(buildSaveObject());
+    return { legit: obj.perfis.pa.data.receitas.find((x) => x.id === 'rep').incomeNature, iguais: antes === depois && antes.includes('1234.56'), preservaOriginal: orig === fin, again };
+  }, perfilRaw());
+  const ok = r.legit === NAT && r.iguais && r.preservaOriginal && r.again;
+  return { ok, detail: JSON.stringify(r) };
+}, 'repasse legítimo preservado; falso vira other sem alterar valor, conta, data, status, nome e demais campos; idempotente');
+
 // ── 51. Console ───────────────────────────────────────────────────────────
 await check('PCP_51_NO_SCRIPT_ERRORS', async () => ({ ok: consoleErrors.length === 0, detail: JSON.stringify(consoleErrors) }), 'nenhum erro de console');
 
