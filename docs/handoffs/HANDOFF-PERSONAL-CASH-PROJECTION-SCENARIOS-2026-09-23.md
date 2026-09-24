@@ -350,3 +350,32 @@ git diff --check   -> sem saída
 - **Gráfico:** testado com o stub de Chart.js do harness (config inspecionada, não
   pixels); a aparência real das barras empilhadas depende do Chart.js do CDN.
 - **Aplicação real:** exige login Google, não contornado.
+
+## Segunda rodada: P2 de persistência (reauditoria Codex FAIL)
+
+- **Hash-base:** `98ef9c5`. **Commit funcional:** `8d3bf2149a356ec1627d567e8a5c620c184d70b5`. Commit documental: este.
+- **Causa-raiz:** o saneamento cobria só o perfil ativo (`state`) e era chamado
+  apenas em `scheduleSave`. Um backup multiperfil mantinha a natureza falsa em
+  perfil inativo, e uma adulteração pós-migração podia ser serializada por
+  `buildSaveObject`, exportação ou `saveToDrive`.
+- **Correção:** `buildSaveObject`, por onde passam cache, Drive, exportação,
+  `saveToDrive` e `scheduleSave`, saneia todos os perfis, cada um contra o próprio
+  `office.repasses`. `migrateAppData` sanea todos os perfis na entrada. A chamada
+  isolada em `scheduleSave` foi removida. A leitura (`classifyPersonalIncome`)
+  continua defensiva. Só `incomeNature` muda (`other`); valor, conta, data,
+  status, nome e demais campos ficam intactos.
+- **Testes:** +8 casos (`FIX_PERSIST_01..08`, o 08 cobre repasse legítimo e campos
+  intactos): projeção pessoal 89/89, pesquisa da fatura 18/18,
+  `gate5-cash-balance-ui` 9/9, suíte completa 716/0 (708 + 8), `git diff --check` limpo.
+- **Antes da correção** (`index.html` de `bdb65ff`): 7 dos 8 novos falharam; o 08
+  (legítimo preservado) passa nos dois estados, como esperado.
+- **Sensibilidade:** sem a chamada de saneamento em `buildSaveObject`, 7 casos
+  falharam (`FIX_P1_10` e `FIX_PERSIST_01/03/04/05/06/07`); o `FIX_PERSIST_02`
+  continua coberto pelo saneamento em `migrateAppData`. Código restaurado e
+  conferido por `cmp`.
+- **Limitação:** o teste de salvamento direto usa `driveRequest` simulado (sem
+  rede); o snapshot local gravado antes da rede é o que se verifica.
+- **Fora do escopo, só documentado:** o subtítulo geral "Saldo estimado" do painel
+  Destinação (ressalva não bloqueante da auditoria) não foi alterado.
+- **Não rastreado preservado:** `docs/audits/PERSONAL-CASH-PROJECTION-SCENARIOS-REAUDIT-2026-09-23.md`
+  (relatório do Codex), fora dos commits.

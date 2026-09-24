@@ -113,9 +113,12 @@ O que já foi recebido não é somado de novo nos cenários.
   intactos; nenhum `officeTransferId` é inventado.
 - **Camadas de defesa:**
   - leitura/cálculo: `classifyPersonalIncome` ignora a natureza falsa;
-  - gravação: `scheduleSave` chama `sanitizeIncomeNatures` antes de cache/Drive;
-  - migração/importação/restauração: `migrateState` (chamada por
-    `migrateAppData`) grava `office_personal_transfer` só com vínculo
+  - persistência (fronteira única): `buildSaveObject` saneia TODOS os perfis,
+    ativo e inativos, cada um contra o próprio `office.repasses`, antes de
+    qualquer serialização. Cache local, Drive, `saveToDrive`, `scheduleSave` e
+    exportação passam por ela; não há normalização isolada por caminho;
+  - migração/importação/restauração: `migrateAppData` sanea todos os perfis
+    (backup multiperfil) e `migrateState` grava `office_personal_transfer` só com vínculo
     comprovado e neutraliza a falsa; idempotente;
   - interface: a criação e as duas edições não oferecem a opção; ela só
     aparece, desabilitada, em receita que já tem o vínculo. O formulário
