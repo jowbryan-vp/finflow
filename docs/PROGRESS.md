@@ -29,3 +29,7 @@ Verificação do Claude Code: execução real de leitura concluída sem permiss�
 Claude auditou Gates 2.2–4.3 em 2f89004: PASS com dois achados. Claude corrigiu em 0e40dd0 e 5d76935; Codex revisou separadamente e executou 305 testes, todos aprovados. Evidência: docs/audits/POST-AUDIT-4.3-CODEX.md.
 
 Usuário autorizou publicação para retomar com Git/VS Code no trabalho. Entrega em release/uat-2026-09-18, preservando main antigo e tags. Guia: docs/RETOMADA-2026-09-18.md. A publicação do código não transfere dados financeiros nem autenticação. Gate 5 continua sem autorização; automação deve permanecer pausada após entrega.
+
+## Atualização 30/09/2026 — Gate UX-1, Dashboard de caixa (entregue, aguardando auditoria)
+
+Escopo autorizado pelo usuário: só apresentação do Dashboard. Claude implementou em `fix/dashboard-cash-highlight` (base a90547f, após PASS da reauditoria 2 da projeção pessoal; commit funcional b617393). Dashboard: Disponível agora / A pagar até o fim do ciclo / Necessidade ou Folga de caixa, linha "a receber confirmado" e "sem conta de destino", lista "A pagar" que soma exatamente o card. Competência, cenários, saldo projetado e preferências foram para a Análise; card "Resultado projetado do mês" removido. Motor: só o metadado `amount` no issue de receita sem conta; teste compara os números com a90547f. Suíte: 733/733 (base 716/716). Especificação: docs/gates/UX-1-DASHBOARD-CAIXA.md; handoff: docs/handoffs/HANDOFF-UX-1-DASHBOARD-CAIXA-2026-09-30.md. Sem push nem merge. Próximo passo: auditoria Codex; nenhum outro gate iniciado.
