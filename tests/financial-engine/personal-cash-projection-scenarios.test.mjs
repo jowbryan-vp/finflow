@@ -4,8 +4,8 @@
 //
 // Cobre getPersonalMonthProjection / getPersonalMonthFlows /
 // classifyPersonalIncome (motor puro, centavos inteiros) e o resumo pessoal
-// do Dashboard (#dashResumoMensal / #dashDetalhamento), que só apresenta o
-// resultado do motor. Numeração PCP_NN segue a lista obrigatória da
+// por competência (#anResumoMensal / #anDetalhamento — aba Análise desde o
+// Gate UX-1), que só apresenta o resultado do motor. Numeração PCP_NN segue a lista obrigatória da
 // especificação (itens 1–51; o item 52 é a própria suíte run-all.mjs).
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
@@ -83,6 +83,16 @@ const proj = (mes, ano) => page.evaluate(([m, a, t]) => getPersonalMonthProjecti
 const openDash = (mes, ano) => page.evaluate(([m, a]) => {
   currentMonth = m; currentYear = a; navigate('dashboard'); renderDashboard();
 }, [mes, ano]);
+// Gate UX-1: o resumo por competência mora na aba Análise (renderDashboard
+// continua redesenhando-o junto, mas os testes visuais abrem a própria aba).
+const openResumo = (mes, ano) => page.evaluate(([m, a]) => {
+  currentMonth = m; currentYear = a; navigate('analise');
+}, [mes, ano]);
+// O card "Resultado projetado do mês" foi removido de todas as telas; a
+// apresentação do sinal/tom é verificada no "Resultado completo do mês".
+const semCardProjetado = () => page.evaluate(() => !document.getElementById('pmResultadoProjetado')
+  && !document.getElementById('pmResultadoFormula') && !document.body.innerText.includes('Resultado projetado do mês'));
+const tileTxt = (sel) => page.locator(sel).locator('xpath=..').innerText();
 const txt = (sel) => page.locator(sel).innerText();
 
 try {
@@ -99,28 +109,29 @@ await check('PCP_01_NEGATIVE_EXAMPLE', async () => {
 await check('PCP_02_POSITIVE', async () => {
   await loadState(baseSyntheticState({ receitas: [sal('sal', 10000)], despesas: [desp('d', 'Aluguel', 7500, { fixa: true })], financialPreferences: { primarySalaryId: 'sal' } }));
   const p = await proj(9, 2026);
-  await openDash(9, 2026);
-  const cls = await page.locator('#pmResultadoProjetado').getAttribute('class');
-  const ok = p.resultadoProjetadoCents === 250000 && cls.includes('pos') && (await txt('#pmResultadoProjetado')) === 'R$ 2.500,00';
+  await openResumo(9, 2026);
+  const cls = await page.locator('#pmResultadoCompleto').getAttribute('class');
+  const ok = p.resultadoProjetadoCents === 250000 && p.resultadoCompletoCents === 250000 && cls.includes('pos')
+    && (await txt('#pmResultadoCompleto')) === 'R$ 2.500,00' && await semCardProjetado();
   return { ok, detail: JSON.stringify({ r: p.resultadoProjetadoCents, cls }) };
-}, 'R$ 10.000,00 − R$ 7.500,00 = R$ 2.500,00 (verde)');
+}, 'R$ 10.000,00 − R$ 7.500,00 = R$ 2.500,00 (verde, no resultado completo; card projetado removido)');
 
 await check('PCP_03_ZERO', async () => {
   await loadState(baseSyntheticState({ receitas: [sal('sal', 5000)], despesas: [desp('d', 'Aluguel', 5000, { fixa: true })], financialPreferences: { primarySalaryId: 'sal' } }));
   const p = await proj(9, 2026);
-  await openDash(9, 2026);
-  const cls = await page.locator('#pmResultadoProjetado').getAttribute('class');
-  const texto = await txt('#pmResultadoTexto');
-  const ok = p.resultadoProjetadoCents === 0 && cls.includes('zero') && (await txt('#pmResultadoProjetado')) === 'R$ 0,00' && /zero/i.test(texto);
+  await openResumo(9, 2026);
+  const cls = await page.locator('#pmResultadoCompleto').getAttribute('class');
+  const texto = await tileTxt('#pmResultadoCompleto');
+  const ok = p.resultadoProjetadoCents === 0 && cls.includes('zero') && (await txt('#pmResultadoCompleto')) === 'R$ 0,00' && /zero/i.test(texto);
   return { ok, detail: JSON.stringify({ r: p.resultadoProjetadoCents, cls, texto }) };
 }, 'R$ 5.000,00 − R$ 5.000,00 = R$ 0,00 (neutro)');
 
 // ── 4. Sinal negativo nunca omitido ───────────────────────────────────────
 await check('PCP_04_NEGATIVE_SIGN', async () => {
   await loadState(mainState());
-  await openDash(9, 2026);
+  await openResumo(9, 2026);
   const r = await page.evaluate(() => ({ f1: fmtCentsBRL(-482149), f2: fmtCentsBRL(-1), f3: fmtCentsBRL(1) }));
-  const shown = await txt('#pmResultadoProjetado');
+  const shown = await txt('#pmResultadoCompleto');
   const ok = r.f1 === '− R$ 4.821,49' && r.f2 === '− R$ 0,01' && r.f3 === 'R$ 0,01' && shown === '− R$ 4.821,49';
   return { ok, detail: JSON.stringify({ ...r, shown }) };
 }, 'valores negativos sempre com "−"');
@@ -348,12 +359,12 @@ await check('PCP_29_30_SEP_OCT_INDEPENDENT', async () => {
   return { ok, detail: JSON.stringify({ set: set.resultadoProjetadoCents, out: out.resultadoProjetadoCents }) };
 }, 'setembro (−4.821,49) e outubro (+1.000,00) não se misturam');
 await check('PCP_29_DASH_NO_MIX', async () => {
-  await openDash(9, 2026); const s = await txt('#pmResultadoProjetado');
-  await page.evaluate(() => changeMonth(1)); const o = await txt('#pmResultadoProjetado');
-  await page.evaluate(() => changeMonth(-1)); const s2 = await txt('#pmResultadoProjetado');
+  await openResumo(9, 2026); const s = await txt('#pmResultadoCompleto');
+  await page.evaluate(() => changeMonth(1)); const o = await txt('#pmResultadoCompleto');
+  await page.evaluate(() => changeMonth(-1)); const s2 = await txt('#pmResultadoCompleto');
   const ok = s === '− R$ 4.821,49' && o === 'R$ 1.000,00' && s2 === s;
   return { ok, detail: JSON.stringify({ s, o, s2 }) };
-}, 'trocar de mês no Dashboard troca todos os indicadores mensais sem resíduo');
+}, 'trocar de mês na Análise troca todos os indicadores mensais sem resíduo');
 async function viradaAno() {
   await loadState(baseSyntheticState({
     receitas: [sal('sal', 4000, { mes: 12, ano: 2026, competenciaMes: 12, competenciaAno: 2026 })],
@@ -363,9 +374,9 @@ async function viradaAno() {
 }
 await check('PCP_31_DEC_TO_JAN', async () => {
   await viradaAno();
-  await openDash(12, 2026); const dez = await txt('#pmResultadoProjetado');
+  await openResumo(12, 2026); const dez = await txt('#pmResultadoCompleto');
   await page.evaluate(() => changeMonth(1));
-  const jan = await txt('#pmResultadoProjetado');
+  const jan = await txt('#pmResultadoCompleto');
   const periodo = await page.evaluate(() => `${currentMonth}/${currentYear}`);
   const p = await proj(1, 2027);
   const ok = dez === 'R$ 2.500,00' && periodo === '1/2027' && jan === 'R$ 1.500,00' && p.resultadoProjetadoCents === 150000;
@@ -373,7 +384,7 @@ await check('PCP_31_DEC_TO_JAN', async () => {
 }, 'dezembro → janeiro: nova competência, novo ano, sem resíduo');
 await check('PCP_32_JAN_TO_DEC', async () => {
   await page.evaluate(() => changeMonth(-1));
-  const dez = await txt('#pmResultadoProjetado');
+  const dez = await txt('#pmResultadoCompleto');
   const periodo = await page.evaluate(() => `${currentMonth}/${currentYear}`);
   const ok = periodo === '12/2026' && dez === 'R$ 2.500,00';
   return { ok, detail: JSON.stringify({ dez, periodo }) };
@@ -489,25 +500,26 @@ await check('PCP_41_43_NO_STATE_MUTATION', async () => {
 // ── 44–48. Interface ──────────────────────────────────────────────────────
 await check('PCP_44_FULL_TITLES', async () => {
   await page.setViewportSize({ width: 1440, height: 1600 });
-  await loadState(mainState()); await openDash(9, 2026);
-  const r = await page.evaluate(() => [...document.querySelectorAll('#dashResumoMensal .pm-title')].map((el) => {
+  await loadState(mainState()); await openResumo(9, 2026);
+  const r = await page.evaluate(() => [...document.querySelectorAll('#anResumoMensal .pm-title')].map((el) => {
     const cs = getComputedStyle(el);
     return { t: el.textContent, ellipsis: cs.textOverflow === 'ellipsis', nowrap: cs.whiteSpace === 'nowrap', cortado: el.scrollWidth > el.clientWidth + 1 };
   }));
-  const esperados = ['Saldo disponível agora', 'Entradas previstas', 'Saídas previstas', 'Resultado projetado do mês', 'Entradas já recebidas', 'Saídas já pagas', 'Resultado completo do mês', 'Saldo acumulado estimado'];
+  // Gate UX-1: "Resultado projetado do mês" removido; os demais na mesma ordem.
+  const esperados = ['Saldo disponível agora', 'Entradas previstas', 'Saídas previstas', 'Entradas já recebidas', 'Saídas já pagas', 'Resultado completo do mês', 'Saldo acumulado estimado'];
   const ok = JSON.stringify(r.map((x) => x.t)) === JSON.stringify(esperados) && r.every((x) => !x.ellipsis && !x.nowrap && !x.cortado);
   return { ok, detail: JSON.stringify(r) };
-}, 'oito títulos completos, na ordem pedida, sem reticências nem corte');
+}, 'sete títulos completos (sem o resultado projetado), na ordem pedida, sem reticências nem corte');
 async function semSobreposicao() {
   return page.evaluate(() => {
-    const tiles = [...document.querySelectorAll('#dashResumoMensal .pm-tile, #dashDetalhamento .pm-tile')].map((e) => e.getBoundingClientRect());
+    const tiles = [...document.querySelectorAll('#anResumoMensal .pm-tile, #anDetalhamento .pm-tile')].map((e) => e.getBoundingClientRect());
     let overlap = false;
     for (let i = 0; i < tiles.length; i++) for (let j = i + 1; j < tiles.length; j++) {
       const a = tiles[i], b = tiles[j];
       if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) overlap = true;
     }
-    const el = document.getElementById('dashResumoMensal');
-    const valoresCabem = [...document.querySelectorAll('#dashResumoMensal .pm-value')].every((v) => v.scrollWidth <= v.clientWidth + 1);
+    const el = document.getElementById('anResumoMensal');
+    const valoresCabem = [...document.querySelectorAll('#anResumoMensal .pm-value')].every((v) => v.scrollWidth <= v.clientWidth + 1);
     return { overlap, cabe: el.scrollWidth <= el.clientWidth + 2, valoresCabem, n: tiles.length,
       linha1: new Set([...document.querySelectorAll('#pmLinha1 .pm-tile')].map((e) => Math.round(e.getBoundingClientRect().top))).size };
   });
@@ -515,21 +527,21 @@ async function semSobreposicao() {
 await check('PCP_45_RESPONSIVE', async () => {
   const largo = await semSobreposicao();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => renderDashboard());
+  await page.evaluate(() => renderAnalise());
   const estreito = await semSobreposicao();
   await page.setViewportSize({ width: 1440, height: 1600 });
-  const ok = !largo.overlap && largo.cabe && largo.valoresCabem && largo.linha1 === 1 && !estreito.overlap && estreito.cabe && estreito.valoresCabem && estreito.linha1 === 4;
+  const ok = !largo.overlap && largo.cabe && largo.valoresCabem && largo.linha1 === 1 && !estreito.overlap && estreito.cabe && estreito.valoresCabem && estreito.linha1 === 3;
   return { ok, detail: JSON.stringify({ largo, estreito }) };
 }, 'tela larga: 1ª linha em uma fileira; celular: cartões empilhados; sem sobreposição nem rolagem lateral');
 await check('PCP_46_FORMULA_VISIBLE', async () => {
-  await page.evaluate(() => renderDashboard());
-  const f = await txt('#pmResultadoFormula');
+  await page.evaluate(() => renderAnalise());
+  const f = await page.locator('#pmResultadoCompleto').locator('xpath=following-sibling::div[contains(@class,"pm-formula")]').innerText();
   const comp = await txt('#pmCompEntradas');
-  const ok = f === 'R$ 7.040,99 − R$ 11.862,48 = − R$ 4.821,49'
+  const ok = f === '(R$ 0,00 + R$ 7.040,99) − (R$ 0,00 + R$ 11.862,48)' && await semCardProjetado()
     && comp.includes('Salário principal: R$ 4.000,00') && comp.includes('Repasse pessoal do escritório: R$ 2.990,99')
     && comp.includes('Reembolsos: R$ 50,00') && comp.includes('Outras entradas confirmadas: R$ 0,00');
   return { ok, detail: JSON.stringify({ f, comp }) };
-}, 'fórmula real visível e composição das entradas por origem');
+}, 'fórmula real do resultado completo visível e composição das entradas por origem');
 await check('PCP_46B_SCENARIOS_VISIBLE', async () => {
   const pior = await txt('#pmPiorCenario'); const melhor = await txt('#pmMelhorCenario'); const saidas = await txt('#pmCompSaidas');
   const ok = pior.includes('R$ 4.000,00') && pior.includes('R$ 2.990,99') && pior.includes('não considerados') && pior.includes('− R$ 11.862,48') && pior.includes('− R$ 4.871,49')
@@ -538,24 +550,25 @@ await check('PCP_46B_SCENARIOS_VISIBLE', async () => {
   return { ok, detail: JSON.stringify({ pior, melhor, saidas }) };
 }, 'cenários e composição das saídas visíveis com valores reais');
 await check('PCP_47_NEGATIVE_TEXT_NOT_ONLY_COLOR', async () => {
-  const cls = await page.locator('#pmResultadoProjetado').getAttribute('class');
-  const t = await txt('#pmResultadoTexto');
-  const ok = cls.includes('neg') && /negativo/i.test(t) && (await txt('#pmResultadoProjetado')).startsWith('−');
+  const cls = await page.locator('#pmResultadoCompleto').getAttribute('class');
+  const t = await tileTxt('#pmResultadoCompleto');
+  const ok = cls.includes('neg') && /negativo/i.test(t) && (await txt('#pmResultadoCompleto')).startsWith('−');
   return { ok, detail: JSON.stringify({ cls, t }) };
 }, 'resultado negativo tem sinal e texto, não só cor');
 await check('PCP_48_TODAY_SECTION_SEPARATE', async () => {
+  await openDash(9, 2026);
   const hero = await txt('#dashHero');
-  const antes = await txt('#pmResultadoProjetado');
+  await openResumo(9, 2026);
+  const aviso = await txt('#pmCompetenciaAviso');
+  const antes = await txt('#pmResultadoCompleto');
   await page.evaluate(() => setFinancialPreference('projectionEndDate', '2026-12-31'));
-  const depois = await txt('#pmResultadoProjetado');
-  const ordem = await page.evaluate(() => {
-    const a = document.getElementById('dashResumoMensal'), b = document.getElementById('dashHero');
-    return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-  const ok = hero.includes('Fluxo de caixa a partir de hoje') && hero.includes('17/09/2026') && /não é o resultado da competência/i.test(hero)
-    && !hero.includes('Resultado projetado do mês') && antes === depois && antes === '− R$ 4.821,49' && ordem;
-  return { ok, detail: JSON.stringify({ antes, depois, ordem, hero: hero.slice(0, 220) }) };
-}, '"Fluxo de caixa a partir de hoje" separado, com datas, e não altera os números mensais');
+  const depois = await txt('#pmResultadoCompleto');
+  const lugar = await page.evaluate(() => !!document.querySelector('#page-dashboard #dashHero') && !!document.querySelector('#page-analise #anResumoMensal')
+    && !document.querySelector('#page-dashboard #anResumoMensal'));
+  const ok = hero.includes('Caixa até o próximo salário') && hero.includes('17/09/2026') && !/resultado/i.test(hero)
+    && /competência/i.test(aviso) && /não caixa/i.test(aviso) && antes === depois && antes === '− R$ 4.821,49' && lugar;
+  return { ok, detail: JSON.stringify({ antes, depois, lugar, hero: hero.slice(0, 220), aviso }) };
+}, 'caixa (Dashboard, com datas) separado do orçamento por competência (Análise); período de caixa não altera os números mensais');
 
 // ── 49–50. Pesquisa da fatura ─────────────────────────────────────────────
 await check('PCP_49_INVOICE_SEARCH_STILL_WORKS', async () => {

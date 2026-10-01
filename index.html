@@ -107,6 +107,16 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 .hero-value.red{color:var(--danger)}
 .hero-value.blue{color:var(--accent)}
 .hero-sub{font-size:11px;color:var(--muted);margin-top:5px}
+/* Dashboard: caixa até o próximo salário */
+.cash-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.cash-title{font-size:16px;font-weight:700}
+.cash-info{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin:-6px 0 16px}
+.cash-info strong{color:var(--text);font-family:var(--mono)}
+#cashMissingAccount{color:var(--warn)}
+#cashMissingAccount strong{color:var(--warn)}
+.cash-pay-row{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.cash-pay-date{min-width:64px;font-size:12px;color:var(--muted)}
+.cash-pay-total{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--border);margin-top:4px;padding-top:10px;font-weight:700}
 
 .mini-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
 .mini-tile{background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px}
@@ -326,6 +336,9 @@ select option{background:var(--card)}
 
 @media (max-width:480px){
   .kpi-value{font-size:18px}
+  .cash-pay-row{flex-wrap:wrap;gap:6px 10px}
+  .cash-pay-date{min-width:44px}
+  .cash-pay-row .item-row-info{flex:1 1 140px}
   .card{padding:14px}
   .content{padding:10px}
 }
@@ -560,17 +573,12 @@ select option{background:var(--card)}
 
       <!-- DASHBOARD -->
       <div id="page-dashboard" class="page active">
-        <div id="dashResumoMensal"></div>
-        <div id="dashDetalhamento"></div>
-        <div id="dashHero" style="margin-top:20px"></div>
-        <div id="dashResumoPagar"></div>
-        <div id="dashProjecaoFinanceira"></div>
-        <div id="dashPrevisaoMedia"></div>
+        <!-- Caixa até o próximo salário (renderCashDashboard). O orçamento por
+             competência e a projeção detalhada ficam na aba Análise. -->
+        <div id="dashHero"></div>
+        <div id="dashProximosVencimentos"></div>
         <div class="section-title">Contas &amp; Compromissos</div>
-        <div class="two-col">
-          <div id="dashSaldoContas"></div>
-          <div id="dashProximosVencimentos"></div>
-        </div>
+        <div id="dashSaldoContas"></div>
         <div id="dashExcedentePanel"></div>
         <div class="card">
           <div class="card-header"><div class="card-title">💳 Faturas dos Cartões</div></div>
@@ -889,6 +897,15 @@ select option{background:var(--card)}
 
       <!-- ANÁLISE / FILTROS -->
       <div id="page-analise" class="page">
+        <!-- Planejamento (renderPlanningAnalysis): preferências do ciclo,
+             orçamento por competência e projeção de caixa detalhada. -->
+        <div id="anConfigPlanejamento"></div>
+        <div id="anResumoMensal"></div>
+        <div id="anDetalhamento"></div>
+        <div id="anProjecaoCaixa"></div>
+        <div id="anProjecaoFinanceira"></div>
+        <div id="anPrevisaoMedia"></div>
+        <div class="section-title">Gastos por categoria</div>
         <!-- Filtros -->
         <div class="card" style="margin-bottom:20px">
           <div class="card-header">
@@ -2893,7 +2910,9 @@ function getChronologicalProjection(referenceDate,endDate){
       const kind=r.certeza==='potencial'?'potential':'income';
       const date=r.recorrencia?r._dataPrevistaOcorrencia:r.dataPrevista;
       const item={id:`revenue:${r.id}:${r._isParcela?r._parcelaIdx:key}`,kind,label:r.nome||'Receita',amount:valorReceita(r),date,month:key};
-      if(!accounts.has(r.conta)){ issues.push({id:item.id,reason:'missing_personal_account'}); continue; }
+      // amount: só informativo (Dashboard mostra quanto está fora do caixa
+      // por falta de conta); não entra em nenhum total desta função.
+      if(!accounts.has(r.conta)){ issues.push({id:item.id,reason:'missing_personal_account',amount:item.amount}); continue; }
       // Legacy items have neither a reliable daily date nor a declared certainty level.
       if(r.certeza===undefined) item.kind='potential';
       add(item);
@@ -4669,10 +4688,14 @@ function setFinancialPreference(key,value){
   scheduleSave();
   // historyStartMonth afeta mais do que o card de planejamento (Pior/Melhor
   // Cenário de meses futuros também derivam da média histórica) — atualiza o
-  // Dashboard inteiro, não só o fragmento de renderFinancialOutlook.
-  if(key==='historyStartMonth') renderDashboard(); else renderFinancialOutlook();
+  // Dashboard inteiro, não só o destaque de caixa. A Análise também é
+  // redesenhada: as preferências ficam lá e o Dashboard reflete a mudança.
+  if(key==='historyStartMonth') renderDashboard(); else renderPlanningAnalysis(renderCashDashboard());
 }
-function renderFinancialOutlook(){
+// Período de caixa usado pelo Dashboard e pela Análise: de hoje até o fim do
+// ciclo do salário principal (ou "Planejar até"). Só escolhe as datas e chama
+// getFinancialOutlook — nenhuma regra financeira aqui.
+function getCashOutlookView(){
   const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   const preferences=state.financialPreferences||{},cycle=getCurrentFinancialCycle(today);
   const fallback=projectionDate(now.getFullYear(),now.getMonth()+1,31);
@@ -4680,13 +4703,68 @@ function renderFinancialOutlook(){
   if(!isValidISODateString(end)||end<today)end=cycle.endDate&&cycle.endDate>=today?cycle.endDate:fallback;
   let p=getFinancialOutlook(today,end);
   if(p.unavailable){end=fallback;p=getFinancialOutlook(today,end);}
+  return {today,end,p,cycle,preferences};
+}
+const cashDateLabel=date=>isValidISODateString(date)?date.split('-').reverse().join('/'):'Sem data';
+const cashShortDate=date=>isValidISODateString(date)?`${date.slice(8,10)}/${date.slice(5,7)}`:'sem data';
+const CASH_OBLIGATION_KINDS=['invoice','expense','contribution'];
+
+// Dashboard: destaque de caixa + lista do que compõe "A pagar".
+function renderCashDashboard(view){
+  view=view||getCashOutlookView();
+  renderCashHighlight(view);
+  renderProximosVencimentos(view);
+  return view;
+}
+function renderCashHighlight(view){
+  const {today,end,p}=view;
+  const ate=cashShortDate(end);
+  const availableCents=toCents(p.available),obligationsCents=toCents(p.obligations);
+  const committedCents=toCents(p.committed),contractedCents=toCents(p.contracted);
+  // Zero conta como folga (R$ 0,00): nada falta para pagar tudo até o fim do período.
+  const need=committedCents<0,absCents=Math.abs(committedCents);
+  let contractedLine=`A receber confirmado até ${ate}: <strong id="cashContracted">${fmtCentsBRL(contractedCents)}</strong>`;
+  if(need&&contractedCents>0){
+    const rest=absCents-contractedCents;
+    contractedLine+=rest>0
+      ?` · <span id="cashIfReceived">Se tudo entrar, a necessidade cai para ${fmtCentsBRL(rest)}</span>`
+      :` · <span id="cashIfReceived">Se tudo entrar, passa a sobrar ${fmtCentsBRL(-rest)}</span>`;
+  }
+  // Valor vem dos próprios itens que o motor marcou como sem conta pessoal.
+  const missingCents=p.issues.filter(i=>i.reason==='missing_personal_account').reduce((s,i)=>s+toCents(i.amount),0);
+  const missingLine=missingCents>0?`<div id="cashMissingAccount">⚠ <strong>${fmtCentsBRL(missingCents)}</strong> previstos sem conta de destino — defina a conta para entrarem no caixa.</div>`:'';
+  document.getElementById('dashHero').innerHTML=`
+    <div class="cash-head">
+      <div>
+        <div class="cash-title">Caixa até o próximo salário</div>
+        <div class="card-sub" id="cashPeriodo">De ${cashDateLabel(today)} até ${cashDateLabel(end)} · ciclo do salário principal</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="navigate('analise')">Planejamento e orçamento do mês →</button>
+    </div>
+    <div class="hero-grid" id="cashHighlight">
+      <div class="hero-tile t-accent"><div class="hero-label">Disponível agora</div><div id="cashAvailable" class="hero-value blue">${fmtCentsBRL(availableCents)}</div><div class="hero-sub">Soma das contas pessoais. Reservas, cofrinhos e escritório ficam fora.</div></div>
+      <div class="hero-tile t-warn"><div class="hero-label" id="cashObligationsLabel">A pagar até ${ate}</div><div id="cashObligations" class="hero-value">${fmtCentsBRL(obligationsCents)}</div><div class="hero-sub">Faturas, PIX/débitos e contribuição em aberto até o próximo salário.</div></div>
+      <div class="hero-tile ${need?'t-danger':'t-ok'}" id="cashResultTile"><div class="hero-label" id="cashResultLabel">${need?'Necessidade de caixa':'Folga de caixa'}</div><div id="cashResult" class="hero-value ${need?'red':'green'}">${fmtCentsBRL(absCents)}</div><div class="hero-sub" id="cashResultNote">${need?`Falta cobrir para pagar tudo até ${ate}.`:`Sobra depois de pagar tudo até ${ate}.`}</div></div>
+    </div>
+    <div class="cash-info" id="cashInfo">
+      <div>${contractedLine}</div>
+      ${missingLine}
+    </div>`;
+}
+
+// Análise: preferências do ciclo, orçamento por competência e projeção de caixa.
+function renderPlanningAnalysis(view){
+  renderPersonalMonthSummary();
+  renderFinancialOutlook(view);
+}
+function renderFinancialOutlook(view){
+  const {today,end,p,cycle,preferences}=view||getCashOutlookView();
   const salaries=(state.receitas||[]).filter(r=>r.tipo==='salario'&&r.certeza!==undefined&&r.recorrencia);
   const primary=preferences.primarySalaryId||(salaries.length===1?salaries[0].id:'');
-  const dateLabel=date=>isValidISODateString(date)?date.split('-').reverse().join('/'):'Sem data';
-  const metric=(id,title,value,note)=>`<div class="hero-tile"><div class="hero-label">${title}</div><div id="${id}" class="hero-value ${value<0?'red':'blue'}">${fmtBRL(value)}</div><div class="hero-sub">${note}</div></div>`;
-  document.getElementById('dashHero').innerHTML=`
+  const dateLabel=cashDateLabel;
+  document.getElementById('anConfigPlanejamento').innerHTML=`
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div><div class="card-title">Fluxo de caixa a partir de hoje</div><div class="card-sub" id="outlookPeriodo">De ${dateLabel(today)} até ${dateLabel(end)} · visão acumulada por data, não é o resultado da competência — os números do mês estão no resumo pessoal acima</div></div></div>
+      <div class="card-header"><div><div class="card-title">Configurações de planejamento</div><div class="card-sub" id="outlookPeriodo">Período de caixa: de ${dateLabel(today)} até ${dateLabel(end)}. Estas escolhas também definem o destaque de caixa do Dashboard.</div></div></div>
       <div class="form-grid">
         <div class="form-group"><label for="primarySalarySelect">Salário principal do ciclo</label><select id="primarySalarySelect" onchange="setFinancialPreference('primarySalaryId',this.value)"><option value="">${salaries.length?'Escolha o salário principal':'Nenhum salário recorrente cadastrado'}</option>${salaries.map(r=>`<option value="${esc(r.id)}" ${r.id===primary?'selected':''}>${esc(r.nome||'Salário')}</option>`).join('')}</select></div>
         <div class="form-group"><label for="projectionEndDate">Planejar até</label><input id="projectionEndDate" type="date" min="${today}" value="${end}" onchange="setFinancialPreference('projectionEndDate',this.value)"></div>
@@ -4701,23 +4779,24 @@ function renderFinancialOutlook(){
           <div style="font-size:11px;color:var(--muted);margin-top:4px">Ignora competências anteriores a esse mês só nas projeções e nas médias históricas de gastos — nenhum lançamento é excluído, migrado ou apagado. Deixe em branco pra manter o comportamento atual.</div>
         </div>
       </div>
+    </div>`;
+  document.getElementById('anProjecaoCaixa').innerHTML=`
+    <div class="section-title">Projeção de caixa até ${dateLabel(end)}</div>
+    <div class="info-box" style="margin-bottom:12px">Visão por data, a partir do dinheiro em conta hoje. Não é o orçamento do mês (competência) mostrado acima.</div>
+    <div class="pm-grid">
+      <div class="pm-tile"><div class="pm-title">Saldo projetado em ${dateLabel(end)} (fim do período)</div><div id="outlookProjected" class="pm-value ${p.projected<0?'neg':'pos'}">${fmtBRL(p.projected)}</div><div class="pm-formula">${fmtBRL(p.available)} disponível − ${fmtBRL(p.obligations)} a pagar + ${fmtBRL(p.contracted)} a receber − ${fmtBRL(p.variable.total)} de estimativa variável</div></div>
+      <div class="pm-tile"><div class="pm-title">Receitas potenciais</div><div id="outlookPotentials" class="pm-value zero">${fmtBRL(p.potentials)}</div><div class="pm-note">Apresentadas separadamente. Não aumentam o disponível nem o saldo projetado.</div></div>
     </div>
-    <div class="hero-grid">
-      ${metric('outlookAvailable','Disponível agora',p.available,'Saldo registrado nas contas pessoais. Reservas e escritório ficam separados.')}
-      ${metric('outlookCommitted','Após obrigações do período',p.committed,`Disponível menos ${fmtBRL(p.obligations)} a pagar. Não inclui receitas pendentes.`)}
-      ${metric('outlookProjected',`Saldo projetado em ${dateLabel(end)} (fim do período)`,p.projected,`Inclui ${fmtBRL(p.contracted)} a receber e desconta ${fmtBRL(p.variable.total)} de estimativa variável.`)}
-    </div>
-    <div class="info-box" id="outlookQuality">${!state.contas.length?'Cadastre contas pessoais para ter um saldo inicial. ':''}${p.incomplete?'Projeção incompleta: confira datas, cadastros e histórico abaixo.':'Projeção baseada nos lançamentos registrados e na hipótese de gastos indicada abaixo.'} O saldo inicial é o registrado agora; não é uma reconstrução do saldo diário histórico.</div>
-    <div class="card" style="margin-top:16px"><div class="card-title">Receitas potenciais: <span id="outlookPotentials">${fmtBRL(p.potentials)}</span></div><p class="card-sub">Apresentadas separadamente. Não aumentam o disponível nem o saldo projetado.</p></div>`;
+    <div class="info-box" id="outlookQuality" style="margin-bottom:16px">${!state.contas.length?'Cadastre contas pessoais para ter um saldo inicial. ':''}${p.incomplete?'Projeção incompleta: confira datas, cadastros e histórico abaixo.':'Projeção baseada nos lançamentos registrados e na hipótese de gastos indicada abaixo.'} O saldo inicial é o registrado agora; não é uma reconstrução do saldo diário histórico.</div>`;
   const risk=p.firstShortfall?`Os lançamentos com data indicam saldo negativo em ${dateLabel(p.firstShortfall)}.`:
     p.projected<0?'O saldo final projetado é negativo. Confira as obrigações e a estimativa.':
     'Não foi identificado saldo negativo nos lançamentos com data. Isso não garante suficiência para gastos sem data ou ainda desconhecidos.';
   const issueNames={missing_personal_account:'Receita sem conta pessoal válida',missing_revenue_date:'Receita sem data prevista válida',invalid_received_date:'Recebimento com data real inválida',missing_card:'Despesa com cartão não encontrado',invalid_amount:'Valor inválido',history_limited:'Histórico de atrasos limitado a 240 meses'};
-  document.getElementById('dashProjecaoFinanceira').innerHTML=`<div class="card"><div class="card-title">Linha do tempo dos lançamentos conhecidos</div><p id="outlookRisk">${risk}</p><p class="card-sub">${p.undated.length} lançamento(s) sem data ficam fora desta sequência. A estimativa variável também não tem dia de pagamento definido. Eventos do mesmo dia são somados, sem presumir a ordem dentro do dia.</p>
+  document.getElementById('anProjecaoFinanceira').innerHTML=`<div class="card"><div class="card-title">Linha do tempo dos lançamentos conhecidos</div><p id="outlookRisk">${risk}</p><p class="card-sub">${p.undated.length} lançamento(s) sem data ficam fora desta sequência. A estimativa variável também não tem dia de pagamento definido. Eventos do mesmo dia são somados, sem presumir a ordem dentro do dia.</p>
     <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Data</th><th>Lançamentos</th><th>Saldo após o dia</th></tr></thead><tbody>${p.timeline.length?p.timeline.map(day=>`<tr><td>${dateLabel(day.date)}</td><td>${day.events.map(e=>`${esc(e.label)}: ${fmtBRL(e.amount)}${e.kind==='potential'?' (potencial; fora do saldo)':''}${e.overdue?` (atrasado desde ${dateLabel(e.originalDate)})`:''}`).join('<br>')}</td><td class="mono ${day.balance<0?'red':''}">${fmtBRL(day.balance)}</td></tr>`).join(''):'<tr><td colspan="3">Nenhum lançamento pendente com data neste período.</td></tr>'}</tbody></table></div>
     ${p.undated.length?`<details><summary>Ver lançamentos sem data definida (${p.undated.length})</summary>${p.undated.map(e=>`<p>${esc(e.label)} · ${esc(e.month)} · ${fmtBRL(e.amount)}${e.kind==='potential'?' · potencial; fora do saldo':''}</p>`).join('')}<p>Obrigações incluídas no saldo final de forma conservadora; o dia de pagamento precisa ser confirmado.</p></details>`:''}
     ${p.issues.length?`<details open><summary>Cadastros para conferir (${p.issues.length})</summary>${[...new Set(p.issues.map(i=>issueNames[i.reason]||'Cadastro incompleto'))].map(label=>`<p>${esc(label)}</p>`).join('')}</details>`:''}</div>`;
-  document.getElementById('dashPrevisaoMedia').innerHTML=`<div class="card"><div class="card-title">Gastos variáveis ainda estimados: ${fmtBRL(p.variable.total)}</div><p class="card-sub">${p.variable.unavailable?'Histórico insuficiente: são necessários lançamentos nos três meses completos anteriores. Não foi adicionada estimativa.':'Média por categoria, descontando tudo o que já foi lançado no mês. Para períodos parciais, o restante é distribuído proporcionalmente pelos dias restantes; é uma hipótese de planejamento.'}</p>${(p.variable.months||[]).map(m=>`<details><summary>${esc(m.month)} · ${fmtBRL(m.total)}</summary>${m.categories.map(c=>`<p>${esc(state.categories.find(cat=>cat.id===c.category)?.name||c.category)}: média ${fmtBRL(c.expected)} · lançado ${fmtBRL(c.registered)} · restante no período ${fmtBRL(c.remaining)}</p>`).join('')}</details>`).join('')}</div>`;
+  document.getElementById('anPrevisaoMedia').innerHTML=`<div class="card" style="margin-top:16px"><div class="card-title">Gastos variáveis ainda estimados: ${fmtBRL(p.variable.total)}</div><p class="card-sub">${p.variable.unavailable?'Histórico insuficiente: são necessários lançamentos nos três meses completos anteriores. Não foi adicionada estimativa.':'Média por categoria, descontando tudo o que já foi lançado no mês. Para períodos parciais, o restante é distribuído proporcionalmente pelos dias restantes; é uma hipótese de planejamento.'}</p>${(p.variable.months||[]).map(m=>`<details><summary>${esc(m.month)} · ${fmtBRL(m.total)}</summary>${m.categories.map(c=>`<p>${esc(state.categories.find(cat=>cat.id===c.category)?.name||c.category)}: média ${fmtBRL(c.expected)} · lançado ${fmtBRL(c.registered)} · restante no período ${fmtBRL(c.remaining)}</p>`).join('')}</details>`).join('')}</div>`;
 }
 
 // Série anual do gráfico: 4 séries por mês, todas de getPersonalMonthFlows
@@ -4773,20 +4852,18 @@ function renderPersonalMonthSummary(){
   const toneText=c=>c>0?'Resultado positivo (sobra)':c<0?'Resultado negativo (falta)':'Resultado zero (equilíbrio)';
   const tile=(id,title,cents,note,signed)=>`<div class="pm-tile"><div class="pm-title">${title}</div><div id="${id}" class="pm-value ${signed?tone(cents):'zero'}">${fmtCentsBRL(cents)}</div>${note?`<div class="pm-note">${note}</div>`:''}</div>`;
   const ent=p.entradas, sai=p.saidas;
-  const formula=`${fmtCentsBRL(ent.pendentes.total)} − ${fmtCentsBRL(sai.pendentes.total)} = ${fmtCentsBRL(p.resultadoProjetadoCents)}`;
   const acum=p.saldoAcumulado;
   const acumTile=acum.available
     ?tile('pmSaldoAcumulado','Saldo acumulado estimado',acum.cents,
       `Saldo disponível agora + resultado pendente ${p.period==='current'?'até o fim deste mês':`de ${acum.months.length} competências (mês atual até ${periodoLabel})`}. ${toneText(acum.cents).replace('Resultado','Saldo')}.`,true)
     :`<div class="pm-tile"><div class="pm-title">Saldo acumulado estimado</div><div id="pmSaldoAcumulado" class="pm-value zero">${acum.reason==='past_competence'?'Não disponível para competência passada':'Não disponível para uma competência tão distante'}</div><div class="pm-note">${acum.reason==='past_competence'?'O saldo diário histórico não é reconstruído. Use o resultado completo do mês.':`Limite de ${PERSONAL_PROJECTION_MAX_MONTHS} meses a partir de hoje.`}</div></div>`;
-  document.getElementById('dashResumoMensal').innerHTML=`
-    <div class="section-title" style="margin-top:0">Resumo pessoal — competência ${periodoLabel}</div>
-    <div class="info-box" style="margin-bottom:12px">Todos os valores abaixo usam só a competência ${periodoLabel}. O saldo disponível agora é mostrado separado e não entra no resultado do mês.</div>
+  document.getElementById('anResumoMensal').innerHTML=`
+    <div class="section-title">Orçamento do mês — competência ${periodoLabel}</div>
+    <div class="info-box" style="margin-bottom:12px" id="pmCompetenciaAviso">Competência (orçamento do mês), não caixa: todos os valores abaixo usam só a competência ${periodoLabel}. Para saber se o dinheiro em conta cobre os pagamentos até o próximo salário, use o destaque de caixa do Dashboard.</div>
     <div class="pm-grid" id="pmLinha1">
       ${tile('pmSaldoAgora','Saldo disponível agora',p.saldoAgoraCents,'Contas pessoais. Escritório, reservas e cofrinho ficam fora.',true)}
       ${tile('pmEntradasPrevistas','Entradas previstas',ent.pendentes.total,'Ainda não recebidas nesta competência.',false)}
       ${tile('pmSaidasPrevistas','Saídas previstas',sai.pendentes.total,'Ainda não pagas nesta competência.',false)}
-      <div class="pm-tile"><div class="pm-title">Resultado projetado do mês</div><div id="pmResultadoProjetado" class="pm-value ${tone(p.resultadoProjetadoCents)}">${fmtCentsBRL(p.resultadoProjetadoCents)}</div><div id="pmResultadoFormula" class="pm-formula">${formula}</div><div id="pmResultadoTexto" class="pm-note">${toneText(p.resultadoProjetadoCents)} · entradas previstas − saídas previstas</div></div>
     </div>
     <div class="pm-grid" id="pmLinha2">
       ${tile('pmEntradasRecebidas','Entradas já recebidas',ent.realizadas.total,'Já caíram na conta nesta competência.',false)}
@@ -4811,7 +4888,7 @@ function renderPersonalMonthSummary(){
       <div class="pm-note">${nota} ${toneText(c.resultadoCents)}.</div></div>`;
   const semSalario=!p.primarySalaryId&&(state.receitas||[]).some(r=>r.certeza!==undefined&&r.recorrencia&&r.tipo==='salario');
   const reasonLabel={missing_revenue_date:'Receita sem data prevista',invalid_received_date:'Recebimento sem data válida',missing_expense_month:'Despesa sem competência',missing_card:'Despesa com cartão não cadastrado'};
-  document.getElementById('dashDetalhamento').innerHTML=`
+  document.getElementById('anDetalhamento').innerHTML=`
     <div class="two-col" style="align-items:start">
       <div class="card"><div class="card-title">Composição das entradas — ${periodoLabel}</div>
         <p class="card-sub">Previstas (ainda não recebidas): <strong id="pmCompEntradasPendentes">${fmtCentsBRL(ent.pendentes.total)}</strong></p>
@@ -4830,7 +4907,7 @@ function renderPersonalMonthSummary(){
       </div>
     </div>
     <div class="section-title">Cenários da competência ${periodoLabel}</div>
-    ${semSalario?'<div class="info-box" style="margin-bottom:12px">Há mais de um salário recorrente: escolha o salário principal do ciclo (seção “Fluxo de caixa a partir de hoje”) para que ele entre nos cenários.</div>':''}
+    ${semSalario?'<div class="info-box" style="margin-bottom:12px">Há mais de um salário recorrente: escolha o salário principal do ciclo (em “Configurações de planejamento”, no topo desta página) para que ele entre nos cenários.</div>':''}
     <div class="pm-grid">
       ${cen('pmPiorCenario','Pior cenário',p.cenarios.pior,'Salário principal pendente + repasse pessoal pendente − saídas previstas. Sem reembolsos, potenciais ou outras entradas.')}
       ${cen('pmMelhorCenario','Melhor cenário',p.cenarios.melhor,'Pior cenário + reembolsos pendentes. Sem receitas potenciais.')}
@@ -4846,22 +4923,18 @@ function renderDashboard(){
         saldoProjetado,saldoPiorCenario,saldoMelhorCenario,
         emCaixaLiquido,emCaixaDisponivel,totalRecPrevisto,repassesPendentes,
         excedentAcum,byCard,byCat,desps,contrib,cofrinhoSaida,usaContasComoFonte,isProjecaoFutura}=t;
-  // Replaced by one consistent planning summary; monthly details remain below.
-  document.getElementById('dashResumoPagar').innerHTML='';
-  // Daily planning is rendered by renderFinancialOutlook.
   const k=mesKey(currentMonth,currentYear);
   const excedenteMes=state.excedentes?.[k]||0;
   const contribuicaoBase=calcContribuicaoBase(currentMonth,currentYear);
   const contribuicaoAjustada=state.contribuicaoAjustes?.[k]!==undefined;
   const pendentesCount=getReceitasPrevistasForMonth(currentMonth,currentYear).length;
 
-  // Resumo pessoal da competência selecionada (entradas/saídas/resultados/
-  // cenários) — separado do fluxo "a partir de hoje" logo abaixo.
-  renderPersonalMonthSummary();
-  renderFinancialOutlook();
+  // Caixa até o próximo salário (destaque + lista "A pagar"). Os blocos da
+  // aba Análise (competência e projeção detalhada) são redesenhados junto,
+  // com o mesmo período de caixa, para nunca ficarem defasados.
+  renderPlanningAnalysis(renderCashDashboard());
 
   document.getElementById('dashSaldoContas').innerHTML=renderSaldoContasCard();
-  renderProximosVencimentos();
 
   // ── Saldo Anterior destacado (só aparece se houver excedente acumulado) ──
   const totalCofrinho=getSaldoTotalCofrinho();
@@ -7628,133 +7701,67 @@ function renderSaldoContasCard(){
 }
 
 // ════════════════════════════════════════════════
-// PRÓXIMOS VENCIMENTOS (contas fixas em Dinheiro/PIX)
+// A PAGAR ATÉ O FIM DO PERÍODO DE CAIXA (Dashboard)
 // ════════════════════════════════════════════════
-// Calcula, a partir de hoje, a próxima ocorrência não paga de cada despesa
-// fixa em Dinheiro/PIX que tenha dia de vencimento cadastrado. Pula meses
-// já marcados como pagos e considera "vencido" o que já passou sem pagamento.
-function calcProximosVencimentos(){
-  const hoje=new Date();
-  const hojeY=hoje.getFullYear(), hojeM=hoje.getMonth()+1, hojeD=hoje.getDate();
-  const resultado=[];
-  // Contas fixas em Dinheiro/PIX com dia de vencimento cadastrado
-  state.despesas.forEach(d=>{
-    if(!d.fixa || d.cartao!=='dinheiro' || !d.diaVencimento) return;
-    const started = d.anoInicio<hojeY || (d.anoInicio===hojeY && d.mesInicio<=hojeM);
-    if(!started) return;
-    if(d.debitoAutomatico){
-      // Débito automático: sempre mostra a ocorrência do mês atual, paga ou
-      // não — vira uma tag informativa em vez de um "✓ Pago" pra clicar,
-      // já que quem desconta é o banco, não você (aplicarDebitosAutomaticos
-      // já cuida de marcar pagoMeses assim que o dia chega).
-      const k=mesKey(hojeM,hojeY);
-      const dataVenc=new Date(hojeY,hojeM-1,d.diaVencimento);
-      const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
-      resultado.push({tipo:'despesa', despesa:d, mes:hojeM, ano:hojeY, diffDias, jaDebitado:!!(d.pagoMeses&&d.pagoMeses[k])});
-      return;
-    }
-    let mes=hojeM, ano=hojeY;
-    if(d.diaVencimento < hojeD){ mes++; if(mes>12){mes=1;ano++;} }
-    // acha a primeira ocorrência (a partir daqui) ainda não paga, olhando até 12 meses à frente
-    for(let i=0;i<12;i++){
-      const k=mesKey(mes,ano);
-      if(!d.pagoMeses || !d.pagoMeses[k]){
-        const dataVenc=new Date(ano, mes-1, d.diaVencimento);
-        const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
-        resultado.push({tipo:'despesa', despesa:d, mes, ano, diffDias});
-        break;
-      }
-      mes++; if(mes>12){mes=1;ano++;}
-    }
-  });
-  // Faturas de cartão de crédito: como getDespesasForMonth já rola as compras
-  // pro mês seguinte (mesma convenção de Nubank/Mercado Pago/etc — compra em
-  // junho vira "fatura de julho"), a fatura devida num mês M já está correta
-  // em getTotalsForMonth(M).byCard — só falta achar a mais antiga ainda não
-  // paga (normalmente a do mês atual) e usar o dia "paga" pra data de vencimento.
-  state.cards.forEach(c=>{
-    if(c.id==='dinheiro' || !c.paga) return;
-    // Olha só o mês atual e 1 mês pra trás ("esqueci de marcar a fatura do mês
-    // passado"). Não escaneia mais longe que isso de propósito: parcelamentos
-    // antigos lançados retroativamente (pra reconstruir um histórico que já
-    // está embutido no saldo inicial da conta) ficam sem marcar como pagos —
-    // se a busca fosse mais longa, toda fatura antiga apareceria aqui como
-    // "vencida", o que é ruído, não um aviso real.
-    for(let back=1; back>=0; back--){
-      const {mes,ano}=addMonths(hojeM,hojeY,-back);
-      if(isFaturaPaga(c.id,mes,ano)) continue;
-      const t=getTotalsForMonth(mes,ano);
-      const valor=(t.byCard&&t.byCard[c.id])||0;
-      if(valor<=0) continue; // sem compras nessa fatura, nada a cobrar
-      const dataVenc=new Date(ano, mes-1, c.paga);
-      const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
-      resultado.push({tipo:'fatura', card:c, fechoMes:mes, fechoAno:ano, pagaMes:mes, pagaAno:ano, valor, diffDias});
-      break; // só a fatura pendente mais antiga por cartão
-    }
-  });
-  resultado.sort((a,b)=>a.diffDias-b.diffDias);
-  return resultado;
+// Lista exatamente os itens que compõem p.obligations de getFinancialOutlook
+// (eventos com data + sem data, tipos fatura/despesa/contribuição): o total da
+// lista é o mesmo número do card "A pagar até DD/MM". Nenhum cálculo próprio.
+function getCashObligationItems(p){
+  const dated=p.events.filter(e=>CASH_OBLIGATION_KINDS.includes(e.kind));
+  const undated=p.undated.filter(e=>CASH_OBLIGATION_KINDS.includes(e.kind))
+    .slice().sort((a,b)=>(a.month||'').localeCompare(b.month||'')||a.label.localeCompare(b.label,'pt-BR'));
+  return dated.concat(undated).map(e=>({...e,amountCents:-toCents(e.amount)}));
 }
-function renderProximosVencimentos(){
+// Botão de pagamento reaproveitando as ações existentes. O id do evento vem do
+// motor no formato "<tipo>:<id>:<AAAA-MM>".
+function cashObligationAction(e){
+  const parts=e.id.split(':'),key=parts[parts.length-1],ref=parts.slice(1,-1).join(':');
+  const [ano,mes]=(key||'').split('-').map(Number);
+  if(!ano||!mes) return '';
+  if(e.kind==='invoice') return `<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${esc(ref)}',${mes},${ano})">✓ Pago</button>`;
+  if(e.kind==='expense'){
+    const d=(state.despesas||[]).find(x=>x.id===ref);
+    if(!d) return '';
+    if(d.debitoAutomatico) return '<span class="badge badge-blue">🔁 Débito automático</span>';
+    return `<button class="btn btn-ok btn-sm" onclick="togglePago('${esc(ref)}',${mes},${ano})">✓ Pago</button>`;
+  }
+  return ''; // contribuição: marcada como paga no painel Destinação
+}
+function renderProximosVencimentos(view){
   const el=document.getElementById('dashProximosVencimentos');
   if(!el) return;
-  const lista=calcProximosVencimentos();
-  if(!lista.length){ el.innerHTML=''; return; }
-  const itens=lista.slice(0,10).map(item=>{
-    let statusLabel, statusColor, borderColor;
-    if(item.diffDias<0){
-      statusLabel='Vencido há '+Math.abs(item.diffDias)+' dia'+(Math.abs(item.diffDias)>1?'s':'');
-      statusColor='var(--danger)'; borderColor='rgba(255,95,109,.4)';
-    } else if(item.diffDias===0){
-      statusLabel='Vence hoje'; statusColor='var(--danger)'; borderColor='rgba(255,95,109,.4)';
-    } else if(item.diffDias===1){
-      statusLabel='Vence amanhã'; statusColor='var(--warn)'; borderColor='rgba(255,193,71,.4)';
-    } else {
-      statusLabel='Em '+item.diffDias+' dias'; statusColor='var(--muted)'; borderColor='var(--border)';
+  const {today,end,p}=view||getCashOutlookView();
+  const items=getCashObligationItems(p);
+  const totalCents=items.reduce((s,e)=>s+e.amountCents,0);
+  const diffDays=date=>Math.round((new Date(date+'T12:00:00')-new Date(today+'T12:00:00'))/86400000);
+  const rows=items.map(e=>{
+    let status='';
+    if(e.date===null) status='<span style="color:var(--warn)">sem data definida</span>';
+    else if(e.overdue) status=`<span style="color:var(--danger);font-weight:600">Vencido desde ${cashShortDate(e.originalDate)}</span>`;
+    else{
+      const n=diffDays(e.date);
+      status=n===0?'<span style="color:var(--danger);font-weight:600">Vence hoje</span>':n===1?'<span style="color:var(--warn);font-weight:600">Vence amanhã</span>':`Em ${n} dias`;
     }
-    if(item.tipo==='fatura'){
-      const c=item.card;
-      return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
-        <div class="item-row-info">
-          <div class="item-row-name">💳 Fatura ${esc(c.name)} — ${MONTHS[item.fechoMes-1]}</div>
-          <div class="item-row-meta">${c.fecha?`Fecha dia ${c.fecha} · `:''}paga dia ${c.paga} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
-        </div>
-        <div class="item-row-val neg">${fmtBRL(item.valor)}</div>
-        <button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${c.id}',${item.fechoMes},${item.fechoAno})">✓ Pago</button>
-      </div>`;
-    }
-    const d=item.despesa;
-    const cat=state.categories.find(c=>c.id===d.cat);
-    if(d.debitoAutomatico){
-      // Nada pra clicar aqui: quem debita é o banco. Uma tag conta o que
-      // já aconteceu (ou vai acontecer sozinho) em vez do botão "✓ Pago".
-      const tagLabel=item.jaDebitado?'🔁 Débito automático — já debitado':'🔁 Débito automático — '+(item.diffDias<=0?'cobra hoje':'cobra em '+item.diffDias+' dia'+(item.diffDias>1?'s':''));
-      return `<div class="item-row" style="border-color:var(--border);margin-bottom:8px">
-        <div class="item-row-info">
-          <div class="item-row-name">${esc(d.desc)}</div>
-          <div class="item-row-meta">${esc(cat?.name||'')} · dia ${d.diaVencimento}</div>
-        </div>
-        <div class="item-row-val" style="color:${item.jaDebitado?'var(--muted)':'var(--text)'}">${fmtBRL(d.valor)}</div>
-        <span class="badge ${item.jaDebitado?'badge-ok':'badge-blue'}">${tagLabel}</span>
-      </div>`;
-    }
-    return `<div class="item-row" style="border-color:${borderColor};margin-bottom:8px">
+    const dateText=e.date===null?'sem data':cashShortDate(e.date);
+    return `<div class="item-row cash-pay-row" data-kind="${e.kind}" data-cents="${e.amountCents}">
+      <div class="cash-pay-date mono">${dateText}</div>
       <div class="item-row-info">
-        <div class="item-row-name">${esc(d.desc)}</div>
-        <div class="item-row-meta">${esc(cat?.name||'')} · dia ${d.diaVencimento} · <span style="color:${statusColor};font-weight:600">${statusLabel}</span></div>
+        <div class="item-row-name">${esc(e.label)}</div>
+        <div class="item-row-meta">${status}</div>
       </div>
-      <div class="item-row-val neg">${fmtBRL(d.valor)}</div>
-      <button class="btn btn-ok btn-sm" onclick="togglePago('${d.id}',${item.mes},${item.ano})">✓ Pago</button>
+      <div class="item-row-val neg">${fmtCentsBRL(e.amountCents)}</div>
+      ${cashObligationAction(e)}
     </div>`;
   }).join('');
-  el.innerHTML=`<div class="card">
+  el.innerHTML=`<div class="card" id="cashPayList">
     <div class="card-header">
       <div>
-        <div class="card-title">📅 Próximos Vencimentos</div>
-        <div class="card-sub">Contas fixas em Dinheiro/PIX e faturas de cartão ainda não pagas</div>
+        <div class="card-title">📅 A pagar até ${cashShortDate(end)}</div>
+        <div class="card-sub">Faturas, PIX/débitos e contribuição em aberto, por data. Itens sem data entram no total por precaução.</div>
       </div>
     </div>
-    ${itens}
+    ${items.length?rows:`<div class="empty-state">Nada em aberto até ${cashShortDate(end)}.</div>`}
+    <div class="cash-pay-total"><span>Total a pagar até ${cashShortDate(end)}</span><span id="cashPayTotal" class="mono">${fmtCentsBRL(totalCents)}</span></div>
   </div>`;
 }
 
@@ -8215,6 +8222,7 @@ function getAnaliseData(){
 }
 
 function renderAnalise(){
+  renderPlanningAnalysis();
   populateFiltros();      // popula opções sem resetar valores
   initFiltrosPeriodo();   // só define período padrão na primeira vez
   const data = getAnaliseData();

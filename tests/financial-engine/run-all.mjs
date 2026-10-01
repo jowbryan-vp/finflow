@@ -230,6 +230,12 @@ const FILES = [
   // acumulado separado; natureza estruturada da receita (incomeNature),
   // nunca inferida da descrição; escritório fora do pessoal.
   'personal-cash-projection-scenarios.test.mjs',
+  // Gate UX-1 — Dashboard de caixa (branch fix/dashboard-cash-highlight,
+  // base a90547f; docs/gates/UX-1-DASHBOARD-CAIXA.md): Disponível / A pagar
+  // até o fim do ciclo / Necessidade ou Folga de caixa, lista "A pagar" que
+  // bate com o card; competência e cenários na Análise; card "Resultado
+  // projetado do mês" removido; motor idêntico ao commit-base.
+  'ux1-cash-dashboard.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
