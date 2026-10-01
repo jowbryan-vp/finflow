@@ -236,6 +236,11 @@ const FILES = [
   // bate com o card; competência e cenários na Análise; card "Resultado
   // projetado do mês" removido; motor idêntico ao commit-base.
   'ux1-cash-dashboard.test.mjs',
+  // Patch — dia de vencimento em parceladas em Dinheiro/PIX (branch
+  // fix/parcelada-dia-vencimento, base a475634): formulários exibem e
+  // preservam diaVencimento da parcelada; card "A pagar" mostra "Parcela
+  // x/N"; motor, valores e datas idênticos ao commit-base.
+  'parcelada-dia-vencimento.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

@@ -1907,7 +1907,7 @@ function migrateState() {
     if(!d.createdAt) d.createdAt = d.id; // fallback ordering using uid (time-based)
     if(d.conta===undefined) d.conta=null; // conta bancária de origem (só se aplica a despesas em Dinheiro/PIX; cartão de crédito usa a conta vinculada ao pagamento da fatura)
     if(d.cartao!=='dinheiro') d.conta=null; // cartão de crédito não debita conta na hora da compra, só no pagamento da fatura
-    if(d.diaVencimento===undefined) d.diaVencimento=null; // dia de vencimento (só despesas fixas em Dinheiro/PIX)
+    if(d.diaVencimento===undefined) d.diaVencimento=null; // dia de vencimento (despesas fixas ou parceladas em Dinheiro/PIX)
     if(d.debitoAutomatico===undefined) d.debitoAutomatico=false; // banco desconta sozinho — ver aplicarDebitosAutomaticos()
     // dataCompra: data real da compra (YYYY-MM-DD), usada por getCompetenciaFatura
     // pra saber em qual fatura ela cai considerando o dia de fechamento do cartão.
@@ -5940,10 +5940,7 @@ function onCartaoChange(){
   const contaInfo=document.getElementById('despContaCartaoInfo');
   if(contaGroup) contaGroup.style.display=isDinheiro?'block':'none';
   if(contaInfo) contaInfo.style.display=isDinheiro?'none':'block';
-  // Dia de vencimento só faz sentido pra conta fixa em Dinheiro/PIX (boleto,
-  // aluguel, etc pagos à vista todo mês) — usado no card "Próximos Vencimentos".
-  const vencGroup=document.getElementById('despVencimentoGroup');
-  if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
+  syncDespVencimentoGroup();
   const debitoAutoGroup=document.getElementById('despDebitoAutoGroup');
   if(debitoAutoGroup) debitoAutoGroup.style.display=(isDinheiro&&fixa)?'flex':'none';
   // Só re-sugere o Mês/Ano Início se o usuário ainda não mexeu nele nesta
@@ -5958,7 +5955,23 @@ function onCartaoChange(){
   }
   updateFaturaPreview();
 }
+// Dia de vencimento vale pra despesa em Dinheiro/PIX paga todo mês: conta
+// fixa (boleto, aluguel) ou parcelada (boleto parcelado, 2+ parcelas). À vista
+// e cartão de crédito não têm vencimento próprio (o cartão vence na fatura).
+// debitoAutomatico continua só pra fixas — ver aplicarDebitosAutomaticos().
+function despesaAceitaDiaVencimento(isDinheiro,fixa,parcelas){
+  return !!isDinheiro&&(!!fixa||(parcelas||1)>1);
+}
+function syncDespVencimentoGroup(){
+  const vencGroup=document.getElementById('despVencimentoGroup');
+  if(!vencGroup) return;
+  const isDinheiro=document.getElementById('despCartao')?.value==='dinheiro';
+  const fixa=document.getElementById('despFixa')?.checked;
+  const parcelas=parseInt(document.getElementById('despParcelas')?.value)||1;
+  vencGroup.style.display=despesaAceitaDiaVencimento(isDinheiro,fixa,parcelas)?'block':'none';
+}
 function calcParcel(){
+  syncDespVencimentoGroup();
   const val=parseFloat(document.getElementById('despValor')?.value)||0;
   const parc=parseInt(document.getElementById('despParcelas')?.value)||1;
   const div=document.getElementById('parcelInfoDiv');
@@ -6060,7 +6073,7 @@ function addDespesa(){
     anoI=parseInt(document.getElementById('despAno').value);
   }
   const fixa=document.getElementById('despFixa').checked;
-  const diaVencimento=(isDinheiro&&fixa)?(parseInt(document.getElementById('despDiaVencimento')?.value)||null):null;
+  const diaVencimento=despesaAceitaDiaVencimento(isDinheiro,fixa,parcelas)?(parseInt(document.getElementById('despDiaVencimento')?.value)||null):null;
   const debitoAutomatico=(isDinheiro&&fixa)?!!document.getElementById('despDebitoAutomatico')?.checked:false;
   const statusEl=document.getElementById('despPagoStatus');
   // Status agora vale pra QUALQUER despesa em Dinheiro/PIX (fixa ou avulsa) —
@@ -6087,6 +6100,7 @@ function addDespesa(){
   document.getElementById('despDiaVencimento').value='';
   document.getElementById('despDebitoAutomatico').checked=false;
   document.getElementById('despParcelas').value=1;document.getElementById('parcelInfoDiv').style.display='none';
+  syncDespVencimentoGroup();
   currentSplitRows=[];document.getElementById('despDividida').checked=false;document.getElementById('despSplitBox').style.display='none';
 }
 function togglePago(id,mes,ano){
@@ -6420,7 +6434,7 @@ function openEditDespesa(id){
         <div class="info-box">💡 Pago no crédito: o mês/ano acima é o mês da <strong>compra</strong> — a fatura aparece no mês seguinte. A conta bancária só é definida na hora de <strong>pagar a fatura</strong> (lá no Dashboard).</div>
       </div>
       <div class="checkbox-row form-group full"><input type="checkbox" id="eDespFixa" style="width:auto" ${d.fixa?'checked':''} onchange="eOnCartaoChange()"><label for="eDespFixa">Despesa fixa (recorrente)</label></div>
-      <div class="form-group full" id="eDespVencimentoGroup" style="display:${(d.cartao==='dinheiro'&&d.fixa)?'block':'none'}">
+      <div class="form-group full" id="eDespVencimentoGroup" style="display:${despesaAceitaDiaVencimento(d.cartao==='dinheiro',d.fixa,d.parcelas)?'block':'none'}">
         <label>Dia de vencimento (todo mês)</label>
         <input type="number" id="eDespDiaVencimento" value="${d.diaVencimento||''}" min="1" max="31" placeholder="Ex: 10">
       </div>
@@ -6496,6 +6510,7 @@ function eOnParcelasChange(){
   const parcelas=parseInt(document.getElementById('eDespParcelas')?.value)||1;
   const g=document.getElementById('eDespIgnorarGroup');
   if(g) g.style.display=parcelas>1?'block':'none';
+  eOnCartaoChange();
 }
 function eOnCartaoChange(){
   const cartaoId=document.getElementById('eDespCartao')?.value;
@@ -6505,8 +6520,9 @@ function eOnCartaoChange(){
   const info=document.getElementById('eDespContaCartaoInfo');
   if(g) g.style.display=isDinheiro?'block':'none';
   if(info) info.style.display=isDinheiro?'none':'block';
+  const parcelas=parseInt(document.getElementById('eDespParcelas')?.value)||1;
   const vencGroup=document.getElementById('eDespVencimentoGroup');
-  if(vencGroup) vencGroup.style.display=(isDinheiro&&fixa)?'block':'none';
+  if(vencGroup) vencGroup.style.display=despesaAceitaDiaVencimento(isDinheiro,fixa,parcelas)?'block':'none';
   const debitoAutoGroup=document.getElementById('eDespDebitoAutoGroup');
   if(debitoAutoGroup) debitoAutoGroup.style.display=(isDinheiro&&fixa)?'flex':'none';
 }
@@ -6590,7 +6606,7 @@ function saveEditDespesa(id){
   // seguem exatamente como o formulário sempre permitiu editar.
   d.mesInicio=novoMesInicio; d.anoInicio=novoAnoInicio;
   d.fixa=novoFixa;
-  d.diaVencimento=(isDinheiro&&d.fixa)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
+  d.diaVencimento=despesaAceitaDiaVencimento(isDinheiro,d.fixa,d.parcelas)?(parseInt(document.getElementById('eDespDiaVencimento')?.value)||null):null;
   d.debitoAutomatico=(isDinheiro&&d.fixa)?!!document.getElementById('eDespDebitoAutomatico')?.checked:false;
   const dividida=document.getElementById('eDespDividida').checked;
   d.split=dividida?currentSplitRows.filter(r=>r.personId&&r.percent>0).map(r=>({personId:r.personId,percent:r.percent})):[];
@@ -7727,6 +7743,17 @@ function cashObligationAction(e){
   }
   return ''; // contribuição: marcada como paga no painel Destinação
 }
+// Rótulo "x/N" de despesa parcelada (não fixa) em Dinheiro/PIX. O número da
+// parcela vem do mesmo getDespesasForMonth que gerou o evento no motor — sem
+// fórmula própria; o valor da linha já é o da parcela (_valorParcela).
+function cashObligationInstallment(e){
+  if(e.kind!=='expense') return '';
+  const parts=e.id.split(':'),key=parts[parts.length-1],ref=parts.slice(1,-1).join(':');
+  const [ano,mes]=(key||'').split('-').map(Number);
+  if(!ano||!mes) return '';
+  const d=getDespesasForMonth(mes,ano).find(x=>x.id===ref);
+  return (d&&!d.fixa&&d._total>1)?`${d._parcel}/${d._total}`:'';
+}
 function renderProximosVencimentos(view){
   const el=document.getElementById('dashProximosVencimentos');
   if(!el) return;
@@ -7743,11 +7770,12 @@ function renderProximosVencimentos(view){
       status=n===0?'<span style="color:var(--danger);font-weight:600">Vence hoje</span>':n===1?'<span style="color:var(--warn);font-weight:600">Vence amanhã</span>':`Em ${n} dias`;
     }
     const dateText=e.date===null?'sem data':cashShortDate(e.date);
+    const parcela=cashObligationInstallment(e);
     return `<div class="item-row cash-pay-row" data-kind="${e.kind}" data-cents="${e.amountCents}">
       <div class="cash-pay-date mono">${dateText}</div>
       <div class="item-row-info">
         <div class="item-row-name">${esc(e.label)}</div>
-        <div class="item-row-meta">${status}</div>
+        <div class="item-row-meta">${parcela?`Parcela ${parcela} · `:''}${status}</div>
       </div>
       <div class="item-row-val neg">${fmtCentsBRL(e.amountCents)}</div>
       ${cashObligationAction(e)}
