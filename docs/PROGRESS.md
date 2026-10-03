@@ -42,3 +42,13 @@ Pedido do usuário. Claude implementou em `fix/parcelada-dia-vencimento` (base a
 ## Atualização 03/10/2026 — correção P2 do UX-1: conciliação lista × card (entregue, aguardando reauditoria)
 
 Auditoria Codex (docs/audits/UX1-E-PARCELADA-CODEX-2026-10-03.md): UX-1 FAIL P2 (lista "A pagar" 66,66 × card 66,67 com parcelas 100/3); patch de parceladas PASS técnico do delta, integração bloqueada pelo UX-1. Claude corrigiu em `fix/parcelada-dia-vencimento` (base 87f068e; commit funcional 8909c98): só apresentação — linha explícita "Ajuste de arredondamento" (não pagável, sem botão) quando a soma das linhas arredondadas difere do agregado do motor; linhas + ajuste = total = card. Motor, linhas, state e ações de pagamento inalterados. Suíte 757/757 (base 746 + 11). Handoff: docs/handoffs/HANDOFF-UX-1-ROUNDING-RECONCILIATION-2026-10-03.md. Sem push nem merge. Próximo passo: reauditoria Codex; nenhum outro gate iniciado.
+
+## Atualização 03/10/2026 — reauditoria Codex: PASS
+
+Entrega `80164a6`, correção Claude `8909c98`: **PASS independente Codex**.
+Suíte reexecutada: 757/757. Reprodução original passa na entrega e falha na
+base `87f068e`; conferência adicional dos textos exibidos confirma linhas +
+ajuste = total = card para ajustes positivos, negativos e ausentes. Resolvido
+o P2 do UX-1 e removido o bloqueio técnico do patch de vencimento de parceladas.
+Relatório: `docs/audits/UX1-E-PARCELADA-REAUDIT-CODEX-2026-10-03.md`.
+Mantidas as ressalvas de produto anteriores. Sem publicação, merge ou novo gate.
