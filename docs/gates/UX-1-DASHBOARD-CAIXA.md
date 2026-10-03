@@ -31,6 +31,10 @@ o mesmo `end` que `renderFinancialOutlook` já usava. Nunca o mês do calendári
    `expense`, `contribution`, por data (sem data no fim). O total bate centavo
    a centavo com o card. Substitui a antiga "Próximos Vencimentos" (que tinha
    cálculo próprio e não fechava com o card), mantendo o "✓ Pago".
+   *Correção P2 (03/10/2026, auditoria UX1-E-PARCELADA-CODEX):* cada linha é
+   arredondada e o card arredonda o agregado; com frações de centavo, a lista
+   mostra a linha explícita "Ajuste de arredondamento" (sem data, sem "✓ Pago",
+   não é obrigação pagável) com a diferença: linhas + ajuste = total = card.
 5. Vão para a aba Análise, sem mudar cálculo: resumo pessoal por competência
    (título "Orçamento do mês — competência …", aviso "não caixa"), resultado
    completo, saldo acumulado estimado, saldo projetado no fim do período com
