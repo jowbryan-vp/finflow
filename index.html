@@ -115,6 +115,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:1
 #cashMissingAccount{color:var(--warn)}
 #cashMissingAccount strong{color:var(--warn)}
 .cash-pay-row{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.cash-pay-adjust{display:flex;align-items:center;gap:12px;margin-bottom:8px;opacity:.75;border-style:dashed}
+.cash-pay-adjust .item-row-val{color:var(--muted)}
 .cash-pay-date{min-width:64px;font-size:12px;color:var(--muted)}
 .cash-pay-total{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--border);margin-top:4px;padding-top:10px;font-weight:700}
 
@@ -336,9 +338,9 @@ select option{background:var(--card)}
 
 @media (max-width:480px){
   .kpi-value{font-size:18px}
-  .cash-pay-row{flex-wrap:wrap;gap:6px 10px}
+  .cash-pay-row,.cash-pay-adjust{flex-wrap:wrap;gap:6px 10px}
   .cash-pay-date{min-width:44px}
-  .cash-pay-row .item-row-info{flex:1 1 140px}
+  .cash-pay-row .item-row-info,.cash-pay-adjust .item-row-info{flex:1 1 140px}
   .card{padding:14px}
   .content{padding:10px}
 }
@@ -7722,11 +7724,19 @@ function renderSaldoContasCard(){
 // Lista exatamente os itens que compõem p.obligations de getFinancialOutlook
 // (eventos com data + sem data, tipos fatura/despesa/contribuição): o total da
 // lista é o mesmo número do card "A pagar até DD/MM". Nenhum cálculo próprio.
+// O motor soma valores com frações de centavo (ex.: parcela 100/3) e o card
+// arredonda só o agregado; cada linha arredonda o próprio valor. Quando essas
+// duas somas diferem, a lista ganha uma linha explícita "Ajuste de
+// arredondamento" (kind 'rounding', sem ação de pagamento) com a diferença em
+// centavos — linhas + ajuste = total = card. Nada é gravado nem redistribuído.
 function getCashObligationItems(p){
   const dated=p.events.filter(e=>CASH_OBLIGATION_KINDS.includes(e.kind));
   const undated=p.undated.filter(e=>CASH_OBLIGATION_KINDS.includes(e.kind))
     .slice().sort((a,b)=>(a.month||'').localeCompare(b.month||'')||a.label.localeCompare(b.label,'pt-BR'));
-  return dated.concat(undated).map(e=>({...e,amountCents:-toCents(e.amount)}));
+  const items=dated.concat(undated).map(e=>({...e,amountCents:-toCents(e.amount)}));
+  const adjustCents=toCents(p.obligations)-items.reduce((s,e)=>s+e.amountCents,0);
+  if(adjustCents) items.push({id:'rounding',kind:'rounding',label:'Ajuste de arredondamento',amountCents:adjustCents,date:null});
+  return items;
 }
 // Botão de pagamento reaproveitando as ações existentes. O id do evento vem do
 // motor no formato "<tipo>:<id>:<AAAA-MM>".
@@ -7758,8 +7768,9 @@ function renderProximosVencimentos(view){
   const el=document.getElementById('dashProximosVencimentos');
   if(!el) return;
   const {today,end,p}=view||getCashOutlookView();
-  const items=getCashObligationItems(p);
-  const totalCents=items.reduce((s,e)=>s+e.amountCents,0);
+  const all=getCashObligationItems(p);
+  const totalCents=all.reduce((s,e)=>s+e.amountCents,0);
+  const items=all.filter(e=>e.kind!=='rounding'),adjust=all.find(e=>e.kind==='rounding');
   const diffDays=date=>Math.round((new Date(date+'T12:00:00')-new Date(today+'T12:00:00'))/86400000);
   const rows=items.map(e=>{
     let status='';
@@ -7781,6 +7792,15 @@ function renderProximosVencimentos(view){
       ${cashObligationAction(e)}
     </div>`;
   }).join('');
+  // Não é obrigação pagável: sem data, sem status e sem botão "✓ Pago".
+  const adjustRow=adjust?`<div class="item-row cash-pay-adjust" id="cashPayAdjust" data-kind="rounding" data-cents="${adjust.amountCents}">
+      <div class="cash-pay-date mono">—</div>
+      <div class="item-row-info">
+        <div class="item-row-name">${adjust.label}</div>
+        <div class="item-row-meta">Frações de centavo das parcelas: cada linha mostra o valor arredondado, o total usa a soma exata. Não é uma conta a pagar.</div>
+      </div>
+      <div class="item-row-val">${adjust.amountCents>0?'+ ':''}${fmtCentsBRL(adjust.amountCents)}</div>
+    </div>`:'';
   el.innerHTML=`<div class="card" id="cashPayList">
     <div class="card-header">
       <div>
@@ -7789,6 +7809,7 @@ function renderProximosVencimentos(view){
       </div>
     </div>
     ${items.length?rows:`<div class="empty-state">Nada em aberto até ${cashShortDate(end)}.</div>`}
+    ${adjustRow}
     <div class="cash-pay-total"><span>Total a pagar até ${cashShortDate(end)}</span><span id="cashPayTotal" class="mono">${fmtCentsBRL(totalCents)}</span></div>
   </div>`;
 }
