@@ -56,12 +56,14 @@ await check('LEGSAL_04', async () => {
   await setup();
   await edit('leg', { recorrente: true });
   const d = await page.evaluate(() => {
-    renderDashboard();
+    // Gate UX-1: o seletor de salário principal fica em Análise →
+    // Configurações de planejamento.
+    navigate('analise');
     const opts = [...document.querySelectorAll('#primarySalarySelect option')].map((o) => o.value);
     return { opts, sel: document.getElementById('primarySalarySelect').textContent };
   });
   return { ok: d.opts.includes('leg') && !d.sel.includes('Nenhum salário recorrente'), detail: JSON.stringify(d.opts) };
-}, 'salário convertido aparece no seletor do Dashboard (sem "Nenhum salário recorrente")');
+}, 'salário convertido aparece no seletor de planejamento (sem "Nenhum salário recorrente")');
 
 await check('LEGSAL_05_06', async () => {
   await setup();

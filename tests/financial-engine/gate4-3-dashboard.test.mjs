@@ -12,7 +12,13 @@ async function setup(){
   });
 }
 try{
-await check('P43_LABELS',async()=>{await setup();const text=(await page.locator('#dashHero').innerText()).toLowerCase();return text.includes('disponível agora')&&text.includes('após obrigações')&&text.includes('saldo projetado')&&text.includes('receitas potenciais')&&!text.includes('melhor cenário');},'conceitos separados no painel');
+// Gate UX-1: o destaque de caixa (Dashboard) traz disponível / a pagar /
+// necessidade-ou-folga; saldo projetado, potenciais e preferências ficam na
+// Análise.
+await check('P43_LABELS',async()=>{await setup();const text=(await page.locator('#dashHero').innerText()).toLowerCase();
+  await page.evaluate(()=>navigate('analise'));const an=(await page.locator('#page-analise').innerText()).toLowerCase();
+  return text.includes('disponível agora')&&text.includes('a pagar até')&&(text.includes('necessidade de caixa')||text.includes('folga de caixa'))&&!text.includes('saldo projetado')&&!text.includes('melhor cenário')
+    &&an.includes('saldo projetado')&&an.includes('receitas potenciais');},'conceitos separados: caixa no Dashboard, projeção na Análise');
 await check('P43_PRIMARY',async()=>{
   await page.locator('#primarySalarySelect').selectOption('principal');
   return (await page.locator('#financialCycleLabel').innerText()).includes('28/08/2026')&&await page.evaluate(()=>state.financialPreferences.primarySalaryId==='principal');
@@ -28,9 +34,9 @@ await check('P43_INVALID_END',async()=>page.evaluate(()=>{
   const before=JSON.stringify(state.financialPreferences);setFinancialPreference('projectionEndDate','2026-02-31');return before===JSON.stringify(state.financialPreferences);
 }),'data inválida não salva preferência');
 await check('P43_FUTURE_REAL',async()=>{
-  const before=await page.locator('#outlookAvailable').innerText();
+  const before=await page.locator('#cashAvailable').innerText();
   await page.evaluate(()=>{currentMonth=11;currentYear=2026;renderDashboard();});
-  return (await page.locator('#outlookAvailable').innerText())===before;
+  return (await page.locator('#cashAvailable').innerText())===before;
 },'navegar mês futuro não transforma projeção em caixa real');
 await check('P43_POTENTIAL',async()=>{
   const potential=await page.locator('#outlookPotentials').innerText();
@@ -38,13 +44,14 @@ await check('P43_POTENTIAL',async()=>{
 },'potenciais visíveis sem aumentar projetado');
 await check('P43_MOBILE',async()=>{
   await page.setViewportSize({width:390,height:844});
-  return page.evaluate(()=>{const panel=document.getElementById('dashHero');return panel.scrollWidth<=panel.clientWidth+2;});
+  return page.evaluate(()=>{const fits=id=>{const panel=document.getElementById(id);return panel.clientWidth>0&&panel.scrollWidth<=panel.clientWidth+2;};
+    navigate('dashboard');const dash=fits('dashHero')&&fits('dashProximosVencimentos');navigate('analise');return dash&&fits('anConfigPlanejamento')&&fits('anProjecaoCaixa');});
 },'painel cabe em tela de celular');
-await check('P43_NO_HISTORY',async()=>{await loadState(baseSyntheticState());await page.evaluate(()=>renderFinancialOutlook());return (await page.locator('#dashPrevisaoMedia').innerText()).includes('Histórico insuficiente')&&(await page.locator('#outlookQuality').innerText()).includes('incompleta');},'ausência de histórico explícita');
+await check('P43_NO_HISTORY',async()=>{await loadState(baseSyntheticState());await page.evaluate(()=>renderFinancialOutlook());return (await page.locator('#anPrevisaoMedia').innerText()).includes('Histórico insuficiente')&&(await page.locator('#outlookQuality').innerText()).includes('incompleta');},'ausência de histórico explícita');
 await check('P43_NEGATIVE_START',async()=>page.evaluate(()=>{state.contas[0].saldoInicial=-100;return getChronologicalProjection('2026-09-17','2026-09-30').firstShortfall==='2026-09-17';}),'saldo inicial negativo sinaliza risco imediatamente');
 await check('P43_NO_SCRIPT_ERRORS',async()=>consoleErrors.length===0,'sem erros de execução no fluxo visual');
 if(process.env.FINFLOW_SCREENSHOT_DIR){
-  await setup();await page.locator('#primarySalarySelect').selectOption('principal');
+  await setup();await page.evaluate(()=>navigate('analise'));await page.locator('#primarySalarySelect').selectOption('principal');await page.evaluate(()=>navigate('dashboard'));
   await page.setViewportSize({width:1440,height:1100});
   await page.waitForFunction(()=>!document.getElementById('toast').classList.contains('show'));
   await page.screenshot({path:`${process.env.FINFLOW_SCREENSHOT_DIR}/finflow-dashboard-desktop.png`,fullPage:true});

@@ -230,6 +230,22 @@ const FILES = [
   // acumulado separado; natureza estruturada da receita (incomeNature),
   // nunca inferida da descrição; escritório fora do pessoal.
   'personal-cash-projection-scenarios.test.mjs',
+  // Gate UX-1 — Dashboard de caixa (branch fix/dashboard-cash-highlight,
+  // base a90547f; docs/gates/UX-1-DASHBOARD-CAIXA.md): Disponível / A pagar
+  // até o fim do ciclo / Necessidade ou Folga de caixa, lista "A pagar" que
+  // bate com o card; competência e cenários na Análise; card "Resultado
+  // projetado do mês" removido; motor idêntico ao commit-base.
+  'ux1-cash-dashboard.test.mjs',
+  // Patch — dia de vencimento em parceladas em Dinheiro/PIX (branch
+  // fix/parcelada-dia-vencimento, base a475634): formulários exibem e
+  // preservam diaVencimento da parcelada; card "A pagar" mostra "Parcela
+  // x/N"; motor, valores e datas idênticos ao commit-base.
+  'parcelada-dia-vencimento.test.mjs',
+  // Correção P2 da auditoria Codex UX1-E-PARCELADA-CODEX-2026-10-03 (branch
+  // fix/parcelada-dia-vencimento, base 87f068e): com frações de centavo, a
+  // lista "A pagar" ganha a linha explícita "Ajuste de arredondamento" (não
+  // pagável) para que linhas + ajuste = total = card; motor e linhas idênticos.
+  'ux1-rounding-reconciliation.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
