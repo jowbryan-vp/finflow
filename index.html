@@ -6112,8 +6112,9 @@ function verificarInvariantesEscritorioV3(){
 // lê nem escreve state, não decide nada sobre despesas em Dinheiro/PIX (essas
 // nunca "rolam" — ver getDespesasForMonth).
 //
-//   dia da compra <= cartao.fecha → cai na fatura do MESMO mês da compra
-//   dia da compra >  cartao.fecha → cai na fatura do mês SEGUINTE
+//   dia da compra <  cartao.fecha → cai na fatura do MESMO mês da compra
+//   dia da compra >= cartao.fecha → cai na fatura do mês SEGUINTE (a compra feita NO dia
+//                                    do fechamento já pertence ao próximo ciclo)
 //
 // MODO LEGADO (regra histórica "mês da compra + 1", sem olhar o dia nenhum):
 // aplicado sempre que dataCompra ou cartao.fecha não existirem. Isso cobre dois
@@ -6126,7 +6127,7 @@ function getCompetenciaFatura(dataCompra, cartao, mesInicioLegacy, anoInicioLega
   if(dataCompra && cartao && cartao.fecha){
     const [y,m,d] = dataCompra.split('-').map(Number);
     if(y && m && d){
-      return d<=cartao.fecha ? {mes:m,ano:y} : addMonths(m,y,1);
+      return d<cartao.fecha ? {mes:m,ano:y} : addMonths(m,y,1);
     }
   }
   return addMonths(mesInicioLegacy,anoInicioLegacy,1); // modo legado
