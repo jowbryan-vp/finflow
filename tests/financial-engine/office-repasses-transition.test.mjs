@@ -177,6 +177,46 @@ try {
     }, [a, b]);
   }, 'baixa recusa data futura/inválida, repasse inexistente ou já realizado; é idempotente; desfazer só age em repasse baixado');
 
+  await check('P2_REALIZAR_REJEITA_BAIXADO_ZERO_MUTACAO', async () => {
+    await cenarioLegado();
+    const id = await repasseDe('recA');
+    await page.evaluate((repId) => {
+      createExtraordinaryWithdrawal(200, '2026-09-20', 'oc1', 'c1', 'transição');
+      baixarOfficeRepasseSemTransferencia(repId, officeHojeISO(), 'x', []);
+    }, id);
+    return page.evaluate(([repId, hoje]) => {
+      const snap = () => JSON.stringify({ rp: state.office.repasses.find((x) => x.id === repId), receita: state.receitas.find((x) => x.officeTransferId === 'off_recA'),
+        o: state.office.contas.map((c) => calcSaldoOfficeContaCent(c.id)), p: state.contas.map((c) => calcSaldoConta(c.id)),
+        mo: state.office.movimentacoesContas.length, mp: state.movimentacoesContas.length, nr: state.receitas.length, nrp: state.office.repasses.length });
+      const antes = snap();
+      const ok = realizeOfficeTransfer(repId, hoje, 'oc1', 'c1');
+      const depois = snap();
+      return { ok: ok === false && antes === depois, detail: `retorno=${ok}; snapshot (repasse/receita/saldos/contagens) igual=${antes === depois}` };
+    }, [id, HOJE]);
+  }, 'realizeOfficeTransfer rejeita repasse baixado (cancelado): retorna false e não cria movimentação, não credita receita e não altera nenhum metadado — zero mutação');
+  await check('P2_FILTRAR_ATE_RESPEITA_DATA_BAIXA', async () => {
+    await cenarioLegado();
+    const id = await repasseDe('recA');
+    return page.evaluate((repId) => {
+      createExtraordinaryWithdrawal(200, '2026-09-20', 'oc1', 'c1', 'transição');
+      baixarOfficeRepasseSemTransferencia(repId, '2026-10-06', 'x', []);
+      const copiaEm = (D) => simularSobreCopiaV3(() => {
+        officeFiltrarAteV3(D);
+        const rp = state.office.repasses.find((x) => x.id === repId);
+        const receita = state.receitas.find((x) => x.officeTransferId === 'off_recA');
+        return { rpEstado: rp.estado, temCamposBaixa: !!(rp.motivoBaixa || rp.dataBaixa || rp.retiradasVinculadas || rp.obs), receitaEstado: receita.estado };
+      });
+      const diaAnterior = copiaEm('2026-10-05'), proprioDia = copiaEm('2026-10-06');
+      const pendDiaAnterior = getOfficeCashPositionAtDateV3('2026-10-05').repassesPendentesCent;
+      const pendProprioDia = getOfficeCashPositionAtDateV3('2026-10-06').repassesPendentesCent;
+      const rpReal = state.office.repasses.find((x) => x.id === repId), receitaReal = state.receitas.find((x) => x.officeTransferId === 'off_recA');
+      return { ok: diaAnterior.rpEstado === 'previsto' && !diaAnterior.temCamposBaixa && diaAnterior.receitaEstado === 'previsto' && pendDiaAnterior === 90000
+        && proprioDia.rpEstado === 'cancelado' && pendProprioDia === 0
+        && isOfficeRepasseBaixado(rpReal) && receitaReal.estado === 'cancelado',
+        detail: `dia anterior=${JSON.stringify(diaAnterior)}; próprio dia=${JSON.stringify(proprioDia)}; pendentes anterior/próprio=${pendDiaAnterior}/${pendProprioDia}; real baixado=${isOfficeRepasseBaixado(rpReal)}; receita real=${receitaReal.estado}` };
+    }, id);
+  }, 'officeFiltrarAteV3/getOfficeCashPositionAtDateV3 respeitam dataBaixa: no dia anterior a cópia temporal enxerga repasse e receita como previstos (sem campos de baixa); no próprio dia mantém a baixa; o state real não é alterado nem ressuscitado');
+
   // --- Parte 2: interface ----------------------------------------------------
   await check('P2_UI_BAIXA_E_DESFAZER', async () => {
     await cenarioLegado();

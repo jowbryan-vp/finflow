@@ -5306,7 +5306,15 @@ function officeFiltrarAteV3(D){
     return !(m.ano&&m.mes&&m.ano*12+m.mes>serialD);
   });
   off.repasses=(off.repasses||[]).filter(rp=>isOfficeRepasseBaixado(rp)||(!(rp.recebimentoId&&removidos.has(rp.recebimentoId))&&!(revertidosV2.has(rp.officeTransferId)&&rp.estado!=='recebido')));
-  off.repasses.forEach(rp=>{ if(rp.estado==='recebido'&&apos(rp.dataRecebimento)){ rp.estado='previsto'; rp.dataRecebimento=null; } });
+  off.repasses.forEach(rp=>{
+    if(rp.estado==='recebido'&&apos(rp.dataRecebimento)){ rp.estado='previsto'; rp.dataRecebimento=null; return; }
+    if(isOfficeRepasseBaixado(rp)&&apos(rp.dataBaixa)){
+      rp.estado='previsto';
+      delete rp.motivoBaixa; delete rp.dataBaixa; delete rp.retiradasVinculadas; delete rp.obs;
+      const receita=(state.receitas||[]).find(r=>r.officeTransferId===rp.officeTransferId);
+      if(receita&&receita.estado==='cancelado') receita.estado='previsto';
+    }
+  });
 }
 // Posição do escritório REALIZADA até a data D (inclusive), pelo motor aprovado
 // aplicado ao estado em D. Leitura pura: não altera o state.
@@ -11898,11 +11906,12 @@ function syncDerivedPersonalTransferV2(recebivel, projeto){
 
 // Efetiva um repasse previsto: Escritório -valor / Pessoal +valor, no MESMO
 // evento lógico dos dois lados (nunca cria uma segunda receita — seção
-// 22/OP09). Idempotente: chamar de novo sobre um repasse já 'recebido' não
-// faz nada (retorna false).
+// 22/OP09). Só age sobre repasse 'previsto': chamar de novo sobre um repasse
+// já 'recebido', ou sobre um repasse baixado sem transferência ('cancelado'),
+// não faz nada (retorna false, zero mutação).
 function realizeOfficeTransfer(repasseId, dataReal, officeContaId, personalContaId){
   const rep=(state.office.repasses||[]).find(r=>r.id===repasseId);
-  if(!rep || rep.estado==='recebido') return false;
+  if(!rep || rep.estado!=='previsto') return false;
   rep.estado='recebido';
   rep.dataRecebimento=dataReal;
   state.office.movimentacoesContas.push({id:uid(),contaId:officeContaId,valor:-rep.valor,data:dataReal,obs:'Repasse ao financeiro pessoal',officeTransferId:rep.officeTransferId});
