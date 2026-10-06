@@ -5277,8 +5277,10 @@ const officeFatoAteV3=(v,D)=>!officeFatoAposV3(v,D);
 //   reservas derivadas), despesas (pagamentos, tributos, estornos),
 //   movimentações de conta e de reserva (a de reserva usa o dia do
 //   lançamento de conta pareado — mesmo id — e, sem par, o mês/ano),
-//   realização de repasse depois de D (volta a previsto) e quitação
-//   registrada depois de D.
+//   realização de repasse depois de D (volta a previsto), baixa de repasse
+//   registrada depois de D (volta a previsto SÓ quando a origem do repasse —
+//   recebimento ou liberação — já existia em D; origem removida nunca vira
+//   pendência) e quitação registrada depois de D.
 function officeFiltrarAteV3(D){
   const off=state.office; if(!off) return;
   const apos=v=>officeFatoAposV3(v,D);
@@ -5305,7 +5307,10 @@ function officeFiltrarAteV3(D){
     if(diaDoPar.has(m.id)) return !apos(diaDoPar.get(m.id));
     return !(m.ano&&m.mes&&m.ano*12+m.mes>serialD);
   });
-  off.repasses=(off.repasses||[]).filter(rp=>isOfficeRepasseBaixado(rp)||(!(rp.recebimentoId&&removidos.has(rp.recebimentoId))&&!(revertidosV2.has(rp.officeTransferId)&&rp.estado!=='recebido')));
+  off.repasses=(off.repasses||[]).filter(rp=>{
+    if(rp.recebimentoId&&removidos.has(rp.recebimentoId)) return false;
+    return isOfficeRepasseBaixado(rp)||!(revertidosV2.has(rp.officeTransferId)&&rp.estado!=='recebido');
+  });
   off.repasses.forEach(rp=>{
     if(rp.estado==='recebido'&&apos(rp.dataRecebimento)){ rp.estado='previsto'; rp.dataRecebimento=null; return; }
     if(isOfficeRepasseBaixado(rp)&&apos(rp.dataBaixa)){

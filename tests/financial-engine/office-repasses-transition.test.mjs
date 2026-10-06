@@ -10,7 +10,15 @@
 // transferência (o dinheiro já saiu por retirada extraordinária). Nenhuma
 // movimentação de conta; a receita pessoal prevista é cancelada; o repasse
 // baixado nunca é ressuscitado pelo sync do recebível; a baixa pode ser
-// desfeita.
+// desfeita. officeFiltrarAteV3/getOfficeCashPositionAtDateV3 respeitam
+// dataBaixa: no corte anterior à baixa, a cópia temporal volta o repasse e a
+// receita a previsto; no próprio dia e depois, a baixa é mantida.
+//
+// Parte 3 — reauditoria: a baixa posterior só pode voltar a previsto numa
+// cópia temporal quando a ORIGEM do repasse (recebimento ou liberação v3) já
+// existia no corte. Se a origem é removida da cópia (corte anterior à própria
+// origem), o repasse derivado — baixado ou não — desaparece da cópia junto
+// com ela; nunca vira pendência antes de existir.
 //
 // Aceite com backup real (opcional, nunca versionado; nenhum nome é impresso):
 //   FINFLOW_REAL_BACKUP=/caminho/finflow_backup_2026-10-06.json \
@@ -37,6 +45,19 @@ async function cenarioLegado() {
       { id: 'recB', projetoId: 'p1', descricao: 'Parcela 1/2', valor: 1000, estado: 'previsto', dataPrevista: '2026-11-15', dataRecebimento: null, contaDestino: 'oc1', createdAt: 'recB' },
       { id: 'recC', projetoId: 'p1', descricao: 'Parcela 2/2', valor: 1000, estado: 'previsto', dataPrevista: '2026-12-15', dataRecebimento: null, contaDestino: 'oc1', createdAt: 'recC' });
     ['recA', 'recB', 'recC'].forEach((id) => syncDerivedPersonalTransfer(id));
+  });
+}
+// Escritório vazio, pronto para um contrato v3: conta própria e distribuição
+// base segura configurada (30% repasse pessoal / 70% operação).
+async function cenarioV3() {
+  await loadState(baseSyntheticState({ contas: [{ id: 'c1', name: 'Conta Pessoal', color: '#5b7fff', saldoInicial: 500 }] }));
+  await page.evaluate(() => {
+    state.office.contas.push({ id: 'oc1', name: 'Conta Escritório', color: '#ff9900', saldoInicial: 0 });
+    const r = salvarDistribuicaoBaseSegura({ confirm: true, destinos: [
+      { destino: 'repasse_pessoal', bp: 3000 }, { destino: 'operacao', bp: 7000 },
+      { destino: 'reserva_crescimento', bp: 0 }, { destino: 'capital_giro', bp: 0 }, { destino: 'marketing', bp: 0 },
+    ] });
+    if (!r.ok) throw new Error('salvarDistribuicaoBaseSegura falhou: ' + JSON.stringify(r));
   });
 }
 const repasseDe = (recId) => page.evaluate((id) => state.office.repasses.find((rp) => rp.recebivelId === id).id, recId);
@@ -216,6 +237,80 @@ try {
         detail: `dia anterior=${JSON.stringify(diaAnterior)}; próprio dia=${JSON.stringify(proprioDia)}; pendentes anterior/próprio=${pendDiaAnterior}/${pendProprioDia}; real baixado=${isOfficeRepasseBaixado(rpReal)}; receita real=${receitaReal.estado}` };
     }, id);
   }, 'officeFiltrarAteV3/getOfficeCashPositionAtDateV3 respeitam dataBaixa: no dia anterior a cópia temporal enxerga repasse e receita como previstos (sem campos de baixa); no próprio dia mantém a baixa; o state real não é alterado nem ressuscitado');
+
+  // --- Parte 3: reauditoria — origem v3 futura não pode virar pendência -----
+  await check('P3_V3_RECEBIMENTO_FUTURO_NAO_VIRA_PENDENCIA_ANTES_DA_ORIGEM', async () => {
+    await cenarioV3();
+    return page.evaluate(() => {
+      const criado = criarContratoV3({
+        nome: 'Projeto V3 Recebimento', valorContratoCent: 100000, status: 'contratado',
+        tributacao: { tributavel: false }, contaDestino: 'oc1',
+        rrtRequirementStatus: 'not_required', confirmNotRequired: true, rrts: [], parcelas: 1,
+      });
+      if (!criado.ok) return { ok: false, detail: `criarContratoV3: ${JSON.stringify(criado)}` };
+      const parcela = state.office.recebiveis.find((r) => r.projetoId === criado.projetoId && r.regra === 'v3');
+      const rec = registrarRecebimentoV3(parcela.id, { valorCent: 100000, data: '2026-10-05', contaId: 'oc1' });
+      if (!rec.ok || !rec.materializado) return { ok: false, detail: `registrarRecebimentoV3: ${JSON.stringify(rec)}` };
+      const rp = state.office.repasses.find((x) => x.recebimentoId === rec.recebimentoId);
+      if (!rp) return { ok: false, detail: 'repasse não foi gerado pela materialização do recebimento' };
+      if (!baixarOfficeRepasseSemTransferencia(rp.id, '2026-10-06', 'teste v3 recebimento futuro', [])) return { ok: false, detail: 'baixa não foi aceita' };
+      const antes = JSON.stringify(state.office.repasses.find((x) => x.id === rp.id));
+      const copia = simularSobreCopiaV3(() => {
+        officeFiltrarAteV3('2026-10-01');
+        return {
+          recebimentos: state.office.recebiveis.find((r) => r.id === parcela.id).recebimentos.length,
+          repasse: state.office.repasses.find((x) => x.id === rp.id) || null,
+          pendentesCent: getOfficeCashPositionV3('2026-10-01').repassesPendentesCent,
+        };
+      });
+      const depois = JSON.stringify(state.office.repasses.find((x) => x.id === rp.id));
+      return {
+        ok: copia.recebimentos === 0 && copia.repasse === null && copia.pendentesCent === 0 && antes === depois,
+        detail: `cópia em 01/10 (antes do recebimento de 05/10) — recebimentos=${copia.recebimentos}; repasse existe=${!!copia.repasse}; a transferir=${copia.pendentesCent}; state real inalterado=${antes === depois}`,
+      };
+    });
+  }, 'reauditoria P1: repasse v3 derivado de recebimento futuro (05/10), baixado em 06/10, some da cópia num corte anterior à própria origem (01/10) — nunca vira pendência antes do recebimento existir');
+  await check('P3_V3_LIBERACAO_FUTURA_NAO_VIRA_PENDENCIA_ANTES_DA_ORIGEM', async () => {
+    await cenarioV3();
+    return page.evaluate(() => {
+      const criado = criarContratoV3({
+        nome: 'Projeto V3 Liberação', valorContratoCent: 100000, status: 'contratado',
+        tributacao: { tributavel: false }, contaDestino: 'oc1',
+        rrtRequirementStatus: 'not_required', confirmNotRequired: true, rrts: [],
+        custosDiretos: [{ descricao: 'Custo contratual', valorPrevistoCent: 40000, dataPrevista: '2026-09-01' }],
+        parcelas: 1,
+      });
+      if (!criado.ok) return { ok: false, detail: `criarContratoV3: ${JSON.stringify(criado)}` };
+      const parcela = state.office.recebiveis.find((r) => r.projetoId === criado.projetoId && r.regra === 'v3');
+      const rec = registrarRecebimentoV3(parcela.id, { valorCent: 100000, data: '2026-09-20', contaId: 'oc1' });
+      if (!rec.ok || !rec.materializado) return { ok: false, detail: `registrarRecebimentoV3: ${JSON.stringify(rec)}` };
+      const rp1 = state.office.repasses.find((x) => x.recebimentoId === rec.recebimentoId);
+      if (!rp1) return { ok: false, detail: 'repasse 1 (origem = recebimento de 20/09) não foi gerado' };
+      const custoId = findOfficeProjeto(criado.projetoId).custosDiretos[0].id;
+      if (!cancelarCustoDiretoV3(criado.projetoId, custoId).ok) return { ok: false, detail: 'cancelamento do custo contratual falhou' };
+      const lib = liberarDistribuicaoV3(criado.projetoId, { data: '2026-10-05', contaId: 'oc1', motivo: 'custo cancelado', origem: { tipo: 'custo_direto', id: custoId } });
+      if (!lib.ok) return { ok: false, detail: `liberarDistribuicaoV3: ${JSON.stringify(lib)}` };
+      const rp2 = state.office.repasses.find((x) => x.recebimentoId === lib.liberacaoId);
+      if (!rp2) return { ok: false, detail: 'repasse 2 (origem = liberação de 05/10) não foi gerado' };
+      if (!baixarOfficeRepasseSemTransferencia(rp2.id, '2026-10-06', 'teste v3 liberação futura', [])) return { ok: false, detail: 'baixa do repasse 2 não foi aceita' };
+      const copia = simularSobreCopiaV3(() => {
+        officeFiltrarAteV3('2026-10-01');
+        return {
+          liberacoes: findOfficeProjeto(criado.projetoId).liberacoesV3.length,
+          repasse1: state.office.repasses.find((x) => x.id === rp1.id) || null,
+          repasse2: state.office.repasses.find((x) => x.id === rp2.id) || null,
+          pendentesCent: getOfficeCashPositionV3('2026-10-01').repassesPendentesCent,
+        };
+      });
+      const rp2RealDepois = state.office.repasses.find((x) => x.id === rp2.id);
+      const libsReais = findOfficeProjeto(criado.projetoId).liberacoesV3.length;
+      return {
+        ok: copia.liberacoes === 0 && copia.repasse2 === null && !!copia.repasse1 && copia.repasse1.estado === 'previsto'
+          && copia.pendentesCent === Math.round(rp1.valor * 100) && isOfficeRepasseBaixado(rp2RealDepois) && libsReais === 1,
+        detail: `cópia em 01/10 (antes da liberação de 05/10, depois do recebimento de 20/09) — liberações=${copia.liberacoes}; repasse1=${copia.repasse1 && copia.repasse1.estado}; repasse2 existe=${!!copia.repasse2}; a transferir=${copia.pendentesCent} (esperado só repasse1=${Math.round(rp1.valor * 100)}); real repasse2 baixado=${isOfficeRepasseBaixado(rp2RealDepois)}; liberações reais=${libsReais}`,
+      };
+    });
+  }, 'reauditoria P1: repasse v3 derivado de liberação futura (05/10), baixado em 06/10, some da cópia num corte anterior à própria origem (01/10); só o repasse de origem já existente (recebimento de 20/09) continua a transferir');
 
   // --- Parte 2: interface ----------------------------------------------------
   await check('P2_UI_BAIXA_E_DESFAZER', async () => {
