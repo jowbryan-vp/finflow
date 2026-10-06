@@ -230,6 +230,13 @@ const FILES = [
   // acumulado separado; natureza estruturada da receita (incomeNature),
   // nunca inferida da descrição; escritório fora do pessoal.
   'personal-cash-projection-scenarios.test.mjs',
+  // Gate 5.x — vencimento de fatura no mês seguinte ao fechamento (branch
+  // fix/invoice-due-date-next-month, base f468295): cartão que paga num dia
+  // <= ao do fechamento (AMAZON, fecha 17 / paga 1) vence no mês seguinte à
+  // competência; getDataVencimentoFatura centraliza a regra pra projeção e
+  // pros próximos vencimentos. Só a data muda — competência, total da
+  // fatura e saldos (comparados contra o commit-base) ficam idênticos.
+  'gate5-invoice-due-date-next-month.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

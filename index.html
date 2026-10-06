@@ -2835,6 +2835,17 @@ function projectionDate(year,month,day){
   if(!Number.isInteger(Number(day))||Number(day)<1||Number(day)>31) return null;
   return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(Number(day),new Date(year,month,0).getDate())).padStart(2,'0')}`;
 }
+// Data de vencimento da fatura de COMPETÊNCIA mes/ano. Cartão que paga num dia
+// <= ao do fechamento (ex.: fecha 17, paga 1) vence no mês SEGUINTE à
+// competência, com virada de ano; os demais (fecha 3, paga 10) e os sem
+// fechamento configurado vencem no próprio mês. Só a data: competência, total
+// e pagamento da fatura não passam por aqui.
+function getDataVencimentoFatura(card,mes,ano){
+  const dia=Number(card?.paga), fecha=Number(card?.fecha);
+  if(!Number.isInteger(dia)||dia<1||dia>31) return null;
+  const venc=Number.isInteger(fecha)&&fecha>=1&&fecha<=31&&dia<=fecha?addMonths(mes,ano,1):{mes,ano};
+  return projectionDate(venc.ano,venc.mes,dia);
+}
 function getChronologicalProjection(referenceDate,endDate){
   if(!isValidISODateString(referenceDate)||!isValidISODateString(endDate)||endDate<referenceDate)
     return {unavailable:true,reason:'invalid_period'};
@@ -2884,7 +2895,7 @@ function getChronologicalProjection(referenceDate,endDate){
     const invoices=calcByCardForMonth(month,year);
     for(const card of state.cards||[]){
       if(card.id==='dinheiro'||isFaturaPaga(card.id,month,year)) continue;
-      add({id:`invoice:${card.id}:${key}`,kind:'invoice',label:`Fatura ${card.name}`,amount:-(invoices[card.id]||0),date:projectionDate(year,month,card.paga),month:key});
+      add({id:`invoice:${card.id}:${key}`,kind:'invoice',label:`Fatura ${card.name}`,amount:-(invoices[card.id]||0),date:getDataVencimentoFatura(card,month,year),month:key});
     }
     // Preserve existing contribution policy; there is no exact due-date field in this schema.
     if(!isContribuicaoPaga(month,year)) add({id:`contribution:${key}`,kind:'contribution',label:'Contribuição',amount:-calcContribuicao(month,year),date:null,month:key});
@@ -7686,9 +7697,12 @@ function calcProximosVencimentos(){
       const t=getTotalsForMonth(mes,ano);
       const valor=(t.byCard&&t.byCard[c.id])||0;
       if(valor<=0) continue; // sem compras nessa fatura, nada a cobrar
-      const dataVenc=new Date(ano, mes-1, c.paga);
+      const venc=getDataVencimentoFatura(c,mes,ano);
+      if(!venc) continue;
+      const [vencAno,vencMes,vencDia]=venc.split('-').map(Number);
+      const dataVenc=new Date(vencAno, vencMes-1, vencDia);
       const diffDias=Math.round((dataVenc-new Date(hojeY,hojeM-1,hojeD))/86400000);
-      resultado.push({tipo:'fatura', card:c, fechoMes:mes, fechoAno:ano, pagaMes:mes, pagaAno:ano, valor, diffDias});
+      resultado.push({tipo:'fatura', card:c, fechoMes:mes, fechoAno:ano, pagaMes:vencMes, pagaAno:vencAno, valor, diffDias});
       break; // só a fatura pendente mais antiga por cartão
     }
   });
