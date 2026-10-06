@@ -3217,6 +3217,8 @@ function getChronologicalProjection(referenceDate,endDate){
     if(!isContribuicaoPaga(month,year)) add({id:`contribution:${key}`,kind:'contribution',label:'Contribuição',amount:-calcContribuicao(month,year),date:null,month:key});
     for(const r of getReceitasForMonth(month,year)){
       if(receitaRecebida(r,month,year)) continue;
+      // Receita cancelada (ex.: repasse do escritório cancelado ou baixado) não é pendência.
+      if(r.estado==='cancelado') continue;
       const kind=r.certeza==='potencial'?'potential':'income';
       const date=r.recorrencia?r._dataPrevistaOcorrencia:r.dataPrevista;
       const item={id:`revenue:${r.id}:${r._isParcela?r._parcelaIdx:key}`,kind,label:r.nome||'Receita',amount:valorReceita(r),date,month:key};
@@ -3238,7 +3240,7 @@ function getChronologicalProjection(referenceDate,endDate){
   // uma competência pra decidir ocultar.
   for(const r of state.receitas||[]){
     const competenciaAntesDoCorte=cutoffSerial!==null&&r.ano&&r.mes&&(r.ano*12+r.mes-1)<cutoffSerial;
-    if(r.certeza!==undefined&&!r.recorrencia&&r.estado!=='recebido'&&!isValidISODateString(r.dataPrevista)&&!competenciaAntesDoCorte)
+    if(r.certeza!==undefined&&!r.recorrencia&&r.estado!=='recebido'&&r.estado!=='cancelado'&&!isValidISODateString(r.dataPrevista)&&!competenciaAntesDoCorte)
       issues.push({id:r.id,reason:'missing_revenue_date'});
     if(r.certeza!==undefined&&!r.recorrencia&&r.estado==='recebido'&&!isValidISODateString(r.dataRecebimento)&&!competenciaAntesDoCorte)
       issues.push({id:r.id,reason:'invalid_received_date'});
@@ -3526,6 +3528,22 @@ function isOfficeRecebivelRealizado(recebivel){
 function getOfficeRecebivelCashDate(recebivel){
   return isOfficeRecebivelRealizado(recebivel) ? recebivel.dataRecebimento : null;
 }
+// Repasse pessoal "a transferir": previsto cuja origem JÁ é caixa do
+// escritório — recebível anterior realizado, recebimento/liberação do modelo
+// atual (recebimentoId: só existe depois do dinheiro entrar) ou repasse sem
+// recebível de origem. Repasse planejado de recebível ainda previsto (parcela
+// futura) não compromete o caixa de hoje: entra só na projeção, quando o
+// recebível for recebido.
+function isOfficeRepasseATransferir(rp){
+  if(!rp||rp.estado!=='previsto') return false;
+  if(rp.recebimentoId||!rp.recebivelId) return true;
+  return isOfficeRecebivelRealizado(((state.office&&state.office.recebiveis)||[]).find(r=>r.id===rp.recebivelId));
+}
+// Repasse baixado sem transferência (o dinheiro já saiu por retirada
+// extraordinária): estado 'cancelado' com motivoBaixa — nunca volta a previsto
+// por recálculo e continua contando como já alocado ao pessoal.
+const OFFICE_BAIXA_COBERTO='coberto_por_retirada';
+function isOfficeRepasseBaixado(rp){ return !!(rp&&rp.estado==='cancelado'&&rp.motivoBaixa===OFFICE_BAIXA_COBERTO); }
 
 // Saldo real de UMA conta do escritório: saldoInicial + ajustes/transferências/
 // repasses/retiradas (movimentacoesContas) + recebíveis efetivamente recebidos
@@ -4175,7 +4193,7 @@ function getProjetoAlocadoPorDestinoCent(projetoId, excluindoRecebivelId){
   const recebivelIds=new Set((state.office.recebiveis||[]).filter(r=>r.projetoId===projetoId && r.id!==excluindoRecebivelId).map(r=>r.id));
   const porDestino={repasse_pessoal:0, operacao:0, reserva_crescimento:0, capital_giro:0, marketing:0};
   (state.office.repasses||[]).forEach(rp=>{
-    if(rp.estado!=='cancelado' && recebivelIds.has(rp.recebivelId)) porDestino.repasse_pessoal+=Math.round((rp.valor||0)*100);
+    if((rp.estado!=='cancelado'||isOfficeRepasseBaixado(rp)) && recebivelIds.has(rp.recebivelId)) porDestino.repasse_pessoal+=Math.round((rp.valor||0)*100);
   });
   (state.office.movimentacoesReservas||[]).forEach(m=>{
     if(m.origemRecebivelId && recebivelIds.has(m.origemRecebivelId) && porDestino[m.origemDestino]!==undefined){
@@ -5164,7 +5182,7 @@ function getOfficeCashPositionV3(hoje){
   const tributoPago=getDespesasVinculadas('tributo').filter(d=>!d.vinculo.projetoId||projetoUsaRegraV3(findOfficeProjeto(d.vinculo.projetoId)))
     .reduce((s,d)=>s+officeDespesaCent(d),0);
   const tributoPendente=provisionado-tributoPago;
-  const repassesPendentes=(off.repasses||[]).filter(r=>r.estado==='previsto').reduce((s,r)=>s+Math.round((r.valor||0)*100),0);
+  const repassesPendentes=(off.repasses||[]).filter(isOfficeRepasseATransferir).reduce((s,r)=>s+Math.round((r.valor||0)*100),0);
   const coberturaRetida=somaR('coberturaRetidaPendenteCent'), aguardando=somaR('recebimentosSemProvisaoCent');
   const semCobertura=resumos.filter(r=>r.status!=='cancelado').reduce((s,r)=>s+r.custosContratuaisPendentesSemCoberturaCent,0);
   const comprometido=Math.max(0,tributoPendente)+repassesPendentes+coberturaRetida+aguardando;
@@ -5287,7 +5305,7 @@ function officeFiltrarAteV3(D){
     if(diaDoPar.has(m.id)) return !apos(diaDoPar.get(m.id));
     return !(m.ano&&m.mes&&m.ano*12+m.mes>serialD);
   });
-  off.repasses=(off.repasses||[]).filter(rp=>!(rp.recebimentoId&&removidos.has(rp.recebimentoId))&&!(revertidosV2.has(rp.officeTransferId)&&rp.estado!=='recebido'));
+  off.repasses=(off.repasses||[]).filter(rp=>isOfficeRepasseBaixado(rp)||(!(rp.recebimentoId&&removidos.has(rp.recebimentoId))&&!(revertidosV2.has(rp.officeTransferId)&&rp.estado!=='recebido')));
   off.repasses.forEach(rp=>{ if(rp.estado==='recebido'&&apos(rp.dataRecebimento)){ rp.estado='previsto'; rp.dataRecebimento=null; } });
 }
 // Posição do escritório REALIZADA até a data D (inclusive), pelo motor aprovado
@@ -5667,7 +5685,7 @@ function getOfficeVisaoGeralV3(hoje, meses){
 function officeRepassesDeOrigensV3(ids, campo){
   const cent=r=>Math.round((r.valor||0)*100);
   const reps=((state.office&&state.office.repasses)||[]).filter(r=>r[campo]&&ids.has(r[campo]));
-  return {transferidoCent:reps.filter(r=>r.estado==='recebido').reduce((s,r)=>s+cent(r),0), aTransferirCent:reps.filter(r=>r.estado==='previsto').reduce((s,r)=>s+cent(r),0)};
+  return {transferidoCent:reps.filter(r=>r.estado==='recebido').reduce((s,r)=>s+cent(r),0), aTransferirCent:reps.filter(isOfficeRepasseATransferir).reduce((s,r)=>s+cent(r),0)};
 }
 // Uma linha da lista de projetos — modelo atual (v3) ou anterior (legado/v2).
 // "atencao": o que está vencido, bloqueado ou disponível para agir. "pendencias": toda ação
@@ -11847,6 +11865,8 @@ function syncDerivedPersonalTransferV2(recebivel, projeto){
 
   const valorRepasse=porDestino.repasse_pessoal;
   if(valorRepasse===undefined||valorRepasse===null||valorRepasse<=0){ semRepasseAinda(); return; }
+  // Baixado sem transferência: decisão do usuário, nunca ressuscitado por recálculo.
+  if(isOfficeRepasseBaixado(repasseExistente)) return;
 
   const dataPrevista=recebivel.dataRecebimento||recebivel.dataPrevista||null;
   if(repasseExistente){
@@ -11892,6 +11912,40 @@ function realizeOfficeTransfer(repasseId, dataReal, officeContaId, personalConta
     receita.dataRecebimento=dataReal;
     receita.conta=personalContaId;
   }
+  return true;
+}
+
+// Baixa de um repasse previsto SEM transferência: o dinheiro já saiu do
+// escritório por retirada extraordinária (fase de transição), então o repasse
+// planejado não vai mais acontecer. Nenhuma movimentação de conta, de nenhum
+// lado: o repasse vira 'cancelado' com motivoBaixa e a receita pessoal prevista
+// do mesmo officeTransferId é cancelada. retiradaIds (opcional) só documenta
+// quais retiradas extraordinárias cobriram o valor. Idempotente: só age sobre
+// repasse 'previsto'.
+function baixarOfficeRepasseSemTransferencia(repasseId, dataBaixa, motivo, retiradaIds){
+  const rep=(state.office.repasses||[]).find(r=>r.id===repasseId);
+  if(!rep || rep.estado!=='previsto' || !isValidISODateString(dataBaixa) || dataBaixa>officeHojeISO()) return false;
+  const retiradas=new Set((state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').map(m=>m.id));
+  rep.estado='cancelado';
+  rep.motivoBaixa=OFFICE_BAIXA_COBERTO;
+  rep.dataBaixa=dataBaixa;
+  rep.retiradasVinculadas=[...new Set(retiradaIds||[])].filter(id=>retiradas.has(id));
+  rep.obs=motivo||'';
+  const receita=state.receitas.find(r=>r.officeTransferId===rep.officeTransferId);
+  if(receita && receita.estado==='previsto') receita.estado='cancelado';
+  return true;
+}
+// Desfaz a baixa: o repasse volta a 'previsto' e a receita pessoal prevista é
+// reativada. Repasse de recebível anterior é ressincronizado com a origem (o
+// recebível pode ter mudado, ou sido cancelado, enquanto estava baixado).
+function desfazerBaixaOfficeRepasse(repasseId){
+  const rep=(state.office.repasses||[]).find(r=>r.id===repasseId);
+  if(!isOfficeRepasseBaixado(rep)) return false;
+  rep.estado='previsto';
+  delete rep.motivoBaixa; delete rep.dataBaixa; delete rep.retiradasVinculadas; delete rep.obs;
+  const receita=state.receitas.find(r=>r.officeTransferId===rep.officeTransferId);
+  if(receita && receita.estado==='cancelado') receita.estado='previsto';
+  if(rep.recebivelId && !rep.recebimentoId) syncDerivedPersonalTransfer(rep.recebivelId);
   return true;
 }
 
@@ -14060,13 +14114,16 @@ function renderOfficeRepassesTab(){
   const repasses=(state.office.repasses||[]).slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
   const rows=repasses.map(rp=>{
     const recebivel=(state.office.recebiveis||[]).find(r=>r.id===rp.recebivelId);
+    const baixado=isOfficeRepasseBaixado(rp);
     return `<div class="item-row ${rp.estado==='recebido'?'pago':rp.estado==='previsto'?'previsto':''}">
       <div class="item-row-info">
-        <div class="item-row-name">Repasse Planejado <span class="badge ${estadoBadge[rp.estado]}">${estadoLabel[rp.estado]}</span></div>
-        <div class="item-row-meta">${recebivel?esc(recebivel.descricao||''):'—'} · Previsto: ${rp.dataPrevista||'—'}${rp.dataRecebimento?' · Realizado: '+rp.dataRecebimento:''}</div>
+        <div class="item-row-name">Repasse Planejado <span class="badge ${baixado?'badge-blue':estadoBadge[rp.estado]}">${baixado?'Baixado (coberto)':estadoLabel[rp.estado]}</span></div>
+        <div class="item-row-meta">${recebivel?esc(recebivel.descricao||''):'—'} · Previsto: ${rp.dataPrevista||'—'}${rp.dataRecebimento?' · Realizado: '+rp.dataRecebimento:''}${baixado?' · Baixado: '+esc(rp.dataBaixa||'—')+(rp.obs?' · '+esc(rp.obs):'')+((rp.retiradasVinculadas||[]).length?' · '+rp.retiradasVinculadas.length+' retirada(s) vinculada(s)':''):''}</div>
       </div>
       <div class="item-row-val ${rp.estado==='recebido'?'pos':'muted'}">${fmtBRL(rp.valor||0)}</div>
-      ${rp.estado==='previsto'?`<button class="btn btn-primary btn-sm" onclick="openRealizarOfficeRepasse('${rp.id}')">Realizar</button>`:''}
+      ${rp.estado==='previsto'?`<button class="btn btn-primary btn-sm" onclick="openRealizarOfficeRepasse('${rp.id}')">Realizar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBaixarOfficeRepasse('${rp.id}')">Já coberto / dar baixa</button>`:''}
+      ${baixado?`<button class="btn btn-ghost btn-sm" onclick="desfazerBaixaOfficeRepasseUI('${rp.id}')">Desfazer baixa</button>`:''}
     </div>`;
   }).join('') || '<div class="info-box">Nenhum repasse planejado ainda — cadastre um recebível de um projeto contratado e configure a regra de distribuição em "Contas &amp; Regras".</div>';
   const retiradasExtraord=(state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
@@ -14125,6 +14182,47 @@ function confirmarRealizarOfficeRepasse(repasseId){
   if(document.querySelector('.nav-item.active')?.dataset?.page==='dashboard') renderDashboard();
   if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
   toast('Repasse realizado! Já creditado no caixa pessoal.');
+}
+function officeRepassesRerender(){
+  renderOfficeRepassesTab();renderEscritorioResumo();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='dashboard') renderDashboard();
+  if(document.querySelector('.nav-item.active')?.dataset?.page==='receitas') renderReceitas();
+}
+function openBaixarOfficeRepasse(repasseId){
+  const rp=(state.office.repasses||[]).find(x=>x.id===repasseId); if(!rp) return;
+  const retiradas=(state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  const retiradasHTML=retiradas.length
+    ? retiradas.map(m=>`<label style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><input type="checkbox" class="baixaRepasseRetirada" value="${esc(m.id)}"> ${(m.data||'').slice(0,10)} · ${fmtBRL(Math.abs(m.valor||0))}${m.obs?' · '+esc(m.obs):''}</label>`).join('')
+    : '<div class="info-box">Nenhuma retirada extraordinária registrada — a baixa pode ser feita sem vínculo.</div>';
+  document.getElementById('modalTitle').textContent='Dar baixa sem transferência';
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Valor: <strong>${fmtBRL(rp.valor||0)}</strong>. Use quando este dinheiro já saiu do escritório por outro caminho. Nenhuma conta é movimentada: o repasse deixa de estar pendente e a receita pessoal prevista correspondente é cancelada. Pode ser desfeito.</div>
+    <div class="form-grid">
+      <div class="form-group"><label>Data da baixa</label><input type="date" id="baixaRepasseData" value="${officeHojeISO()}" max="${officeHojeISO()}"></div>
+      <div class="form-group full"><label>Motivo</label><input type="text" id="baixaRepasseMotivo" value="Coberto por retiradas extraordinárias na transição"></div>
+      <div class="form-group full"><label>Retiradas extraordinárias que cobriram (opcional)</label>${retiradasHTML}</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-primary" onclick="confirmarBaixarOfficeRepasse('${repasseId}')">Confirmar Baixa</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function confirmarBaixarOfficeRepasse(repasseId){
+  const data=document.getElementById('baixaRepasseData').value;
+  const motivo=document.getElementById('baixaRepasseMotivo').value.trim();
+  if(!isValidISODateString(data)){toast('Informe a data da baixa');return;}
+  if(data>officeHojeISO()){toast('A data da baixa não pode ser futura');return;}
+  const retiradaIds=[...document.querySelectorAll('.baixaRepasseRetirada:checked')].map(i=>i.value);
+  const ok=baixarOfficeRepasseSemTransferencia(repasseId,data,motivo,retiradaIds);
+  if(!ok){toast('Este repasse não está mais previsto');closeModal();return;}
+  scheduleSave();closeModal();officeRepassesRerender();
+  toast('Repasse baixado sem transferência.');
+}
+function desfazerBaixaOfficeRepasseUI(repasseId){
+  if(!desfazerBaixaOfficeRepasse(repasseId)){toast('Este repasse não está baixado');return;}
+  scheduleSave();officeRepassesRerender();
+  toast('Baixa desfeita.');
 }
 function registrarRetiradaExtraordinaria(){
   const valor=parseFloat(document.getElementById('retiradaValor').value);
