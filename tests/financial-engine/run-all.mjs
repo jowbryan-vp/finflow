@@ -246,6 +246,14 @@ const FILES = [
   // lista "A pagar" ganha a linha explícita "Ajuste de arredondamento" (não
   // pagável) para que linhas + ajuste = total = card; motor e linhas idênticos.
   'ux1-rounding-reconciliation.test.mjs',
+  // Repasses do escritório na fase de transição (branch
+  // fix/office-available-realized-repasses, base 68ea5df): "Repasses pessoais
+  // a transferir" só conta repasse previsto de origem já recebida
+  // (isOfficeRepasseATransferir) — parcela futura só pesa na projeção, no mês
+  // do recebível; e baixa de repasse sem transferência ("Já coberto / dar
+  // baixa"), sem movimentar contas, cancelando a receita pessoal prevista,
+  // imune ao sync do recebível e reversível.
+  'office-repasses-transition.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
