@@ -52,3 +52,59 @@ ajuste = total = card para ajustes positivos, negativos e ausentes. Resolvido
 o P2 do UX-1 e removido o bloqueio técnico do patch de vencimento de parceladas.
 Relatório: `docs/audits/UX1-E-PARCELADA-REAUDIT-CODEX-2026-10-03.md`.
 Mantidas as ressalvas de produto anteriores. Sem publicação, merge ou novo gate.
+
+## Atualização 06/10/2026 — repasses do escritório na transição: PASS e integração
+
+Entrega Claude em `fix/office-available-realized-repasses` (base `68ea5df`;
+implementação `fb8e3e6`, correções `42c9691` e `fc3c8fb`; HEAD `d19efc0`).
+"Repasses pessoais a transferir" só conta repasse previsto de origem já
+recebida; parcela futura pesa apenas na projeção, no mês do recebível; baixa
+de repasse sem transferência ("Já coberto / dar baixa"), reversível e sem
+movimentar contas. Auditoria Codex: FAIL, reauditoria FAIL e **PASS final**.
+Relatório: `docs/audits/OFFICE-AVAILABLE-REALIZED-REPASSES-CODEX-FINAL-PASS-2026-10-06.md`.
+Backup real: 16 PASS / 0 FAIL. Suíte: 755 PASS / 7 FAIL, todas dívidas
+preexistentes. Aceite do usuário: OK.
+
+## Atualização 06/10/2026 — vencimento e data real de pagamento da fatura: PASS e integração
+
+Entrega Claude em `fix/card-due-date-next-month` (base `d19efc0`; HEAD `666489f`).
+
+- Vencimento (`ab642e1`): `getDataVencimentoFatura` é a fonte única — cartão
+  com dia de pagamento <= dia de fechamento vence no mês seguinte ao da
+  competência, inclusive na virada de ano. Usado na projeção cronológica, no
+  "A pagar" do Dashboard, na data exibida nas telas de fatura e no corte de
+  `calcSaldoContaAte`. PASS Codex:
+  `docs/audits/CARD-DUE-DATE-NEXT-MONTH-CODEX-2026-10-06.md`.
+- Data real de pagamento (`919dcc2`): o aceite contra o extrato mostrou que
+  debitar sempre no vencimento errava o saldo histórico de fatura paga antes
+  do vencimento. Novo mapa `state.faturasPagasData` (mesma chave de
+  `faturasPagas`; ausente vira `{}`, sem migração de backups); pagar pede a
+  data (padrão hoje), editável depois e removida ao desmarcar; o saldo por
+  data debita no mês da data real e, sem ela, no mês do vencimento, uma única
+  vez. PASS Codex: `docs/audits/CARD-INVOICE-PAYMENT-DATE-CODEX-2026-10-06.md`.
+
+Competência da compra, totais de fatura e chaves de `faturasPagas` /
+`faturasContas` / `faturasAjustes` não mudaram. Suíte: 793 PASS / 7 FAIL
+(+19 e +19 testes novos). Aceite do usuário com o backup real: a conta
+Mercado Pago bate com os extratos em todos os meses. Handoffs:
+`docs/handoffs/HANDOFF-CARD-DUE-DATE-NEXT-MONTH-2026-10-06.md` e
+`docs/handoffs/HANDOFF-CARD-INVOICE-PAYMENT-DATE-2026-10-06.md`.
+
+## Atualização 06/10/2026 — merge das duas entregas para a main (aguardando push do usuário)
+
+Por autorização expressa do usuário, Claude integrou as duas entregas em
+worktree limpo a partir de `origin/main` (`68ea5df`), branch local
+`release/main-merge-2026-10-06`: merge de `d19efc0` e depois de `666489f`,
+ambos sem conflito (a segunda branch descende da primeira; a árvore
+resultante é idêntica à de `666489f`, mais este registro). Suíte completa
+após o merge: **793 PASS / 7 FAIL**. As sete falhas são as dívidas
+preexistentes: G1-C02, G1-C06, crash de
+`gate3-1-distribution-validation.test.mjs`, ordenação da fatura,
+`PCP_EXTRA_OFFICE_GENERATION_NATURE`, `PDV_09` e `UX1R_09`. Nenhum push feito
+pelo Claude; o push da `main` fica com o usuário.
+
+Pendência de registro: as seções de 03–04/10/2026 (Office-Cash Entregas 1–2,
+E3.1–E3.2.1, publicações do index e fronteira de fechamento do cartão) e os
+respectivos relatórios seguem não commitados no checkout `C:\Dev\FinFlow` e
+não fazem parte deste merge. Drive/OAuth e inspeção visual manual não foram
+exercitados pelo Claude.
