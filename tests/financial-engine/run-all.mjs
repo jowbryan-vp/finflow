@@ -254,6 +254,12 @@ const FILES = [
   // baixa"), sem movimentar contas, cancelando a receita pessoal prevista,
   // imune ao sync do recebível e reversível.
   'office-repasses-transition.test.mjs',
+  // Vencimento de cartão que paga no mês seguinte ao fechamento (branch
+  // fix/card-due-date-next-month, base d19efc0): getDataVencimentoFatura é a
+  // fonte única — paga <= fecha vence no mês seguinte ao da competência,
+  // inclusive na virada de ano; a fatura paga debita a conta no mês do
+  // vencimento (calcSaldoContaAte). Competência, totais e chaves intactos.
+  'card-due-date-next-month.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
