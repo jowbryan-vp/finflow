@@ -2165,6 +2165,7 @@ function migrateState() {
   if (!state.contribuicaoAjustes) state.contribuicaoAjustes = {}; // {mesKey: valorAjustado}
   if (!state.faturasPagas) state.faturasPagas = {};
   if (!state.faturasContas) state.faturasContas = {}; // {faturaKey: contaId} — de qual conta saiu o pagamento da fatura
+  if (!state.faturasPagasData) state.faturasPagasData = {}; // {faturaKey: 'AAAA-MM-DD'} — data real do pagamento da fatura (ausente = sem data, vale o vencimento)
   if (!state.faturasAjustes) state.faturasAjustes = {}; // {faturaKey: valor} — correção manual do valor da fatura (arredondamento vs banco)
   if (!state.contribuicaoPaga) state.contribuicaoPaga = {}; // {mesKey: true}
   if (!state.contribuicaoContas) state.contribuicaoContas = {}; // {mesKey: {contaId, valor, dataPagamento}} — de qual conta saiu o pagamento da contribuição
@@ -6183,17 +6184,31 @@ function getDataVencimentoFatura(card, ano, mes){
   const v=(Number.isInteger(fecha)&&fecha>=1&&dia<=fecha)?addMonths(mes,ano,1):{mes,ano};
   return projectionDate(v.ano,v.mes,dia);
 }
-// Mês ('YYYY-MM') em que a fatura paga de uma competência debita a conta: o
-// mês do vencimento. Sem data de vencimento (cartão sem dia de pagamento ou
-// cartão que não existe mais), continua sendo o mês da competência.
+// Data real (ISO) em que a fatura de uma competência foi paga, gravada em
+// state.faturasPagasData com a MESMA chave de faturasPagas. null quando a
+// fatura não está paga, não tem data gravada (backups antigos) ou a data
+// gravada não é válida — nunca uma data inventada.
+function getDataPagamentoFatura(cardId, ano, mes){
+  const k=faturaKey(cardId,mes,ano);
+  if(!state.faturasPagas||!state.faturasPagas[k]) return null;
+  const data=state.faturasPagasData&&state.faturasPagasData[k];
+  return isValidISODateString(data)?data:null;
+}
+// Mês ('YYYY-MM') em que a fatura paga de uma competência debita a conta — um
+// único mês por fatura, nesta ordem: (1) o mês da data real do pagamento,
+// quando gravada (pagamento antecipado ou atrasado cai no mês em que o
+// dinheiro saiu); (2) senão, o mês do vencimento; (3) sem data de vencimento
+// (cartão sem dia de pagamento ou que não existe mais), o mês da competência.
 function getMesDebitoFatura(cardId, ano, mes){
+  const pagamento=getDataPagamentoFatura(cardId, ano, mes);
+  if(pagamento) return pagamento.slice(0,7);
   const venc=getDataVencimentoFatura((state.cards||[]).find(c=>c.id===cardId), ano, mes);
   return venc?venc.slice(0,7):mesKey(mes,ano);
 }
+function fmtDataBRFatura(iso){ return isValidISODateString(iso)?iso.split('-').reverse().join('/'):null; }
 // Vencimento da fatura de uma competência no formato DD/MM/AAAA, ou null.
 function fmtVencimentoFatura(card, ano, mes){
-  const venc=getDataVencimentoFatura(card, ano, mes);
-  return venc?venc.split('-').reverse().join('/'):null;
+  return fmtDataBRFatura(getDataVencimentoFatura(card, ano, mes));
 }
 
 // Despesas em cartão de crédito viram fatura no mês em que a compra efetivamente
@@ -6638,6 +6653,55 @@ function confirmarPagamentoContribuicao(){
   toast('Contribuição marcada como paga — saiu do caixa!');
 }
 
+// Data do pagamento da fatura: obrigatória, válida e nunca futura (pagamento
+// é fato realizado — o saldo atual da conta já desconta a fatura paga).
+function validarDataPagamentoFatura(valor){
+  if(!isValidISODateString(valor)){ toast('Informe a data do pagamento'); return null; }
+  if(valor>getTodayISO()){ toast('A data do pagamento não pode ser futura'); return null; }
+  return valor;
+}
+// Edita só a data do pagamento de uma fatura JÁ paga (conta, valor e compras
+// continuam como estão). Serve também pra informar a data de faturas pagas
+// antes de esse campo existir.
+function openEditarDataPagamentoFaturaModal(cardId,mesParam,anoParam){
+  const mes=mesParam||currentMonth, ano=anoParam||currentYear;
+  if(!isFaturaPaga(cardId,mes,ano)){ toast('Esta fatura não está marcada como paga'); return; }
+  const card=state.cards.find(c=>c.id===cardId);
+  const atual=getDataPagamentoFatura(cardId,ano,mes);
+  const venc=fmtVencimentoFatura(card,ano,mes);
+  document.getElementById('modalTitle').textContent='Data do pagamento — '+(card?.name||cardId);
+  document.getElementById('modalBody').innerHTML=`
+    <div class="info-box" style="margin-bottom:14px">Fatura de ${MONTHS[mes-1]} ${ano}${venc?` · vence ${venc}`:''}. O saldo por data debita a conta no mês desta data${atual?'':' — hoje, sem data informada, vale o mês do vencimento'}.</div>
+    <div class="form-grid">
+      <div class="form-group full"><label for="editarFaturaData">Data do pagamento</label><input type="date" id="editarFaturaData" value="${atual||getTodayISO()}" max="${getTodayISO()}"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-success" onclick="salvarDataPagamentoFatura('${cardId}',${mes},${ano})">✓ Salvar data</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+    </div>`;
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function salvarDataPagamentoFatura(cardId,mesParam,anoParam){
+  const mes=mesParam||currentMonth, ano=anoParam||currentYear;
+  if(!isFaturaPaga(cardId,mes,ano)){ toast('Esta fatura não está marcada como paga'); closeModal(); return; }
+  const dataPagamento=validarDataPagamentoFatura(document.getElementById('editarFaturaData')?.value);
+  if(!dataPagamento) return;
+  if(!state.faturasPagasData) state.faturasPagasData={};
+  state.faturasPagasData[faturaKey(cardId,mes,ano)]=dataPagamento;
+  scheduleSave(); closeModal(); renderDashboard();
+  {
+    const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
+    if(paginaAtiva==='despesas') renderDespesas();
+    if(paginaAtiva==='cartoes') renderCartoes();
+  }
+  toast('Data do pagamento atualizada');
+}
+// Linha "Pago em dd/mm/aaaa" de uma fatura paga (ou aviso de data ausente).
+function fmtPagamentoFatura(cardId,ano,mes){
+  const data=fmtDataBRFatura(getDataPagamentoFatura(cardId,ano,mes));
+  return data?`Pago em ${data}`:'Pago · data não informada';
+}
+
 function toggleFaturaPaga(cardId,mesParam,anoParam){
   const mes=mesParam||currentMonth, ano=anoParam||currentYear;
   const k=faturaKey(cardId,mes,ano);
@@ -6646,6 +6710,7 @@ function toggleFaturaPaga(cardId,mesParam,anoParam){
     // Desmarcar: não precisa perguntar nada
     state.faturasPagas[k]=false;
     if(state.faturasContas) delete state.faturasContas[k];
+    if(state.faturasPagasData) delete state.faturasPagasData[k];
     scheduleSave(); renderDashboard();
     {
       const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
@@ -6677,6 +6742,7 @@ function openPagarFaturaModal(cardId,mesParam,anoParam){
     <div class="info-box" style="margin-bottom:14px">Valor da fatura de ${MONTHS[mes-1]} ${ano}: <strong style="color:var(--danger)">${fmtBRL(valor)}</strong></div>
     <div class="form-grid">
       <div class="form-group full"><label>De qual conta bancária sai o pagamento?</label><select id="pagarFaturaConta">${contaOpts}</select></div>
+      <div class="form-group full"><label for="pagarFaturaData">Data do pagamento</label><input type="date" id="pagarFaturaData" value="${getTodayISO()}" max="${getTodayISO()}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="confirmarPagamentoFatura('${cardId}',${mes},${ano})">✓ Confirmar pagamento</button>
@@ -6692,11 +6758,15 @@ function confirmarPagamentoFatura(cardId,mesParam,anoParam){
   // bloqueia em openPagarFaturaModal), fatura vazia nunca vira paga (achado 4).
   const valorAtual=(getTotalsForMonth(mes,ano).byCard||{})[cardId]||0;
   if(!(valorAtual>0)){ toast('Não há valor nessa fatura para pagar'); closeModal(); return; }
+  const dataPagamento=validarDataPagamentoFatura(document.getElementById('pagarFaturaData')?.value);
+  if(!dataPagamento) return;
   const k=faturaKey(cardId,mes,ano);
   if(!state.faturasPagas) state.faturasPagas={};
   if(!state.faturasContas) state.faturasContas={};
+  if(!state.faturasPagasData) state.faturasPagasData={};
   state.faturasPagas[k]=true;
   state.faturasContas[k]=contaId;
+  state.faturasPagasData[k]=dataPagamento;
   scheduleSave(); closeModal(); renderDashboard();
   {
     const paginaAtiva=document.querySelector('.nav-item.active')?.dataset?.page;
@@ -7305,7 +7375,10 @@ function renderDashboard(){
       :'';
     const btn=isCC
       ?(paga
-        ?`<button class="btn btn-ghost btn-sm" style="width:100%;margin-top:8px" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">Desmarcar</button>`
+        ?`<div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">Desmarcar</button>
+            <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openEditarDataPagamentoFaturaModal('${c.id}')" title="Data do pagamento">📅</button>
+          </div>`
         :`<div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn btn-ok btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">✓ Marcar como Paga</button>
             <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openAjustarFaturaModal('${c.id}')" title="Ajustar Fatura">⚖</button>
@@ -7316,6 +7389,7 @@ function renderDashboard(){
       ${statusBadge}
       <div class="bill-value" style="color:${isCC&&paga?'var(--ok)':isCC?'var(--danger)':'var(--text)'}">${fmtBRL(valor)}</div>
       ${c.fecha?`<div class="bill-sub">Fecha ${c.fecha} · Vence ${fmtVencimentoFatura(c,currentYear,currentMonth)||'—'}</div>`:''}
+      ${paga?`<div class="bill-sub bill-pagamento">${fmtPagamentoFatura(c.id,currentYear,currentMonth)}</div>`:''}
       ${btn}
     </div>`;
   });
@@ -9178,6 +9252,7 @@ function cartaoTemHistorico(id){
   const pertenceAoCartao=(k)=>k.replace(/_\d{4}-\d{2}$/,'')===id;
   if(Object.keys(state.faturasPagas||{}).some(pertenceAoCartao)) return true;
   if(Object.keys(state.faturasContas||{}).some(pertenceAoCartao)) return true;
+  if(Object.keys(state.faturasPagasData||{}).some(pertenceAoCartao)) return true;
   if(Object.keys(state.faturasAjustes||{}).some(pertenceAoCartao)) return true;
   return false;
 }
@@ -9311,7 +9386,8 @@ function renderFaturaCartoes(){
   // estado antigo já estiver marcado como pago, e "Ajustar Fatura" continua
   // acessível (é o jeito de corrigir um total que a compra ainda não reflete).
   const acaoBtn=paga
-    ?`<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga('${cardId}')">Desmarcar</button>`
+    ?`<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga('${cardId}')">Desmarcar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openEditarDataPagamentoFaturaModal('${cardId}')" title="Data do pagamento">📅 Data</button>`
     :(total>0
       ?`<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${cardId}')">✓ Marcar como Paga</button>
         <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`
@@ -9323,6 +9399,7 @@ function renderFaturaCartoes(){
         <div class="mini-label">Total da fatura</div>
         <div class="mini-value" style="color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(total)}</div>
         ${statusBadge}
+        ${paga?`<div class="mini-note" id="cartaoFaturaPagamento">${fmtPagamentoFatura(cardId,currentYear,currentMonth)}</div>`:''}
       </div>
       <div class="mini-tile">
         <div class="mini-label">Fechamento / Vencimento</div>
@@ -9875,9 +9952,10 @@ function calcSaldoContaAte(contaId,mes,ano){
     const m=k.match(/^(.+)_(\d{4})-(\d{2})$/);
     if(!m) return;
     const cardId=m[1], fAno=parseInt(m[2]), fMes=parseInt(m[3]);
-    // Corte pelo mês do VENCIMENTO da fatura (getMesDebitoFatura), não pela
-    // competência: cartão que paga no mês seguinte ao fechamento só debita a
-    // conta no mês seguinte.
+    // Corte pelo mês em que o dinheiro saiu (getMesDebitoFatura): a data real
+    // do pagamento quando gravada; senão o mês do VENCIMENTO, nunca a
+    // competência — cartão que paga no mês seguinte ao fechamento só debita
+    // a conta no mês seguinte. Cada fatura debita uma única vez.
     if(getMesDebitoFatura(cardId,fAno,fMes)>limite) return;
     saldo-=(calcByCardForMonth(fMes,fAno)[cardId])||0;
   });

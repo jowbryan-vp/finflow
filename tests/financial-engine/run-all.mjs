@@ -260,6 +260,11 @@ const FILES = [
   // inclusive na virada de ano; a fatura paga debita a conta no mês do
   // vencimento (calcSaldoContaAte). Competência, totais e chaves intactos.
   'card-due-date-next-month.test.mjs',
+  // Data real de pagamento da fatura (mesma branch, ajuste pos-aceite contra
+  // o extrato): state.faturasPagasData guarda a data informada ao pagar
+  // (padrao hoje, editavel, removida ao desmarcar); o saldo por data debita
+  // no mes dessa data e, sem ela, no mes do vencimento - uma unica vez.
+  'card-invoice-payment-date.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
