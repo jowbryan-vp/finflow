@@ -265,6 +265,8 @@ const FILES = [
   // (padrao hoje, editavel, removida ao desmarcar); o saldo por data debita
   // no mes dessa data e, sem ela, no mes do vencimento - uma unica vez.
   'card-invoice-payment-date.test.mjs',
+  // Coluna de data nas listas de transações (só exibição)
+  'transaction-date-column.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

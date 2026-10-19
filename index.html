@@ -473,6 +473,8 @@ select option{background:var(--card)}
 .item-row.pago{border-color:rgba(34,197,94,.3);background:rgba(34,197,94,.04)}
 .item-row.previsto{border-color:rgba(255,193,71,.3);background:rgba(255,193,71,.03)}
 .item-row-info{flex:1;min-width:0}
+.item-row-date{flex:0 0 72px;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+@media (max-width:480px){.item-row-date{flex-basis:60px;font-size:10px}}
 .item-row-name{font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .item-row-meta{font-size:11px;color:var(--muted)}
 .item-row-val{font-family:var(--mono);font-size:13px;font-weight:500}
@@ -2958,6 +2960,37 @@ function getRevenueCashDate(receita){
   if(receita.dataRecebimento) return receita.dataRecebimento;
   if(receita.dataPrevista) return receita.dataPrevista;
   return null;
+}
+
+// Coluna "Data" das listas de transações (docs/gates/TRANSACTION-DATE-COLUMN.md).
+// Só exibição: lê a data já gravada no registro, nunca inventa nem grava uma.
+// Retorna 'YYYY-MM-DD' ou null (lançamento antigo sem data → célula vazia).
+// mes/ano: mês exibido, quando a lista é de um mês (vencimento de fixa/PIX).
+function getDataExibicaoDespesa(d,mes,ano){
+  if(!d) return null;
+  const temMes=Number.isInteger(mes)&&Number.isInteger(ano);
+  const venc=temMes&&d.diaVencimento?projectionDate(ano,mes,d.diaVencimento):null;
+  const compra=isValidISODateString(d.dataCompra)?d.dataCompra:null;
+  if(d.fixa){
+    if(venc) return venc;
+    return compra&&temMes&&mes===d.mesInicio&&ano===d.anoInicio?compra:null;
+  }
+  return compra||venc||null;
+}
+function getDataExibicaoReceita(r){
+  if(!r||r._isParcela||r.certeza===undefined) return null; // legado: sem data registrada
+  const ok=x=>isValidISODateString(x)?x:null;
+  if(r.recorrencia) return ok(r._dataRecebimentoOcorrencia)||ok(r._dataPrevistaOcorrencia)||null;
+  if(r.estado==='recebido'&&ok(r.dataRecebimento)) return r.dataRecebimento;
+  return ok(r.dataPrevista)||ok(r.dataRecebimento)||null;
+}
+function fmtDataTransacao(iso){
+  const s=typeof iso==='string'?iso.slice(0,10):'';
+  return isValidISODateString(s)?s.split('-').reverse().join('/'):'';
+}
+// Célula de data à esquerda de uma linha .item-row (vazia quando não há data).
+function itemRowDateHTML(iso){
+  return `<div class="item-row-date">${fmtDataTransacao(iso)}</div>`;
 }
 
 // Competência de relatório (mês/ano de referência) de uma receita — nunca
@@ -7466,11 +7499,12 @@ function renderDashboard(){
     document.getElementById('recentList').innerHTML='<div class="empty-state">Nenhum lançamento neste mês</div>';
     return;
   }
-  let html='<table class="data-table"><thead><tr><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
+  let html='<table class="data-table"><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
   desps.slice().sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,10).forEach(d=>{
     const cat=state.categories.find(c=>c.id===d.cat);
     const card=state.cards.find(c=>c.id===d.cartao);
     html+=`<tr>
+      <td class="mono" style="font-size:12px;white-space:nowrap">${fmtDataTransacao(getDataExibicaoDespesa(d,currentMonth,currentYear))}</td>
       <td>${esc(d.desc)}</td>
       <td><span class="badge badge-blue">${esc(cat?.name||d.cat)}</span></td>
       <td><span class="tag" style="color:${card?.color||'inherit'}">${esc(card?.name||d.cartao)}</span></td>
@@ -7596,17 +7630,18 @@ function renderRelatorio(){
   if(!recs.length)html+=`<p style="color:var(--muted);margin-bottom:16px;font-size:13px">Nenhuma receita.</p>`;
   else{
     const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
-    html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
-    recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
+    html+=`<table class="data-table" style="margin-bottom:20px"><thead><tr><th>Data</th><th>Tipo</th><th>Nome</th><th>Contribuição?</th><th>Valor</th></tr></thead><tbody>`;
+    recs.forEach(r=>{const naoContribui=r.isRepasse||r.tributavel===false;html+=`<tr><td class="mono" style="font-size:12px;white-space:nowrap">${fmtDataTransacao(getDataExibicaoReceita(r))}</td><td><span class="badge badge-green">${tipos[r.tipo]||r.tipo}</span></td><td>${esc(r.nome)||'—'}</td><td>${naoContribui?'<span class="badge badge-yellow">Não</span>':'<span class="badge badge-blue">Sim</span>'}</td><td class="mono" style="color:var(--accent2)">${fmtBRL(r.valor)}</td></tr>`;});
     html+=`</tbody></table>`;
   }
   html+=`<h4 style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Despesas</h4>`;
-  if(contrib>0)html+=`<div class="item-row" style="margin-bottom:8px"><div class="item-row-info"><div class="item-row-name">Contribuição (automática)</div><div class="item-row-meta">10% das receitas tributáveis</div></div><div class="item-row-val neg">${fmtBRL(contrib)}</div></div>`;
+  if(contrib>0)html+=`<div class="item-row" style="margin-bottom:8px">${itemRowDateHTML(null)}<div class="item-row-info"><div class="item-row-name">Contribuição (automática)</div><div class="item-row-meta">10% das receitas tributáveis</div></div><div class="item-row-val neg">${fmtBRL(contrib)}</div></div>`;
   desps.forEach(d=>{
     const cat=state.categories.find(c=>c.id===d.cat), card=state.cards.find(c=>c.id===d.cartao);
     const isDinheiroPix=!isCartaoDeCredito(d.cartao);
     const st=isDinheiroPix?(d._pago?'<span class="badge badge-ok" style="margin-left:6px">Pago</span>':'<span class="badge badge-yellow" style="margin-left:6px">Previsto</span>'):'';
     html+=`<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}" style="margin-bottom:8px">
+      ${itemRowDateHTML(getDataExibicaoDespesa(d,currentMonth,currentYear))}
       <div class="item-row-info">
         <div class="item-row-name">${esc(d.desc)}${d.fixa?' <span class="tag">Fixo</span>':''}${st}</div>
         <div class="item-row-meta">${esc(cat?.name||'')} · <span style="color:${card?.color||'inherit'}">${esc(card?.name||d.cartao)}</span> · Parcela ${d._parcel}/${d._total}</div>
@@ -7879,6 +7914,7 @@ function renderReceitas(){
         ?`<button class="btn btn-ok btn-sm" onclick="toggleParcelaReceita('${r.id}',${r._parcelaIdx})">✓ Recebida</button>`
         :`<button class="btn btn-warn btn-sm" onclick="toggleParcelaReceita('${r.id}',${r._parcelaIdx})">⏳ Prevista</button>`;
       html+=`<div class="item-row ${r._parcelaRecebida?'pago':'previsto'}">
+        ${itemRowDateHTML(getDataExibicaoReceita(r))}
         <div class="item-row-info">
           <div class="item-row-name">${esc(r.nome)} <span class="badge badge-blue">${r._parcelaNum}/${r._parcelaTotal}</span></div>
           <div class="item-row-meta">Projeto Extra · Parcela ${r._parcelaNum} de ${r._parcelaTotal}</div>
@@ -7896,6 +7932,7 @@ function renderReceitas(){
         checkBtn=`<button class="btn btn-warn btn-sm" onclick="toggleReceitaRecebida('${r.id}')">⏳ Prevista</button>`;
       }
       html+=`<div class="item-row ${recebida?'pago':'previsto'}">
+        ${itemRowDateHTML(getDataExibicaoReceita(r))}
         <div class="item-row-info">
           <div class="item-row-name">${esc(r.nome)||tipos[r.tipo]||r.tipo}
             ${r.recorrente?'<span class="tag" style="margin-left:4px">Recorrente</span>':''}
@@ -8401,6 +8438,7 @@ function renderResultadoPesquisaLancamentos(){
       const card=state.cards.find(c=>c.id===d.cartao);
       const jaPago=Object.values(d.pagoMeses||{}).some(v=>v);
       return `<div class="item-row" style="margin-bottom:8px">
+        ${itemRowDateHTML(getDataExibicaoDespesa(d))}
         <div class="item-row-info">
           <div class="item-row-name">${esc(d.desc)} ${d.parcelas>1?`<span class="tag">${d.parcelas}x</span>`:''}</div>
           <div class="item-row-meta">${esc(cat?.name||'')} · ${esc(card?.name||d.cartao)} · ${MONTHS[d.mesInicio-1]} ${d.anoInicio} · ${jaPago?'<span style="color:var(--accent2)">Pago</span>':'<span style="color:var(--warn)">Previsto</span>'}</div>
@@ -8415,6 +8453,7 @@ function renderResultadoPesquisaLancamentos(){
     html+=recsAch.map(r=>{
       const jaRecebida=Object.values(r.recebidaMeses||{}).some(v=>v);
       return `<div class="item-row" style="margin-bottom:8px">
+        ${itemRowDateHTML(getDataExibicaoReceita(r))}
         <div class="item-row-info">
           <div class="item-row-name">${esc(r.nome||r.tipo)}</div>
           <div class="item-row-meta">${MONTHS[r.mes-1]} ${r.ano} · ${jaRecebida?'<span style="color:var(--accent2)">Recebida</span>':'<span style="color:var(--warn)">Prevista</span>'}</div>
@@ -8591,6 +8630,7 @@ function despItemHTML(d){
   const splitBadge=(d.split&&d.split.length)
     ?`<span class="badge badge-yellow">👥</span>`:'';
   return `<div class="item-row ${isDinheiroPix?(d._pago?'pago':'previsto'):''}">
+    ${itemRowDateHTML(getDataExibicaoDespesa(d,currentMonth,currentYear))}
     <div class="item-row-info">
       <div class="item-row-name">${esc(d.desc)}${d.fixa?' <span class="tag">Fixo</span>':''} ${splitBadge}</div>
       <div class="item-row-meta">${esc(cat?.name||d.cat)} › ${esc(d.subcat||'')} · ${d._parcel}/${d._total}</div>
@@ -8625,6 +8665,7 @@ function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
   if(contrib>0){
     const base=getReceitasContribuiveisPrevisao(currentMonth,currentYear).reduce((s,r)=>s+valorReceita(r),0);
     html+=`<div class="item-row" style="border-color:rgba(91,127,255,.3);margin-bottom:8px">
+      ${itemRowDateHTML(null)}
       <div class="item-row-info">
         <div class="item-row-name">Contribuição <span class="badge badge-blue">Automática</span></div>
         <div class="item-row-meta">10% de ${fmtBRL(base)}</div>
@@ -8656,6 +8697,7 @@ function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
       const paga=isFaturaPaga(g.card.id,currentMonth,currentYear);
       const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
       html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${g.card.id}')">
+        ${itemRowDateHTML(null)}
         <div style="width:14px;height:14px;border-radius:50%;background:${g.card.color};flex-shrink:0"></div>
         <div class="item-row-info">
           <div class="item-row-name">${esc(g.card.name)} ${statusBadge}</div>
@@ -8695,6 +8737,7 @@ function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard, byCardEfeti
   if(contrib>0&&!filtCard){
     const base=getReceitasContribuiveisPrevisao(currentMonth,currentYear).reduce((s,r)=>s+valorReceita(r),0);
     html+=`<div class="item-row" style="border-color:rgba(91,127,255,.3)">
+      ${itemRowDateHTML(null)}
       <div class="item-row-info">
         <div class="item-row-name">Contribuição <span class="badge badge-blue">Automática</span></div>
         <div class="item-row-meta">10% de ${fmtBRL(base)}</div>
@@ -8736,6 +8779,7 @@ function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard, byCardEfeti
     const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
     const totalEfetivo=(byCardEfetivo&&byCardEfetivo[cardId]!==undefined)?byCardEfetivo[cardId]:g.total;
     html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${cardId}')">
+      ${itemRowDateHTML(null)}
       <div style="width:14px;height:14px;border-radius:50%;background:${card.color};flex-shrink:0"></div>
       <div class="item-row-info">
         <div class="item-row-name">${esc(card.name)} ${statusBadge}</div>
@@ -10049,9 +10093,10 @@ function renderTransferencias(){
     const dataFmt=t.data?new Date(t.data).toLocaleDateString('pt-BR'):'—';
     const obsLimpa=(t.obs||'').replace(/^Transferência para [^—]+(—\s*)?/,'');
     html+=`<div class="item-row">
+      <div class="item-row-date">${t.data?dataFmt:''}</div>
       <div class="item-row-info">
         <div class="item-row-name">${origem?contaLabelHTML(origem):'?'} → ${destino?contaLabelHTML(destino):'?'}</div>
-        <div class="item-row-meta">${dataFmt}${obsLimpa?' · '+esc(obsLimpa):''}</div>
+        <div class="item-row-meta">${obsLimpa?esc(obsLimpa):''}</div>
       </div>
       <div class="item-row-val" style="font-size:15px">${fmtBRL(t.valor)}</div>
       <button class="btn btn-ghost btn-icon btn-sm" onclick="editTransferencia('${transferId}')" title="Editar">✎</button>
@@ -10415,6 +10460,7 @@ function renderRelatorioPessoas(){
         ${p.items.map(r=>{
           const cat=state.categories.find(c=>c.id===r.cat);
           return `<div class="item-row ${r.recebido?'pago':'previsto'}">
+            ${itemRowDateHTML(getDataExibicaoDespesa(state.despesas.find(x=>x.id===r.despesaId),r.mes,r.ano))}
             <div class="item-row-info">
               <div class="item-row-name">${esc(r.desc)} <span class="tag">${r.percent}%</span></div>
               <div class="item-row-meta">${esc(cat?.name||'')} · Parcela ${r.parcel}/${r.total}${r.comoReceita?' · como receita':''}</div>
@@ -10718,7 +10764,7 @@ function renderAnalise(){
   if(!data.length){
     document.getElementById('analiseTabela').innerHTML='<div class="empty-state">Nenhum lançamento encontrado com esses filtros</div>';
   } else {
-    let html='<table class="data-table"><thead><tr><th>Mês</th><th>Descrição</th><th>Categoria</th><th>Subcategoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
+    let html='<table class="data-table"><thead><tr><th>Data</th><th>Mês</th><th>Descrição</th><th>Categoria</th><th>Subcategoria</th><th>Cartão</th><th>Parcela</th><th>Valor</th></tr></thead><tbody>';
     data.slice().sort((a,b)=>{ // sort by period descending
       if(a._ano!==b._ano) return b._ano-a._ano;
       return b._mes-a._mes;
@@ -10726,6 +10772,7 @@ function renderAnalise(){
       const cat=state.categories.find(c=>c.id===d.cat);
       const card=state.cards.find(c=>c.id===d.cartao);
       html+=`<tr>
+        <td class="mono" style="font-size:12px;white-space:nowrap">${fmtDataTransacao(getDataExibicaoDespesa(d,d._mes,d._ano))}</td>
         <td class="mono" style="font-size:12px">${MONTHS[d._mes-1].slice(0,3)} ${d._ano}</td>
         <td>${esc(d.desc)}${(d.split&&d.split.length)?'<span class="badge badge-yellow" style="margin-left:4px">👥</span>':''}</td>
         <td><span class="badge badge-blue">${esc(cat?.name||d.cat)}</span></td>
@@ -11707,6 +11754,7 @@ function exportarRepassePessoaPDF(personId){
     totalDevido+=r.valorPessoa;
     if(r.recebido) totalRecebido+=r.valorPessoa;
     rows+=`<tr>
+      <td>${fmtDataTransacao(getDataExibicaoDespesa(state.despesas.find(x=>x.id===r.despesaId),r.mes,r.ano))}</td>
       <td>${esc(r.desc)}</td>
       <td>${esc(cat?.name||r.cat)}</td>
       <td>${r.parcel}/${r.total}</td>
@@ -11717,10 +11765,10 @@ function exportarRepassePessoaPDF(personId){
     </tr>`;
   });
   const pendente=totalDevido-totalRecebido;
-  rows+=`<tr class="print-total-row"><td colspan="5">Total</td><td>${fmtBRL(totalDevido)}</td><td>Pendente: ${fmtBRL(pendente)}</td></tr>`;
+  rows+=`<tr class="print-total-row"><td colspan="6">Total</td><td>${fmtBRL(totalDevido)}</td><td>Pendente: ${fmtBRL(pendente)}</td></tr>`;
   const html=`<h2>Reembolsos de ${esc(person.name)} — ${MONTHS[currentMonth-1]} ${currentYear}</h2>
     <table>
-      <thead><tr><th>Despesa</th><th>Categoria</th><th>Parcela</th><th>%</th><th>Valor Total</th><th>Valor Devido</th><th>Status</th></tr></thead>
+      <thead><tr><th>Data</th><th>Despesa</th><th>Categoria</th><th>Parcela</th><th>%</th><th>Valor Total</th><th>Valor Devido</th><th>Status</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
   exportarRelatorioPDF('Relatório de Reembolsos — '+esc(person.name), html);
@@ -11730,14 +11778,14 @@ function exportarRepassePessoaPDF(personId){
 function exportarRelatorioMensalPDF(){
   const{totalRec,totalDespEfetivo,saldo,byCard,recs,desps,contrib}=getTotalsForMonth(currentMonth,currentYear);
   const tipos={salario:'Salário',decimo:'13º Salário',ferias:'1/3 Férias',extra:'Projeto Extra',projeto:'Projeto',rendimento:'Rendimento',outro:'Outro',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho',repasse_escritorio:'Repasse do Escritório',retirada_escritorio:'Retirada Extraordinária do Escritório'};
-  let recRows=recs.map(r=>`<tr><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
-  if(!recs.length) recRows='<tr><td colspan="3">Nenhuma receita no período</td></tr>';
+  let recRows=recs.map(r=>`<tr><td>${fmtDataTransacao(getDataExibicaoReceita(r))}</td><td>${tipos[r.tipo]||r.tipo}</td><td>${esc(r.nome)||'—'}</td><td>${fmtBRL(r.valor)}</td></tr>`).join('');
+  if(!recs.length) recRows='<tr><td colspan="4">Nenhuma receita no período</td></tr>';
   let despRows=desps.map(d=>{
     const cat=state.categories.find(c=>c.id===d.cat), card=state.cards.find(c=>c.id===d.cartao);
-    return `<tr><td>${esc(d.desc)}</td><td>${esc(cat?.name||'')}</td><td>${esc(card?.name||d.cartao)}</td><td>${fmtBRL(d._valorParcela)}</td></tr>`;
+    return `<tr><td>${fmtDataTransacao(getDataExibicaoDespesa(d,currentMonth,currentYear))}</td><td>${esc(d.desc)}</td><td>${esc(cat?.name||'')}</td><td>${esc(card?.name||d.cartao)}</td><td>${fmtBRL(d._valorParcela)}</td></tr>`;
   }).join('');
-  if(contrib>0) despRows+=`<tr><td>Contribuição (automática)</td><td>10%</td><td>—</td><td>${fmtBRL(contrib)}</td></tr>`;
-  if(!desps.length && contrib<=0) despRows='<tr><td colspan="4">Nenhuma despesa no período</td></tr>';
+  if(contrib>0) despRows+=`<tr><td></td><td>Contribuição (automática)</td><td>10%</td><td>—</td><td>${fmtBRL(contrib)}</td></tr>`;
+  if(!desps.length && contrib<=0) despRows='<tr><td colspan="5">Nenhuma despesa no período</td></tr>';
   const html=`<h2>Balanço de ${MONTHS[currentMonth-1]} ${currentYear}</h2>
     <table>
       <thead><tr><th></th><th></th></tr></thead>
@@ -11748,9 +11796,9 @@ function exportarRelatorioMensalPDF(){
       </tbody>
     </table>
     <h2>Receitas</h2>
-    <table><thead><tr><th>Tipo</th><th>Nome</th><th>Valor</th></tr></thead><tbody>${recRows}</tbody></table>
+    <table><thead><tr><th>Data</th><th>Tipo</th><th>Nome</th><th>Valor</th></tr></thead><tbody>${recRows}</tbody></table>
     <h2>Despesas</h2>
-    <table><thead><tr><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Valor</th></tr></thead><tbody>${despRows}</tbody></table>`;
+    <table><thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Cartão</th><th>Valor</th></tr></thead><tbody>${despRows}</tbody></table>`;
   exportarRelatorioPDF('Relatório de Caixa — '+MONTHS[currentMonth-1]+' '+currentYear, html);
 }
 
@@ -13885,6 +13933,7 @@ function renderOfficeRecebiveisTab(){
     if(isRecebivelV3(r)){
       const st=getParcelaStatusV3(r);
       return `<div class="item-row">
+      ${itemRowDateHTML((r.recebimentos||[]).map(x=>x&&x.data).filter(Boolean).sort().pop()||r.dataPrevista)}
       <div class="item-row-info">
         <div class="item-row-name">${esc(r.descricao||'Parcela')} <span class="badge badge-blue">${parcelaV3Label[st.status]}${st.vencida?' · vencida':''}</span></div>
         <div class="item-row-meta">${esc(projeto?projeto.nome:'—')} · Previsto: ${r.dataPrevista||'—'} · Recebido: ${fmtCentsBRL(getParcelaRecebidoCent(r))} de ${fmtCentsBRL(r.valorPrevistoCent||0)} · regra v3</div>
@@ -13893,6 +13942,7 @@ function renderOfficeRecebiveisTab(){
     </div>`;
     }
     return `<div class="item-row ${r.estado==='recebido'?'pago':r.estado==='previsto'?'previsto':''}">
+      ${itemRowDateHTML(r.estado==='recebido'&&r.dataRecebimento?r.dataRecebimento:r.dataPrevista)}
       <div class="item-row-info">
         <div class="item-row-name">${esc(r.descricao||'Recebível')} <span class="badge ${estadoBadge[r.estado]||'badge-blue'}">${estadoLabel[r.estado]||r.estado}</span></div>
         <div class="item-row-meta">${esc(projeto?projeto.nome:'—')} · Previsto: ${r.dataPrevista||'—'}${r.dataRecebimento?' · Recebido: '+r.dataRecebimento:''}</div>
@@ -14041,6 +14091,7 @@ function renderOfficeDespesasTab(){
     const projeto=(state.office.projetos||[]).find(p=>p.id===d.projetoId);
     const conta=(state.office.contas||[]).find(c=>c.id===d.conta);
     return `<div class="item-row">
+      ${itemRowDateHTML(d.data)}
       <div class="item-row-info">
         <div class="item-row-name">${esc(d.descricao)}</div>
         <div class="item-row-meta">${esc(d.categoria||'—')} · ${conta?esc(conta.name):'—'} · ${d.data||'—'}${projeto?' · '+esc(projeto.nome):''}</div>
@@ -14242,6 +14293,7 @@ function renderOfficeRepassesTab(){
     const recebivel=(state.office.recebiveis||[]).find(r=>r.id===rp.recebivelId);
     const baixado=isOfficeRepasseBaixado(rp);
     return `<div class="item-row ${rp.estado==='recebido'?'pago':rp.estado==='previsto'?'previsto':''}">
+      ${itemRowDateHTML(rp.estado==='recebido'&&rp.dataRecebimento?rp.dataRecebimento:rp.dataPrevista)}
       <div class="item-row-info">
         <div class="item-row-name">Repasse Planejado <span class="badge ${baixado?'badge-blue':estadoBadge[rp.estado]}">${baixado?'Baixado (coberto)':estadoLabel[rp.estado]}</span></div>
         <div class="item-row-meta">${recebivel?esc(recebivel.descricao||''):'—'} · Previsto: ${rp.dataPrevista||'—'}${rp.dataRecebimento?' · Realizado: '+rp.dataRecebimento:''}${baixado?' · Baixado: '+esc(rp.dataBaixa||'—')+(rp.obs?' · '+esc(rp.obs):'')+((rp.retiradasVinculadas||[]).length?' · '+rp.retiradasVinculadas.length+' retirada(s) vinculada(s)':''):''}</div>
@@ -14254,6 +14306,7 @@ function renderOfficeRepassesTab(){
   }).join('') || '<div class="info-box">Nenhum repasse planejado ainda — cadastre um recebível de um projeto contratado e configure a regra de distribuição em "Contas &amp; Regras".</div>';
   const retiradasExtraord=(state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   const rowsRetiradas=retiradasExtraord.map(m=>`<div class="item-row">
+      ${itemRowDateHTML(m.data)}
       <div class="item-row-info"><div class="item-row-name">Retirada Extraordinária</div><div class="item-row-meta">${esc(m.obs||'')} · ${(m.data||'').slice(0,10)}</div></div>
       <div class="item-row-val neg">${fmtBRL(Math.abs(m.valor||0))}</div>
     </div>`).join('') || '<div class="info-box">Nenhuma retirada extraordinária registrada.</div>';
