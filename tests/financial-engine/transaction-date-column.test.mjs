@@ -25,6 +25,7 @@ const fixture = () => baseSyntheticState({
   despesas: [
     despesa({ id: 'dPix', desc: 'Compra PIX datada', valor: 80, dataCompra: '2026-10-05' }),
     despesa({ id: 'dLegado', desc: 'Compra antiga sem data', valor: 40 }),
+    despesa({ id: 'dPaga', desc: 'Conta de luz paga', valor: 120, dataCompra: '2026-10-02', pagoMeses: { '2026-10': true } }),
     despesa({ id: 'dFixa', desc: 'Aluguel fixo', valor: 1500, fixa: true, diaVencimento: 31, mesInicio: 1 }),
     despesa({ id: 'dParcPix', desc: 'Curso parcelado PIX', valor: 300, parcelas: 3, diaVencimento: 8, mesInicio: 9 }),
     despesa({ id: 'dCartao', desc: 'Compra no cartão', cartao: 'nu', conta: null, valor: 200, parcelas: 2, dataCompra: '2026-09-20', mesInicio: 10 }),
@@ -210,6 +211,57 @@ try {
       && r.mensal.pix === '05/10/2026' && r.reemb.th === 'Data' && r.reemb.data === '05/10/2026' && r.reemb.colspan === 6;
     return { ok, detail: `obtido=${JSON.stringify(r)}` };
   }, 'Escritório (recebíveis/repasses) renderiza sem erro; PDFs de caixa e de reembolso têm a coluna Data');
+
+  // Geometria (devolução Codex P2, TRANSACTION-DATE-COLUMN-CODEX-2026-10-19):
+  // a célula existir no DOM não basta — no celular a descrição precisa ter
+  // largura útil, nada pode sair da linha e a data continua à esquerda.
+  // No desktop a linha continua numa só faixa (data, descrição e valor
+  // alinhados verticalmente).
+  await check('TDC_13_LAYOUT_CELULAR_E_DESKTOP', async () => {
+    const telas = [
+      ['receitas', '#receitasList', () => { window._recFiltro = 'todas'; navigate('receitas'); }],
+      ['despesas', '#despesasList', () => { window._despFiltro = 'todas'; despCartaoFiltro = null; navigate('despesas');
+        document.querySelectorAll('#despesasList .accordion-body').forEach((x) => x.classList.add('open')); }],
+      ['transferencias', '#transferenciasList', () => { navigate('contas'); renderTransferencias(); }],
+      ['escritorio', '#escritorioSubContent', () => { navigate('escritorio'); renderOfficeDespesasTab(); }],
+    ];
+    await page.evaluate(() => state.office.despesas.push({ id: 'od2', descricao: 'Software escritório', categoria: 'Software', valor: 50, data: '2026-10-07', conta: null, projetoId: null, status: 'pago', createdAt: 'od2' }));
+    const medidas = [];
+    for (const width of [1440, 430, 390, 360]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const [tela, sel, abrir] of telas) {
+        await page.evaluate(`(${abrir})()`);
+        medidas.push(...await page.evaluate(({ tela, sel, width }) => [...document.querySelectorAll(`${sel} .item-row`)]
+          .filter((r) => r.querySelector(':scope > .item-row-date') && r.offsetParent !== null)
+          .map((r) => {
+            const rr = r.getBoundingClientRect();
+            const date = r.querySelector(':scope > .item-row-date').getBoundingClientRect();
+            const info = r.querySelector(':scope > .item-row-info').getBoundingClientRect();
+            const kids = [...r.children].map((c) => c.getBoundingClientRect()).filter((b) => b.width > 0);
+            const val = r.querySelector(':scope > .item-row-val, :scope > .mono');
+            const vb = val?.getBoundingClientRect();
+            return {
+              tela, width, nome: (r.querySelector('.item-row-name')?.textContent || '').trim().slice(0, 28),
+              infoW: Math.round(info.width),
+              dentro: kids.every((b) => b.left >= rr.left - 0.5 && b.right <= rr.right + 0.5),
+              dataPrimeiro: date.left <= info.left && date.left - rr.left < 20,
+              valorVisivel: !vb || (vb.width > 0 && (vb.top >= info.bottom - 1 || vb.left >= info.right - 1)),
+              umaFaixa: !vb || Math.abs((vb.top + vb.bottom) / 2 - (info.top + info.bottom) / 2) < 12,
+            };
+          }), { tela, sel, width }));
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 1600 });
+    await page.evaluate(() => { state.office.despesas = state.office.despesas.filter((d) => d.id !== 'od2'); });
+    const ruins = medidas.filter((m) => !m.dentro || !m.dataPrimeiro || !m.valorVisivel
+      || (m.width <= 430 && m.infoW < 150) || (m.width === 1440 && !m.umaFaixa));
+    const telasMedidas = new Set(medidas.map((m) => m.tela)).size;
+    const temSemData = medidas.some((m) => m.nome.startsWith('Compra antiga'));
+    const temPaga = medidas.some((m) => m.nome.startsWith('Conta de luz paga'));
+    const temRecebida = medidas.some((m) => m.nome.startsWith('Projeto recebido'));
+    const ok = ruins.length === 0 && telasMedidas === 4 && temSemData && temPaga && temRecebida && medidas.length >= 40;
+    return { ok, detail: `linhas medidas=${medidas.length}, telas=${telasMedidas}, problemas=${JSON.stringify(ruins)}; amostra 360px=${JSON.stringify(medidas.filter((m) => m.width === 360).map((m) => [m.tela, m.nome, m.infoW]))}` };
+  }, 'Layout: em 360/390/430 px a descrição tem ≥150 px, nada sai da linha, data à esquerda e valor visível; em 1440 px a linha fica numa faixa só');
 
   await check('TDC_11_SEM_MUDANCA_DE_STATE_E_TOTAIS', async () => {
     await page.evaluate(() => { currentMonth = 10; currentYear = 2026; navigate('dashboard'); });
