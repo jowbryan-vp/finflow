@@ -108,3 +108,20 @@ E3.1–E3.2.1, publicações do index e fronteira de fechamento do cartão) e os
 respectivos relatórios seguem não commitados no checkout `C:\Dev\FinFlow` e
 não fazem parte deste merge. Drive/OAuth e inspeção visual manual não foram
 exercitados pelo Claude.
+
+## Atualização 19/10/2026 — coluna de data aprovada para publicação
+
+Claude implementou a coluna de data em `ad072fe` e corrigiu o layout móvel
+em `0a35656`, handoff final `63799d6`, sobre `main` `784725f`.
+Auditoria independente Codex: FAIL P2 inicial, seguido de **PASS** após a
+correção. Suíte reexecutada: **807 PASS / 7 FAIL**, sendo as sete falhas
+preexistentes; testes da funcionalidade **14/14**. Reprodução original sem
+defeitos, contraprova na entrega anterior reproduz o problema.
+
+Relatórios: `docs/audits/TRANSACTION-DATE-COLUMN-CODEX-2026-10-19.md` e
+`docs/audits/TRANSACTION-DATE-COLUMN-REAUDIT-CODEX-2026-10-19.md`.
+Usuário autorizou integração e publicação na main em 19/10/2026.
+Publicação deve preservar o HTML aprovado, sem force push. Limites mantidos:
+CSS responsivo depende de `:has()`, sem backup real, OAuth/Drive ou aparelho
+físico nesta auditoria. Documentação pendente no checkout `C:/Dev/FinFlow`
+continua separada e preservada.
