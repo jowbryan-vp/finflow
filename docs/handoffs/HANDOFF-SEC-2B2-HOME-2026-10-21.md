@@ -35,7 +35,7 @@ Relatórios principais:
 Em um clone existente:
 
 ```powershell
-git fetch origin
+git fetch origin sec/2-office-id-hardening:refs/remotes/origin/sec/2-office-id-hardening
 git switch sec/2-office-id-hardening
 git pull --ff-only origin sec/2-office-id-hardening
 git status --short --branch
@@ -45,11 +45,16 @@ git log --oneline -4
 Se a branch ainda não existir localmente:
 
 ```powershell
-git fetch origin
+git fetch origin sec/2-office-id-hardening:refs/remotes/origin/sec/2-office-id-hardening
 git switch --track origin/sec/2-office-id-hardening
 git status --short --branch
 git log --oneline -4
 ```
+
+O `fetch` acima é intencionalmente explícito: o clone da Prefeitura possui um
+`remote.origin.fetch` restrito a poucas branches, portanto um `git fetch
+origin` genérico pode não criar `origin/sec/2-office-id-hardening`. O comando
+explícito funciona mesmo em clones com esse filtro.
 
 Antes de trabalhar, confirmar que aparecem na história, nesta ordem:
 
