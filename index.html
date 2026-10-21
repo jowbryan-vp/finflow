@@ -2130,6 +2130,11 @@ const SAFE_COLOR_FALLBACK='#888888';
 function safeCssColor(c,fallback=SAFE_COLOR_FALLBACK){ return (typeof c==='string'&&/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(c))?c:fallback; }
 // <input type="color"> só aceita #rrggbb; fora disso, fallback fixo.
 function safeColorInput(c){ return (typeof c==='string'&&/^#[0-9a-fA-F]{6}$/.test(c))?c:SAFE_COLOR_FALLBACK; }
+// SEC-1R — o <input type=color> só mostra #rrggbb: uma cor salva válida de
+// 3/4/8 dígitos (ou com maiúsculas) aparece normalizada ou como fallback.
+// Salvar o modal sem mexer na cor NÃO pode trocar o valor salvo por isso:
+// o input marca data-color-edited no evento input e só então a cor é gravada.
+function colorFromInput(id,atual){ const el=document.getElementById(id); return (el&&el.dataset.colorEdited==='1')?el.value:atual; }
 
 // ════════════════════════════════════════════════
 // DÉBITO AUTOMÁTICO
@@ -2441,7 +2446,7 @@ function renderPerfilSwitcher(){
   const el=document.getElementById('perfilAtivoNome');
   if(el && perfilAtivo && perfis[perfilAtivo]) el.textContent=perfis[perfilAtivo].name;
   const dot=document.getElementById('perfilAtivoDot');
-  if(dot && perfilAtivo && perfis[perfilAtivo]) dot.style.background=perfis[perfilAtivo].color;
+  if(dot && perfilAtivo && perfis[perfilAtivo]) dot.style.background=safeCssColor(perfis[perfilAtivo].color);
 }
 function switchPerfil(id){
   if(!perfis[id]) return;
@@ -2492,7 +2497,7 @@ function openRenamePerfil(id){
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
       <div class="form-group full"><label>Nome</label><input type="text" id="renamePerfilNome" value="${esc(p.name)}"></div>
-      <div class="form-group"><label>Cor</label><input type="color" id="renamePerfilCor" value="${safeColorInput(p.color)}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="renamePerfilCor" value="${safeColorInput(p.color)}" oninput="this.dataset.colorEdited='1'" style="height:38px;padding:4px"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="salvarRenamePerfil(${jsArg(id)})">Salvar</button>
@@ -2504,7 +2509,7 @@ function salvarRenamePerfil(id){
   const nome=document.getElementById('renamePerfilNome').value.trim();
   if(!nome){toast('Informe um nome');return;}
   p.name=nome;
-  p.color=document.getElementById('renamePerfilCor').value;
+  p.color=colorFromInput('renamePerfilCor',p.color);
   scheduleSave();
   openPerfilModal();
   renderPerfilSwitcher();
@@ -9337,7 +9342,7 @@ function openEditCartao(id){
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
       <div class="form-group full"><label>Nome</label><input type="text" id="eCardName" value="${esc(c.name)}"></div>
-      <div class="form-group"><label>Cor</label><input type="color" id="eCardColor" value="${safeColorInput(c.color)}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="eCardColor" value="${safeColorInput(c.color)}" oninput="this.dataset.colorEdited='1'" style="height:38px;padding:4px"></div>
       <div class="form-group"></div>
       <div class="form-group"><label>Fechamento (dia)</label><input type="number" id="eCardFecha" value="${c.fecha||''}" min="1" max="31" placeholder="Ex: 12"></div>
       <div class="form-group"><label>Pagamento (dia)</label><input type="number" id="eCardPaga" value="${c.paga||''}" min="1" max="31" placeholder="Ex: 20"></div>
@@ -9351,7 +9356,7 @@ function openEditCartao(id){
 function saveEditCartao(id){
   const c=state.cards.find(x=>x.id===id);if(!c)return;
   c.name=document.getElementById('eCardName').value.trim()||c.name;
-  c.color=document.getElementById('eCardColor').value;
+  c.color=colorFromInput('eCardColor',c.color);
   c.fecha=parseInt(document.getElementById('eCardFecha').value)||null;
   c.paga=parseInt(document.getElementById('eCardPaga').value)||null;
   scheduleSave();closeModal();renderCartoes();toast('Cartão atualizado!');
@@ -9794,7 +9799,7 @@ function openEditConta(id){
       <div class="form-group full"><label>Nome / banco</label><input type="text" id="eContaName" value="${esc(c.name)}"></div>
       <div class="form-group"><label>Agência (opcional)</label><input type="text" id="eContaAgencia" value="${esc(c.agencia||'')}"></div>
       <div class="form-group"><label>Conta (opcional)</label><input type="text" id="eContaNumero" value="${esc(c.numeroConta||'')}"></div>
-      <div class="form-group"><label>Cor</label><input type="color" id="eContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="eContaColor" value="${safeColorInput(c.color)}" oninput="this.dataset.colorEdited='1'" style="height:38px;padding:4px"></div>
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -9808,7 +9813,7 @@ function saveEditConta(id){
   c.name=document.getElementById('eContaName').value.trim()||c.name;
   c.agencia=(document.getElementById('eContaAgencia')?.value||'').trim();
   c.numeroConta=(document.getElementById('eContaNumero')?.value||'').trim();
-  c.color=document.getElementById('eContaColor').value;
+  c.color=colorFromInput('eContaColor',c.color);
   c.saldoInicial=parseFloat(document.getElementById('eContaSaldoInicial').value)||0;
   scheduleSave();closeModal();renderContas();toast('Conta atualizada!');
 }
@@ -10045,7 +10050,7 @@ function renderContas(){
   state.contas.forEach(c=>{
     const saldo=calcSaldoConta(c.id);
     html+=`<div class="item-row">
-      <div style="width:16px;height:16px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
+      <div style="width:16px;height:16px;border-radius:4px;background:${safeCssColor(c.color)};flex-shrink:0"></div>
       <div class="item-row-info">
         <div class="item-row-name">${contaLabelHTML(c)}</div>
         <div class="item-row-meta">Saldo inicial: ${fmtBRL(c.saldoInicial)}</div>
@@ -10079,7 +10084,7 @@ function renderTodasAsContas(){
       const badge=ctx==='pessoal'?'<span class="badge badge-blue">Pessoal</span>':'<span class="badge badge-yellow">Escritório</span>';
       const irPara=ctx==='pessoal'?`navigate('contas')`:`irParaContasEscritorio()`;
       return `<div class="item-row" style="cursor:pointer" onclick="${irPara}">
-        <div style="width:14px;height:14px;border-radius:4px;background:${c.color};flex-shrink:0"></div>
+        <div style="width:14px;height:14px;border-radius:4px;background:${safeCssColor(c.color)};flex-shrink:0"></div>
         <div class="item-row-info">
           <div class="item-row-name">${contaLabelHTML(c)} ${badge}</div>
         </div>
@@ -10154,7 +10159,7 @@ function renderSaldoContasCard(){
     const saldo=calcSaldoConta(c.id);
     return `<div style="background:linear-gradient(135deg,${hexToRgba(c.color,.16)},${hexToRgba(c.color,.04)});border:1px solid ${hexToRgba(c.color,.3)};border-radius:var(--radius);padding:14px;min-width:0">
       <div style="display:flex;align-items:center;gap:7px;margin-bottom:8px">
-        <div style="width:9px;height:9px;border-radius:3px;background:${c.color};flex-shrink:0"></div>
+        <div style="width:9px;height:9px;border-radius:3px;background:${safeCssColor(c.color)};flex-shrink:0"></div>
         <div style="font-size:12px;font-weight:600;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${contaLabelHTML(c)}</div>
       </div>
       <div class="mono" style="font-size:17px;font-weight:700;color:${saldo>=0?'var(--text)':'var(--danger)'}">${fmtBRL(saldo)}</div>
@@ -10290,7 +10295,7 @@ function openEditPessoa(id){
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
       <div class="form-group full"><label>Nome</label><input type="text" id="ePersonName" value="${esc(p.name)}"></div>
-      <div class="form-group"><label>Cor</label><input type="color" id="ePersonColor" value="${safeColorInput(p.color)}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="ePersonColor" value="${safeColorInput(p.color)}" oninput="this.dataset.colorEdited='1'" style="height:38px;padding:4px"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
       <button class="btn btn-success" onclick="saveEditPessoa('${id}')">Salvar</button>
@@ -10301,7 +10306,7 @@ function openEditPessoa(id){
 function saveEditPessoa(id){
   const p=state.pessoas.find(x=>x.id===id);if(!p)return;
   p.name=document.getElementById('ePersonName').value.trim()||p.name;
-  p.color=document.getElementById('ePersonColor').value;
+  p.color=colorFromInput('ePersonColor',p.color);
   scheduleSave();closeModal();renderPessoas();toast('Pessoa atualizada!');
 }
 function renderPessoas(){
@@ -12368,7 +12373,7 @@ function renderOfficeVisaoGeral(){
       :`<div class="ov-etapa" data-etapa="previsto">${equacao('Começa com',m.saldoInicialCent,m.entradasCent,m.saidasCent,m.movimentosCent,'Saldo no fim',m.saldoFimCent)}</div>`}
       <div class="ov-mes-disp" role="cell" data-campo="disponivel"><span class="ov-termo-rot">Disponível no fim</span><span class="ov-termo-val">${valNeg(m.disponivelFimCent)}</span></div>
     </div>`; }).join('');
-  const reservas=Pe.reservas.length?Pe.reservas.map(r=>`<dt><span class="ov-ponto" style="background:${esc(r.color||'var(--muted)')}" aria-hidden="true"></span>${esc(r.nome)}</dt><dd>${fmtCentsBRL(r.saldoCent)}</dd>`).join('')
+  const reservas=Pe.reservas.length?Pe.reservas.map(r=>`<dt><span class="ov-ponto" style="background:${safeCssColor(r.color,'var(--muted)')}" aria-hidden="true"></span>${esc(r.nome)}</dt><dd>${fmtCentsBRL(r.saldoCent)}</dd>`).join('')
     :'<dt>Nenhuma reserva cadastrada</dt><dd>—</dd>';
   const semConfig=v=>v===null?'<span class="ov-subt">depende da configuração tributária</span>':fmtCentsBRL(v);
   el.innerHTML=`<div class="ov" id="officeVisaoGeral">
@@ -14181,7 +14186,7 @@ function renderOfficeReservasTab(){
   const finalidadeLabel={impostos:'Impostos',equipamentos:'Equipamentos',software:'Software',marketing:'Marketing',capital_giro:'Capital de giro',investimento:'Investimento',emergencia:'Emergência',outro:'Outro'};
   const reservas=(state.office.reservas||[]);
   const rows=reservas.map(r=>`<div class="item-row">
-      <div style="width:12px;height:12px;border-radius:50%;background:${r.color||'#5b7fff'};flex-shrink:0"></div>
+      <div style="width:12px;height:12px;border-radius:50%;background:${safeCssColor(r.color,'#5b7fff')};flex-shrink:0"></div>
       <div class="item-row-info"><div class="item-row-name">${esc(r.nome)}</div><div class="item-row-meta">${finalidadeLabel[r.finalidade]||r.finalidade||'—'}</div></div>
       <div class="item-row-val muted">${fmtBRL(getSaldoOfficeReserva(r.id))}</div>
       <button class="btn btn-ghost btn-sm" onclick="openAplicarOfficeReserva('${r.id}')">+ Aplicar</button>
@@ -14498,7 +14503,7 @@ function renderOfficeConfigTab(){
   const G=getOfficeConfiguracoesV3(), T=G.tributacao, D=G.distribuicao, A=G.modeloAnterior;
   const contas=(state.office.contas||[]);
   const rowsContas=contas.map(c=>`<div class="item-row">
-      <div style="width:12px;height:12px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
+      <div style="width:12px;height:12px;border-radius:50%;background:${safeCssColor(c.color)};flex-shrink:0"></div>
       <div class="item-row-info"><div class="item-row-name">${contaLabelHTML(c)}</div></div>
       <div class="item-row-val muted">${fmtBRL(calcSaldoOfficeConta(c.id))}</div>
       <button type="button" class="btn btn-ghost btn-sm" onclick="openEditOfficeConta('${c.id}')">Editar</button>
@@ -14619,7 +14624,7 @@ function openEditOfficeConta(id){
       <div class="form-group full"><label>Nome / banco</label><input type="text" id="eOContaName" value="${esc(c.name)}"></div>
       <div class="form-group"><label>Agência (opcional)</label><input type="text" id="eOContaAgencia" value="${esc(c.agencia||'')}"></div>
       <div class="form-group"><label>Conta (opcional)</label><input type="text" id="eOContaNumero" value="${esc(c.numeroConta||'')}"></div>
-      <div class="form-group"><label>Cor</label><input type="color" id="eOContaColor" value="${c.color}" style="height:38px;padding:4px"></div>
+      <div class="form-group"><label>Cor</label><input type="color" id="eOContaColor" value="${safeColorInput(c.color)}" oninput="this.dataset.colorEdited='1'" style="height:38px;padding:4px"></div>
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eOContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -14633,7 +14638,7 @@ function saveEditOfficeConta(id){
   c.name=document.getElementById('eOContaName').value.trim()||c.name;
   c.agencia=(document.getElementById('eOContaAgencia')?.value||'').trim();
   c.numeroConta=(document.getElementById('eOContaNumero')?.value||'').trim();
-  c.color=document.getElementById('eOContaColor').value;
+  c.color=colorFromInput('eOContaColor',c.color);
   c.saldoInicial=parseFloat(document.getElementById('eOContaSaldoInicial').value)||0;
   scheduleSave();closeModal();renderOfficeConfigTab();renderEscritorioResumo();toast('Conta atualizada!');
 }

@@ -58,6 +58,8 @@ const BAD_COLORS = [
   'url(https://pwn.invalid/c3)',
 ];
 const GOOD_COLORS = ['#AbCdEf', '#abc', '#abcd', '#aabbccdd'];
+// SEC-1R — cores legadas válidas que o <input type=color> não representa.
+const LEGACY_COLORS = ['#abc', '#abcd', '#aabbccdd', '#AbCdEf'];
 
 function syntheticData() {
   const cats = PAYLOADS.map((p, i) => ({ id: `cat${i}`, name: p, subs: [p, `sub${i}`] }));
@@ -73,7 +75,18 @@ function syntheticData() {
     valor: 100 + i, parcelas: i === 0 ? 3 : 1, mesInicio: 10, anoInicio: 2026, dataCompra: '2026-10-02',
     fixa: false, pagoMeses: {}, split: [{ personId: `pes${i}`, percent: 50 }],
   }));
-  const data = baseSyntheticState({ categories: cats, cards, pessoas, cofrinhos, movimentacoesCofrinhos, despesas });
+  // SEC-1R — contas pessoais, contas e reservas do escritório com cores
+  // maliciosas e legadas (nomes comuns: nomes de conta já eram escapados).
+  const contas = [{ id: 'c1', name: 'Conta 1', color: '#5b7fff', saldoInicial: 1000 }]
+    .concat(BAD_COLORS.map((c, i) => ({ id: `cx${i}`, name: `Conta sintética ${i}`, color: c, saldoInicial: 10 })))
+    .concat(LEGACY_COLORS.map((c, i) => ({ id: `cl${i}`, name: `Conta legada ${i}`, color: c, saldoInicial: 10 })));
+  const office = {
+    contas: BAD_COLORS.map((c, i) => ({ id: `ocx${i}`, name: `Conta escritório ${i}`, color: c, saldoInicial: 100 }))
+      .concat(LEGACY_COLORS.map((c, i) => ({ id: `ocl${i}`, name: `Conta escritório legada ${i}`, color: c, saldoInicial: 100 }))),
+    reservas: BAD_COLORS.map((c, i) => ({ id: `orx${i}`, nome: `Reserva sintética ${i}`, finalidade: 'investimento', color: c, saldoInicial: 0 }))
+      .concat(LEGACY_COLORS.map((c, i) => ({ id: `orl${i}`, nome: `Reserva legada ${i}`, finalidade: 'investimento', color: c, saldoInicial: 0 }))),
+  };
+  const data = baseSyntheticState({ categories: cats, cards, pessoas, cofrinhos, movimentacoesCofrinhos, despesas, contas, office });
   // Perfis: o ativo tem os dados; os outros têm id, nome e cor maliciosos (X6).
   const perfis = { perfil_ok: { id: 'perfil_ok', name: 'Perfil sintético', color: '#5b7fff', data } };
   PAYLOADS.forEach((p, i) => { perfis[p] = { id: p, name: p, color: BAD_COLORS[i % BAD_COLORS.length], data: {} }; });
@@ -254,6 +267,17 @@ async function runRenderSteps(label) {
       eseItens = [{ id: 'e1', desc: 'Sim', valor: 10, parcelas: 1, mesInicio: 10, anoInicio: 2026, cat: 'cat1', cartao: 'card1' }];
       renderEseItemList();
     }, '#page-eSe', all);
+    // SEC-1R — cores de contas pessoais, lista unificada, card de saldos,
+    // panorama/reservas/contas do escritório, modais de conta e bolinha do perfil.
+    step('contas pessoais (lista e lista unificada)', () => navigate('contas'), '#page-contas', []);
+    step('dashboard: card de saldos das contas', () => navigate('dashboard'), '#dashSaldoContas', []);
+    step('editar conta pessoal', () => openEditConta('cx1'), '#modalBody', []);
+    step('escritório: panorama', () => { closeModal(); navigate('escritorio'); officeSubTab = 'visao'; renderEscritorio(); }, '#escritorioSubContent', []);
+    step('escritório: reservas', () => renderOfficeReservasTab(), '#escritorioSubContent', []);
+    step('escritório: contas (configurações)', () => renderOfficeConfigTab(), '#escritorioSubContent', []);
+    step('editar conta do escritório', () => openEditOfficeConta('ocx2'), '#modalBody', []);
+    step('seletor de perfil (bolinha via CSSOM)', () => { closeModal(); perfis.perfil_ok.color = window.__BAD[6]; renderPerfilSwitcher(); }, null, []);
+    perfis.perfil_ok.color = '#5b7fff'; renderPerfilSwitcher();
     step('perfis (modal)', () => openPerfilModal(), '#modalBody', all);
     step('renomear perfil malicioso', () => openRenamePerfil(window.__P[2]), '#modalBody', []);
     step('excluir perfil (confirmação)', () => confirmDeletePerfil(window.__P[0]), '#modalBody', [0]);
@@ -263,7 +287,46 @@ async function runRenderSteps(label) {
     closeModal();
     return out;
   });
+  // dá tempo a qualquer busca de recurso disparada por CSS (url(...)) aparecer
+  await page.waitForTimeout(400);
   return steps;
+}
+
+// SEC-1R — cores renderizadas em contas pessoais e no escritório: inválidas
+// viram #888888; legadas válidas (3/4/8 dígitos, maiúsculas) são mantidas.
+async function accountColorCheck() {
+  const r = await page.evaluate(() => {
+    const NB = window.__BAD.length;
+    const styles = (sel) => [...document.querySelectorAll(`${sel} [style]`)].map((e) => e.getAttribute('style'));
+    // fallback de cada ponto: #888888 (padrão) ou a constante literal de quem
+    // chama — panorama usa var(--muted), reservas do escritório usam #5b7fff.
+    const conta = (sel, n, fb = '#888888') => styles(sel).filter((s) => s.includes(`background:${fb}`)).length >= n;
+    const legadas = (sel) => ['#abc', '#abcd', '#aabbccdd', '#AbCdEf'].every((c) => styles(sel).some((s) => s.includes(`background:${c}`)));
+    navigate('contas');
+    const contas = { fallback: conta('#page-contas', NB * 2), legadas: legadas('#page-contas') };
+    navigate('dashboard');
+    const card = { fallback: conta('#dashSaldoContas', NB), legadas: legadas('#dashSaldoContas') };
+    navigate('escritorio'); officeSubTab = 'visao'; renderEscritorio();
+    const panorama = { fallback: conta('#escritorioSubContent', NB, 'var(--muted)'), legadas: legadas('#escritorioSubContent') };
+    renderOfficeReservasTab();
+    const reservas = { fallback: conta('#escritorioSubContent', NB, '#5b7fff'), legadas: legadas('#escritorioSubContent') };
+    renderOfficeConfigTab();
+    const contasEsc = { fallback: conta('#escritorioSubContent', NB), legadas: legadas('#escritorioSubContent') };
+    openEditConta('cx2'); const inpConta = document.getElementById('eContaColor').value;
+    openEditConta('cl3'); const inpContaLeg = document.getElementById('eContaColor').value;
+    openEditOfficeConta('ocx5'); const inpEsc = document.getElementById('eOContaColor').value;
+    closeModal();
+    perfis.perfil_ok.color = window.__BAD[6]; renderPerfilSwitcher();
+    const dot = document.getElementById('perfilAtivoDot');
+    const dotOk = getComputedStyle(dot).backgroundImage === 'none' && getComputedStyle(dot).backgroundColor === 'rgb(136, 136, 136)';
+    perfis.perfil_ok.color = '#5b7fff'; renderPerfilSwitcher();
+    return { contas, card, panorama, reservas, contasEsc, inpConta, inpContaLeg, inpEsc, dotOk, scan: window.__secScan() };
+  });
+  await page.waitForTimeout(300);
+  const blocks = [r.contas, r.card, r.panorama, r.reservas, r.contasEsc];
+  const ok = blocks.every((b) => b.fallback && b.legadas) && r.inpConta === '#888888' && r.inpContaLeg === '#abcdef'
+    && r.inpEsc === '#888888' && r.dotOk && r.scan.length === 0 && pwnRequests.length === 0;
+  return { ok, detail: JSON.stringify({ ...r, pwnRequests: pwnRequests.length }) };
 }
 
 const stepsImport = await runRenderSteps('import');
@@ -317,6 +380,9 @@ await check('SEC1_COLORS_FALLBACK_AND_INPUTS', async () => {
   return { ok, detail: JSON.stringify(r) };
 }, 'cores importadas inválidas viram o fallback fixo #888888 no CSS e nos <input type=color>; cor válida é preservada; nenhum CSS malicioso aplicado');
 
+await check('SEC1R_IMPORT_ACCOUNT_AND_OFFICE_COLORS', accountColorCheck,
+  'importação: cores de contas pessoais (lista, lista unificada, card de saldos), panorama/reservas/contas do escritório, modais de conta e bolinha do perfil — inválidas viram #888888, legadas válidas são mantidas, nenhum CSS malicioso nem requisição externa');
+
 await check('SEC1_RENDER_DOES_NOT_CHANGE_PERSISTED_DATA', async () => {
   const r = await page.evaluate((before) => {
     const after = JSON.stringify(buildSaveObject());
@@ -324,9 +390,15 @@ await check('SEC1_RENDER_DOES_NOT_CHANGE_PERSISTED_DATA', async () => {
     const coresIntactas = st.cards.slice(1).every((c, i) => c.color === (i < 4 ? ['#AbCdEf', '#abc', '#abcd', '#aabbccdd'][i] : window.__BAD[i % window.__BAD.length]))
       && st.pessoas.every((p, i) => p.color === window.__BAD[i % window.__BAD.length]);
     const nomesIntactos = st.categories.every((c, i) => c.name === window.__P[i] && c.subs[0] === window.__P[i]);
-    return { igual: after === before, coresIntactas, nomesIntactos };
+    // SEC-1R — cores de contas e do escritório também intactas (inválidas e legadas)
+    const LEG = ['#abc', '#abcd', '#aabbccdd', '#AbCdEf'];
+    const contasIntactas = window.__BAD.every((c, i) => st.contas.find((x) => x.id === `cx${i}`)?.color === c)
+      && LEG.every((c, i) => st.contas.find((x) => x.id === `cl${i}`)?.color === c)
+      && window.__BAD.every((c, i) => st.office.contas.find((x) => x.id === `ocx${i}`)?.color === c && st.office.reservas.find((x) => x.id === `orx${i}`)?.color === c)
+      && LEG.every((c, i) => st.office.contas.find((x) => x.id === `ocl${i}`)?.color === c && st.office.reservas.find((x) => x.id === `orl${i}`)?.color === c);
+    return { igual: after === before, coresIntactas, nomesIntactos, contasIntactas };
   }, snapshotAfterImport);
-  return { ok: r.igual && r.coresIntactas && r.nomesIntactos, detail: JSON.stringify(r) };
+  return { ok: r.igual && r.coresIntactas && r.nomesIntactos && r.contasIntactas, detail: JSON.stringify(r) };
 }, 'renderizar todas as telas e modais não altera nada do que seria persistido: nomes, subcategorias e cores (inclusive inválidas) continuam exatamente como importados');
 
 // ── 2. Controles continuam funcionando (handlers do escopo com jsArg) ──
@@ -383,6 +455,52 @@ await check('SEC1_PROFILE_HANDLERS_EXACT_ID', async () => {
   });
   return { ok: r.wrong.length === 0 && r.ativo && r.scan.length === 0, detail: JSON.stringify(r) };
 }, 'perfis com id malicioso: trocar, renomear e excluir pelos botões atingem exatamente o perfil certo e nada executa');
+
+// ── 2b. SEC-1R: salvar um modal sem mexer na cor preserva a cor salva ──
+const LEG_SAVE = ['#abc', '#abcd', '#aabbccdd', '#AbCdEf', '#aabbcc', 'url(https://pwn.invalid/legado)'];
+function legacyData() {
+  const base = baseSyntheticState({
+    cards: [{ id: 'dinheiro', name: 'Dinheiro/PIX', color: '#38e2b4', fecha: null, paga: null }]
+      .concat(LEG_SAVE.map((c, i) => ({ id: `lc${i}`, name: `Cartão L${i}`, color: c, fecha: 3, paga: 10 }))),
+    contas: LEG_SAVE.map((c, i) => ({ id: `lk${i}`, name: `Conta L${i}`, color: c, saldoInicial: 10 })),
+    pessoas: LEG_SAVE.map((c, i) => ({ id: `lp${i}`, name: `Pessoa L${i}`, color: c })),
+    office: { contas: LEG_SAVE.map((c, i) => ({ id: `lo${i}`, name: `Escritório L${i}`, color: c, saldoInicial: 100 })) },
+  });
+  const perfis = { perfil_ok: { id: 'perfil_ok', name: 'Perfil sintético', color: '#5b7fff', data: base } };
+  LEG_SAVE.forEach((c, i) => { perfis[`perfil_l${i}`] = { id: `perfil_l${i}`, name: `Perfil L${i}`, color: c, data: {} }; });
+  return { version: 2, perfilAtivo: 'perfil_ok', perfis };
+}
+await loadState(legacyData());
+await installPageHelpers();
+await check('SEC1R_EDIT_SAVE_WITHOUT_COLOR_EDIT_PRESERVES_COLOR', async () => {
+  const r = await page.evaluate((leg) => {
+    window.__xss = undefined;
+    const kinds = [
+      { k: 'perfil', open: (i) => openRenamePerfil(`perfil_l${i}`), get: (i) => perfis[`perfil_l${i}`].color, input: 'renamePerfilCor' },
+      { k: 'cartão', open: (i) => openEditCartao(`lc${i}`), get: (i) => state.cards.find((c) => c.id === `lc${i}`).color, input: 'eCardColor' },
+      { k: 'conta', open: (i) => openEditConta(`lk${i}`), get: (i) => state.contas.find((c) => c.id === `lk${i}`).color, input: 'eContaColor' },
+      { k: 'pessoa', open: (i) => openEditPessoa(`lp${i}`), get: (i) => state.pessoas.find((c) => c.id === `lp${i}`).color, input: 'ePersonColor' },
+      { k: 'conta escritório', open: (i) => openEditOfficeConta(`lo${i}`), get: (i) => state.office.contas.find((c) => c.id === `lo${i}`).color, input: 'eOContaColor' },
+    ];
+    const save = () => document.querySelector('#modalBody .btn-success').click();
+    const wrong = [];
+    kinds.forEach(({ k, open, get, input }) => {
+      leg.forEach((c, i) => {
+        open(i); save();
+        if (get(i) !== c) wrong.push(`${k}#${i}: sem edição, ${JSON.stringify(c)} virou ${JSON.stringify(get(i))}`);
+      });
+      // edição explícita (evento input do seletor) grava a nova cor
+      open(0);
+      const el = document.getElementById(input); el.value = '#123456'; el.dispatchEvent(new Event('input', { bubbles: true }));
+      save();
+      if (get(0) !== '#123456') wrong.push(`${k}: edição explícita não gravou (${JSON.stringify(get(0))})`);
+    });
+    closeModal();
+    return { wrong, scan: window.__secScan() };
+  }, LEG_SAVE);
+  await page.waitForTimeout(300);
+  return { ok: r.wrong.length === 0 && r.scan.length === 0 && pwnRequests.length === 0, detail: JSON.stringify(r) };
+}, 'perfil, cartão, conta, pessoa e conta do escritório: abrir o modal e salvar sem mexer na cor mantém exatamente a cor salva (#abc, #abcd, #aabbccdd, #AbCdEf, #aabbcc e até um valor inválido); mexer na cor (evento input) grava a nova');
 
 // ── 3. Cadastros pela interface ──
 await loadState(baseSyntheticState({ categories: [{ id: 'geral', name: 'Geral', subs: [] }] }));
@@ -471,6 +589,9 @@ await check('SEC1_DRIVE_LOAD_ALL_SINKS_NO_EXECUTION', async () => {
   const veioDoDrive = await page.evaluate(() => perfilAtivo === 'perfil_ok' && state.categories.length === window.__P.length);
   return { ok: veioDoDrive && bad.length === 0 && dialogs.length === 0 && pwnRequests.length === 0, detail: `veioDoDrive=${veioDoDrive} passos=${stepsDrive.length} com problema=${JSON.stringify(bad)}` };
 }, 'dados carregados do Drive simulado: todas as telas e modais do escopo exibem os payloads como texto, sem execução, injeção ou CSS malicioso');
+
+await check('SEC1R_DRIVE_ACCOUNT_AND_OFFICE_COLORS', accountColorCheck,
+  'Drive simulado: as mesmas cores de contas e do escritório são validadas na renderização, sem CSS malicioso nem requisição externa');
 
 await check('SEC1_DRIVE_RENDER_NO_PERSISTENCE_CHANGE', async () => {
   const igual = await page.evaluate((before) => JSON.stringify(buildSaveObject()) === before, snapshotAfterDrive);
