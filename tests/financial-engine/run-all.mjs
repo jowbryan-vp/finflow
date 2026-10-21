@@ -274,8 +274,15 @@ const FILES = [
   // SEC-2B1 — IDs do domínio pessoal em handlers inline (jsArg) e atributos
   // (esc): verificador estático com autoteste e teste de navegador
   // independente (Codex) com importação JSON e Drive simulado.
+  // SEC-2B2 evolui o mesmo verificador estático (sec2-id-lint.mjs) para
+  // também tornar o domínio escritório condição de gate.
   'sec2-id-lint.mjs',
   'sec2-id-render.test.mjs',
+  // SEC-2B2 — IDs do domínio escritório em handlers inline (jsArg) e
+  // atributos (esc): projetos/contratos V3, recebimentos, custos/RRTs,
+  // tributação, histórico, modelo anterior (legado), reservas, repasses,
+  // despesas e contas empresariais.
+  'sec2-id-render-office.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

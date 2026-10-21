@@ -35,6 +35,8 @@ const WHITELIST = new Map([
   ['renderTodasAsContas|irPara', 'HANDLER_INDIRECT: só "navigate(\'contas\')" ou "irParaContasEscritorio()", literais'],
   ['renderResumoPagar|it.acao', 'HANDLER_INDIRECT: montado com jsArg (SEC-2B1) ou literal; função sem chamador na UI'],
   ['renderResumoPagar|it.verLink', 'HANDLER_INDIRECT: montado com jsArg (SEC-2B1); função sem chamador na UI'],
+  ['renderNovoContratoV3Form|i+1', 'índice (1..5) do loop sobre OFFICE_NOVO_ETAPAS, array literal fechado do próprio código — nunca dado externo; precisa continuar numérico (comparado com Number(dataset.etapa) em officeNovoMostrarEtapa)'],
+  ['officeAbaResumo|acao', 'HANDLER_INDIRECT: montado só com literais do próprio código (aba(\'recebimentos\'|\'rrts\'|\'tributacao\'|\'distribuicao\'|\'custos\') ou "switchOfficeTab(\'config\')"), nunca dado externo'],
 ]);
 
 function lineStarts(src) { const a = [0]; for (let i = 0; i < src.length; i++) if (src[i] === '\n') a.push(i + 1); return a; }
@@ -174,6 +176,13 @@ async function runAsTest() {
   const pessoaisId = f.filter((x) => x.domain === 'pessoal' && !x.whitelisted && x.rule !== 'ATTR_RAW_NONID');
   check('SEC2_LINT_PERSONAL_NO_RAW_IDS', pessoaisId.length === 0,
     `domínio pessoal sem ID cru em handler/atributo, sem esc() em handler e sem handler indireto fora da whitelist — encontrados: ${JSON.stringify(pessoaisId.map((x) => `L${x.line} ${x.rule} ${x.fn} ${x.expr}`))}`);
+  // SEC-2B2: o escritório agora é condição de gate nos mesmos termos do
+  // domínio pessoal (SEC-2B1) — zero achados de segurança de ID fora da
+  // whitelist explícita. ATTR_RAW_NONID (valores não-ID em atributo) fica
+  // reservado ao SEC-2B3 e não entra nesta condição.
+  const escritorioId = f.filter((x) => x.domain === 'escritorio' && !x.whitelisted && x.rule !== 'ATTR_RAW_NONID');
+  check('SEC2_LINT_OFFICE_NO_RAW_IDS', escritorioId.length === 0,
+    `domínio escritório sem ID cru em handler/atributo, sem esc() em handler e sem handler indireto fora da whitelist — encontrados: ${JSON.stringify(escritorioId.map((x) => `L${x.line} ${x.rule} ${x.fn} ${x.expr}`))}`);
   // Toda exceção da whitelist precisa continuar existindo no código; uma
   // entrada órfã indicaria que o código mudou e a exceção deve ser revista.
   const usados = new Set(f.filter((x) => x.whitelisted).map((x) => `${x.fn}|${x.expr}`));
@@ -197,9 +206,8 @@ async function runAsTest() {
   const limpos = ["function a(){ return `<b onclick=\"f(${jsArg(x.id)})\">`; }", "function a(){ return `<option value=\"${esc(c.id)}\">`; }"]
     .filter((t) => lintIds(t, { personalEndLine: 99 }).length);
   check('SEC2_LINT_SELF_TEST', !falhas.length && !limpos.length, `${amostras.length} trechos inseguros detectados pela regra certa (inclui multilinha e aninhado) e 2 trechos corretos sem alerta — falhas: ${JSON.stringify(falhas.map((a) => a[0]))} falsos alertas: ${limpos.length}`);
-  const esc = f.filter((x) => x.domain === 'escritorio' && x.rule !== 'ATTR_RAW_NONID').length;
   const nonid = f.filter((x) => x.rule === 'ATTR_RAW_NONID').length;
-  console.log(`[INFO] pendências fora do SEC-2B1: escritório (SEC-2B2)=${esc}; valores não-ID em atributos (SEC-2B3)=${nonid}`);
+  console.log(`[INFO] pendência fora do SEC-2B1/SEC-2B2: valores não-ID em atributos (SEC-2B3)=${nonid}`);
   const fails = results.filter((ok) => !ok).length;
   console.log(`sec2-id-lint: TOTAL=${results.length} PASS=${results.length - fails} FAIL=${fails}`);
   if (fails) process.exitCode = 1;

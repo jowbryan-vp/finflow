@@ -12201,7 +12201,7 @@ function officeAtualizarNav(){
   });
   const secao=document.getElementById('escritorioSecao'); if(!secao) return;
   secao.innerHTML=grupo.secoes?`<div class="office-secao" role="group" aria-label="${esc(grupo.rotulo)}">${Object.entries(grupo.secoes).map(([aba,rot])=>
-    `<button type="button" class="office-secao-btn" data-officetab="${aba}" ${aba===officeSubTab?'aria-current="page"':''} onclick="switchOfficeTab('${aba}')">${esc(rot)}</button>`).join('')}</div>`:'';
+    `<button type="button" class="office-secao-btn" data-officetab="${aba}" ${aba===officeSubTab?'aria-current="page"':''} onclick="switchOfficeTab(${jsArg(aba)})">${esc(rot)}</button>`).join('')}</div>`:'';
 }
 function renderOfficeSubContent(){
   const fns={visao:renderOfficeVisaoGeral, projetos:renderOfficeProjetosTab, projecao:renderOfficeProjecaoTab, recebiveis:renderOfficeRecebiveisTab, despesas:renderOfficeDespesasTab, reservas:renderOfficeReservasTab, repasses:renderOfficeRepassesTab, config:renderOfficeConfigTab};
@@ -12349,7 +12349,7 @@ function renderOfficeVisaoGeral(){
   const I=V.indicadores, C=V.composicao, K=V.contratos, Pe=V.pessoal;
   const neg=I.disponivelCent<0;
   const kpi=(id,rotulo,ajuda,valor,sub,cls)=>`<div class="ov-kpi ${cls||''}"><div class="ov-kpi-rot">${rotulo} ${officeAjuda(ajuda)}</div>
-    <div class="ov-kpi-val" id="${id}">${valor}</div><div class="ov-kpi-sub">${sub}</div></div>`;
+    <div class="ov-kpi-val" id="${esc(id)}">${valor}</div><div class="ov-kpi-sub">${sub}</div></div>`;
   const ponto=c=>`<span class="ov-ponto ov-c-${c}" aria-hidden="true"></span>`;
   const menos=(chave,rotulo,valor,dica)=>`<tr><td><span class="ov-sinal">−</span>${ponto(chave)}${rotulo}${dica?`<div class="ov-subt">${dica}</div>`:''}</td><td class="num">${fmtCentsBRL(valor)}</td></tr>`;
   const rotBarra={tributo:'Impostos pendentes', repasses:'Repasses a transferir', cobertura:'Cobertura de projetos', aguardando:'Aguardando classificação', disponivel:'Disponível'};
@@ -12540,9 +12540,9 @@ function officePendenciaProjetoTag(x){
 }
 const officeProjetoTagsHTML=l=>[...l.atencao.map(officeAtencaoProjetoTag), ...l.pendencias.map(officePendenciaProjetoTag)].filter(Boolean).join(' ');
 function officeProjetoLinhaHTML(l){
-  const id=esc(l.id), prox=l.proximoRecebimento;
-  return `<div class="prj-linha" role="row" data-projeto="${id}" data-modelo="${l.modelo}">
-    <div class="prj-c prj-nome" role="cell"><button type="button" class="prj-nome-btn office-quebra" onclick="abrirProjeto('${id}')">${esc(l.nome||'(sem nome)')}</button>
+  const prox=l.proximoRecebimento;
+  return `<div class="prj-linha" role="row" data-projeto="${esc(l.id)}" data-modelo="${l.modelo}">
+    <div class="prj-c prj-nome" role="cell"><button type="button" class="prj-nome-btn office-quebra" onclick="abrirProjeto(${jsArg(l.id)})">${esc(l.nome||'(sem nome)')}</button>
       <div class="prj-cliente office-quebra">${esc(l.cliente||'—')}${l.modelo==='anterior'?' · <span class="prj-anterior">◷ Modelo financeiro anterior</span>':''}</div>
       ${officeProjetoTagsHTML(l)?`<div class="prj-atencao">${officeProjetoTagsHTML(l)}</div>`:''}</div>
     <div class="prj-c" role="cell" data-rot="Operacional">${officeOperacionalTag(l.statusOperacional)}</div>
@@ -12552,7 +12552,7 @@ function officeProjetoLinhaHTML(l){
     <div class="prj-c num" role="cell" data-rot="A receber">${fmtCentsBRL(l.aReceberCent)}</div>
     <div class="prj-c" role="cell" data-rot="Próximo recebimento">${prox?`${officeDataBR(prox.data)}<div class="mono">${fmtCentsBRL(prox.valorCent)}</div>`:'<span class="muted">—</span>'}</div>
     <div class="prj-c num" role="cell" data-rot="Custos e RRTs pendentes">${l.custosRrtsPendentesCent===null?'<span class="muted">—</span>':fmtCentsBRL(l.custosRrtsPendentesCent)}</div>
-    <div class="prj-c prj-acao" role="cell"><button type="button" class="btn btn-ghost btn-sm" onclick="abrirProjeto('${id}')">Abrir projeto</button></div>
+    <div class="prj-c prj-acao" role="cell"><button type="button" class="btn btn-ghost btn-sm" onclick="abrirProjeto(${jsArg(l.id)})">Abrir projeto</button></div>
   </div>`;
 }
 function officeProjetosLinhasHTML(L){
@@ -12618,12 +12618,12 @@ function renderProjetoAnterior(id){
   const el=document.getElementById('escritorioSubContent'); if(!el) return;
   const A=getOfficeProjetoAnteriorV3(id);
   if(!A){ officeProjetoAnteriorAberto=null; renderOfficeProjetosTab(); return; }
-  const l=A.linha, pid=esc(id), p=findOfficeProjeto(id);
+  const l=A.linha, p=findOfficeProjeto(id);
   const estadoTag={previsto:['○','Previsto','badge-blue'], recebido:['✓','Recebido','badge-ok'], cancelado:['✕','Cancelado','badge-red']};
   const recs=A.recebiveis.map(r=>`<tr><td data-rot="Descrição">${esc(r.descricao||'Recebível')}</td><td data-rot="Vencimento">${officeDataBR(r.dataPrevista)}</td><td class="num" data-rot="Valor">${fmtCentsBRL(r.valorCent)}</td>
       <td data-rot="Situação">${officeTag(...(estadoTag[r.estado]||['•',r.estado,'badge-blue']))}${r.vencido?' '+officeTag('⏰','Vencido','badge-red'):''}${r.dataRecebimento?` <span class="ov-subt">em ${officeDataBR(r.dataRecebimento)}</span>`:''}</td></tr>`).join('');
   const detalhe=officeProjetoAnteriorDetalheHTML(p);
-  el.innerHTML=`<div id="officeProjetoAnterior" data-projeto="${pid}" class="prj-detalhe">
+  el.innerHTML=`<div id="officeProjetoAnterior" data-projeto="${esc(id)}" class="prj-detalhe">
     <div class="prj-cabecalho">
       <button type="button" class="btn btn-ghost btn-sm" onclick="fecharContratoV3()">← Projetos</button>
       <div class="prj-cab-id"><h2 class="prj-titulo office-quebra">${esc(l.nome||'(sem nome)')}</h2><div class="ov-subt office-quebra">${esc(l.cliente||'—')}${p.dataContrato?' · contrato de '+officeDataBR(p.dataContrato):''}</div>
@@ -12641,9 +12641,9 @@ function renderProjetoAnterior(id){
       ${recs?`<div class="office-tabela-wrap"><table class="pm-table prj-tabela-resp"><thead><tr><td>Descrição</td><td>Vencimento</td><td class="num">Valor</td><td>Situação</td></tr></thead><tbody>${recs}</tbody></table></div>`:'<div class="ov-ok">Nenhum recebível cadastrado para este projeto.</div>'}
     </section>
     <div class="prj-acoes-sec">
-      <button type="button" class="btn btn-ghost btn-sm" onclick="openEditOfficeProjeto('${pid}')">Editar dados</button>
-      ${A.conversivel?`<button type="button" class="btn btn-ghost btn-sm" onclick="abrirConversaoV3('${pid}')">Converter…</button>`:''}
-      <button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="delOfficeProjeto('${pid}')">Excluir projeto</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="openEditOfficeProjeto(${jsArg(id)})">Editar dados</button>
+      ${A.conversivel?`<button type="button" class="btn btn-ghost btn-sm" onclick="abrirConversaoV3(${jsArg(id)})">Converter…</button>`:''}
+      <button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="delOfficeProjeto(${jsArg(id)})">Excluir projeto</button>
     </div>
   </div>`;
 }
@@ -12651,9 +12651,9 @@ function renderProjetoAnterior(id){
 // ── Editor de plano de parcelas (novo contrato, conversão, aditivo) ──
 function planoLinhaHTML(prefix, valorCent, data){
   return `<div class="office-plano-linha">
-    <input type="number" step="0.01" min="0" class="office-plano-valor" aria-label="Valor da parcela" value="${valorCent!=null&&!Number.isNaN(valorCent)?(valorCent/100).toFixed(2):''}" oninput="planoAtualizar('${prefix}')">
+    <input type="number" step="0.01" min="0" class="office-plano-valor" aria-label="Valor da parcela" value="${valorCent!=null&&!Number.isNaN(valorCent)?(valorCent/100).toFixed(2):''}" oninput="planoAtualizar(${jsArg(prefix)})">
     <input type="date" class="office-plano-data" aria-label="Vencimento" value="${data||''}">
-    <button type="button" class="btn btn-ghost btn-sm" aria-label="Remover parcela" onclick="this.parentElement.remove();planoAtualizar('${prefix}')">✕</button></div>`;
+    <button type="button" class="btn btn-ghost btn-sm" aria-label="Remover parcela" onclick="this.parentElement.remove();planoAtualizar(${jsArg(prefix)})">✕</button></div>`;
 }
 function planoEditorHTML(prefix, totalFixoCent, linhas){
   return `<div class="office-plano" id="${prefix}Plano" ${totalFixoCent!=null?`data-total-cent="${totalFixoCent}"`:`data-total-input="${prefix}Valor"`}>
@@ -12661,9 +12661,9 @@ function planoEditorHTML(prefix, totalFixoCent, linhas){
       <div class="form-group"><label for="${prefix}Qtd">Quantidade de parcelas</label><input type="number" min="1" step="1" id="${prefix}Qtd" value="${(linhas&&linhas.length)||1}"></div>
       <div class="form-group"><label for="${prefix}Venc">1º vencimento (mensal)</label><input type="date" id="${prefix}Venc"></div>
     </div>
-    <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="planoGerar('${prefix}')">Gerar parcelas iguais</button>
+    <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="planoGerar(${jsArg(prefix)})">Gerar parcelas iguais</button>
     <div id="${prefix}Linhas" style="margin-top:10px">${(linhas||[]).map(l=>planoLinhaHTML(prefix,l.valorCent,l.dataPrevista)).join('')}</div>
-    <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('${prefix}Linhas').insertAdjacentHTML('beforeend',planoLinhaHTML('${prefix}',null,''));planoAtualizar('${prefix}')">＋ Parcela</button>
+    <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById(${jsArg(prefix+'Linhas')}).insertAdjacentHTML('beforeend',planoLinhaHTML(${jsArg(prefix)},null,''));planoAtualizar(${jsArg(prefix)})">＋ Parcela</button>
     <div class="office-plano-soma" id="${prefix}Soma" aria-live="polite"></div>
   </div>`;
 }
@@ -12688,7 +12688,7 @@ function planoAtualizar(prefix){
   if(!linhas.length){ out.innerHTML='<span class="muted">Nenhuma parcela.</span>'; return; }
   out.innerHTML=Number.isNaN(total)?'<span class="muted">Informe o valor do contrato.</span>'
     :dif===0?`✓ Soma ${fmtCentsBRL(soma)} = valor do contrato.`
-    :`<span class="neg">⚠ Soma ${fmtCentsBRL(soma)} — ${dif>0?'faltam':'excedem'} ${fmtCentsBRL(Math.abs(dif))}.</span> <button type="button" class="btn btn-ghost btn-sm" onclick="planoAjustar('${prefix}')">Ajustar a diferença na última parcela</button>`;
+    :`<span class="neg">⚠ Soma ${fmtCentsBRL(soma)} — ${dif>0?'faltam':'excedem'} ${fmtCentsBRL(Math.abs(dif))}.</span> <button type="button" class="btn btn-ghost btn-sm" onclick="planoAjustar(${jsArg(prefix)})">Ajustar a diferença na última parcela</button>`;
 }
 function planoAjustar(prefix){
   const linhas=[...document.querySelectorAll(`#${prefix}Linhas .office-plano-valor`)]; if(!linhas.length) return;
@@ -12905,11 +12905,11 @@ const officePar=(rot,val,cls)=>`<dt>${rot}</dt><dd${cls?` class="${cls}"`:''}>${
 const officeOuTraco=v=>v===null||v===undefined?'<span class="muted">—</span>':fmtCentsBRL(v);
 
 function officeAbaResumo(D){
-  const R=D.resumo, pid=esc(D.projetoId), prox=D.linha.proximoRecebimento, C=D.contrato;
+  const R=D.resumo, prox=D.linha.proximoRecebimento, C=D.contrato;
   const passo=(ico,tit,det,val,acao,nivel)=>`<button type="button" class="ov-at ov-at-${nivel||'info'}" onclick="${acao}"><span class="ov-at-ico" aria-hidden="true">${ico}</span><span class="ov-at-txt">${esc(tit)}${det?`<small>${esc(det)}</small>`:''}</span>${val?`<span class="ov-at-val">${val}</span>`:''}<span class="ov-at-seta" aria-hidden="true">›</span></button>`;
   const aba=a=>`abrirAbaContratoV3('${a}')`;
   const passos=[];
-  if(prox) passos.push(passo(prox.vencida?'⏰':'◌', prox.vencida?'Parcela vencida — registrar recebimento':'Próximo recebimento', `Parcela ${prox.numero||''} · ${prox.data?officeDataBR(prox.data):'sem data'}`, fmtCentsBRL(prox.valorCent), `abrirRecebimentoV3('${esc(prox.parcelaId)}')`, prox.vencida?'danger':'info'));
+  if(prox) passos.push(passo(prox.vencida?'⏰':'◌', prox.vencida?'Parcela vencida — registrar recebimento':'Próximo recebimento', `Parcela ${prox.numero||''} · ${prox.data?officeDataBR(prox.data):'sem data'}`, fmtCentsBRL(prox.valorCent), `abrirRecebimentoV3(${jsArg(prox.parcelaId)})`, prox.vencida?'danger':'info'));
   D.linha.atencao.forEach(a=>{
     const v=a.valorCent!==undefined?fmtCentsBRL(a.valorCent):'';
     if(a.tipo==='parcela_vencida'&&!(prox&&prox.vencida&&a.quantidade===1)) passos.push(passo('⏰', officeQtd(a.quantidade,'parcela vencida','parcelas vencidas'), 'Veja em Recebimentos.', v, aba('recebimentos'), 'danger'));
@@ -12942,7 +12942,7 @@ function officeAbaResumo(D){
     <div class="ov-grade">
       <section class="ov-painel" aria-labelledby="ocPassoTit"><div class="ov-cab"><span class="ov-titulo" id="ocPassoTit">Próximo passo</span></div>
         <div class="ov-lista" id="ocProximoPasso">${passos.join('')||(D.linha.temPendencia?'':'<div class="ov-ok">✓ Nada pendente neste projeto.</div>')}</div></section>
-      <section class="ov-painel" aria-labelledby="ocCompTit"><div class="ov-cab"><span class="ov-titulo" id="ocCompTit">Composição</span><button type="button" class="btn btn-ghost btn-sm" onclick="abrirAditivoV3('${pid}')">＋ Aditivo</button></div>
+      <section class="ov-painel" aria-labelledby="ocCompTit"><div class="ov-cab"><span class="ov-titulo" id="ocCompTit">Composição</span><button type="button" class="btn btn-ghost btn-sm" onclick="abrirAditivoV3(${jsArg(D.projetoId)})">＋ Aditivo</button></div>
         <dl class="ov-pares" id="ocResumo">
           ${C.aditivosCent?officePar('Contrato original',fmtCentsBRL(C.originalCent))+officePar('Aditivos','+ '+fmtCentsBRL(C.aditivosCent))+officePar('Contrato atual',fmtCentsBRL(C.atualCent),'forte')+'<div class="ov-sep"></div>':''}
           ${officePar('Custos diretos previstos',fmtCentsBRL(R.custoEfetivoCent))}${officePar('✓ Custos pagos',fmtCentsBRL(R.custoRealizadoCent))}${officePar('Custos pendentes',fmtCentsBRL(R.custoPendenteCent))}
@@ -12964,7 +12964,7 @@ function officeAbaRecebimentos(D){
       <td class="num" data-rot="Previsto">${fmtCentsBRL(x.valorPrevistoCent)}</td><td class="num" data-rot="Recebido">${fmtCentsBRL(x.recebidoCent)}</td><td class="num" data-rot="Pendente">${fmtCentsBRL(x.saldoCent)}</td>
       <td data-rot="Status">${officeTag(...tag[x.status])}${x.vencida?' '+officeTag('⏰','Vencida','badge-red'):''}
         ${x.recebimentos.length?`<ul class="office-pagamentos prj-hist-parcela">${x.recebimentos.map(r=>`<li>${officeDataBR(r.data)} · <span class="mono">+ ${fmtCentsBRL(r.valorCent)}</span>${r.distribuido?'':' <span class="ov-subt">aguardando classificação</span>'}</li>`).join('')}</ul>`:''}</td>
-      <td class="prj-td-acao">${x.saldoCent>0&&x.status!=='cancelada'?`<button type="button" class="btn btn-ok btn-sm" onclick="abrirRecebimentoV3('${esc(x.id)}')">Registrar recebimento</button>`:''}</td></tr>`).join('');
+      <td class="prj-td-acao">${x.saldoCent>0&&x.status!=='cancelada'?`<button type="button" class="btn btn-ok btn-sm" onclick="abrirRecebimentoV3(${jsArg(x.id)})">Registrar recebimento</button>`:''}</td></tr>`).join('');
   return `<section class="ov-painel" id="ocParcelas"><div class="ov-cab"><span class="ov-titulo">Recebimentos do projeto</span><span class="ov-subt">Recebido ${fmtCentsBRL(D.resumo.recebidoCent)} · a receber ${fmtCentsBRL(D.resumo.aReceberCent)}</span></div>
       ${linhas?`<div class="office-tabela-wrap"><table class="pm-table prj-tabela-resp"><thead><tr><td>Parcela</td><td>Vencimento</td><td class="num">Previsto</td><td class="num">Recebido</td><td class="num">Pendente</td><td>Status</td><td></td></tr></thead><tbody>${linhas}</tbody></table></div>`
         :'<div class="ov-ok">Este contrato ainda não tem parcelas. Um aditivo cria as parcelas dele.</div>'}
@@ -12972,7 +12972,7 @@ function officeAbaRecebimentos(D){
 }
 // Cobertura no nível do contrato (o motor não reparte cobertura por item).
 function officeCoberturaBox(D){
-  const K=D.cobertura, pid=esc(D.projetoId);
+  const K=D.cobertura;
   return `<div class="prj-cobertura" id="ocCobertura"><div class="prj-cob-tit">Cobertura reservada para RRTs e custos deste projeto ${officeAjuda('coberturaProjeto')}</div>
     <dl class="prj-cob-num">
       <div><dt>Necessária agora</dt><dd>${fmtCentsBRL(K.necessariaCent)}</dd></div>
@@ -12980,15 +12980,14 @@ function officeCoberturaBox(D){
       <div><dt>Ainda sem cobertura ${officeAjuda('semCobertura')}</dt><dd>${fmtCentsBRL(K.semCoberturaCent)}</dd></div>
     </dl>
     <div class="ov-subt">Cobertura não é pagamento: o valor pago de cada item aparece em "Pago".</div>
-    ${K.liberavelCent>0?`<div class="office-alerta ok" style="margin-top:10px" id="ocLiberavel">↺ ${fmtCentsBRL(K.liberavelCent)} disponíveis para liberação <button type="button" class="btn btn-ok btn-sm" onclick="abrirLiberacaoV3('${pid}')">Liberar…</button></div>`:''}</div>`;
+    ${K.liberavelCent>0?`<div class="office-alerta ok" style="margin-top:10px" id="ocLiberavel">↺ ${fmtCentsBRL(K.liberavelCent)} disponíveis para liberação <button type="button" class="btn btn-ok btn-sm" onclick="abrirLiberacaoV3(${jsArg(D.projetoId)})">Liberar…</button></div>`:''}</div>`;
 }
 function officeCompromissoHTML(D, tipo, v){
-  const pid=esc(D.projetoId), id=esc(v.id);
-  const pags=v.pagamentos.map(pg=>`<li>${officeDataBR(pg.data)} · ${pg.estornoDe?'Estorno':'Pagamento'} <span class="mono">${officeFmtPagamento(pg)}</span>${pg.estornavelCent>0?` <button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="abrirEstornoV3('${esc(pg.despesaId)}')">Estornar</button>`:''}</li>`).join('');
-  const acoes=[!v.cancelado&&v.statusPagamento!=='pago'?`<button type="button" class="btn btn-ok btn-sm" onclick="abrirPagamentoV3('${tipo}','${pid}','${id}')">Registrar pagamento</button>`:'',
-    !v.cancelado&&v.statusPagamento==='parcialmente_pago'&&v.quitacaoCent===null&&v.pagoCent<v.previstoCent?`<button type="button" class="btn btn-ghost btn-sm" onclick="abrirQuitacaoV3('${tipo}','${pid}','${id}')">Quitar pelo pago</button>`:'',
-    !v.cancelado&&v.pagoCent===0?`<button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="cancelarCompromissoUI('${tipo}','${pid}','${id}')">Cancelar</button>`:''].filter(Boolean).join(' ');
-  return `<div class="prj-item office-compromisso" data-tipo="${tipo}" data-id="${id}">
+  const pags=v.pagamentos.map(pg=>`<li>${officeDataBR(pg.data)} · ${pg.estornoDe?'Estorno':'Pagamento'} <span class="mono">${officeFmtPagamento(pg)}</span>${pg.estornavelCent>0?` <button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="abrirEstornoV3(${jsArg(pg.despesaId)})">Estornar</button>`:''}</li>`).join('');
+  const acoes=[!v.cancelado&&v.statusPagamento!=='pago'?`<button type="button" class="btn btn-ok btn-sm" onclick="abrirPagamentoV3(${jsArg(tipo)},${jsArg(D.projetoId)},${jsArg(v.id)})">Registrar pagamento</button>`:'',
+    !v.cancelado&&v.statusPagamento==='parcialmente_pago'&&v.quitacaoCent===null&&v.pagoCent<v.previstoCent?`<button type="button" class="btn btn-ghost btn-sm" onclick="abrirQuitacaoV3(${jsArg(tipo)},${jsArg(D.projetoId)},${jsArg(v.id)})">Quitar pelo pago</button>`:'',
+    !v.cancelado&&v.pagoCent===0?`<button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="cancelarCompromissoUI(${jsArg(tipo)},${jsArg(D.projetoId)},${jsArg(v.id)})">Cancelar</button>`:''].filter(Boolean).join(' ');
+  return `<div class="prj-item office-compromisso" data-tipo="${tipo}" data-id="${esc(v.id)}">
     <div class="prj-item-topo"><div class="prj-item-nome office-quebra">${esc(v.descricao||'—')}${v.numero?` <span class="muted">nº ${esc(v.numero)}</span>`:''}${tipo==='custo_direto'&&v.categoria?` <span class="muted">· ${esc(v.categoria)}</span>`:''}</div>
       <div class="prj-item-tags">${officeTag(...PAGAMENTO_TAG[v.statusPagamento])}${v.exigivel?' '+officeTag('⏰','Vencido','badge-red'):''}${v.quitacaoCent!==null?' '+officeTag('✓','Quitação acordada '+fmtCentsBRL(v.quitacaoCent),'badge-green'):''}</div></div>
     <dl class="prj-item-num">
@@ -13002,32 +13001,31 @@ function officeCompromissoHTML(D, tipo, v){
     ${acoes?`<div class="prj-item-acoes">${acoes}</div>`:''}</div>`;
 }
 function officeAbaCustos(D){
-  const pid=esc(D.projetoId);
-  return `<section class="ov-painel" id="ocCustos"><div class="ov-cab"><span class="ov-titulo">Custos diretos</span><button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovoCustoV3('${pid}')">＋ Adicionar custo</button></div>
+  return `<section class="ov-painel" id="ocCustos"><div class="ov-cab"><span class="ov-titulo">Custos diretos</span><button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovoCustoV3(${jsArg(D.projetoId)})">＋ Adicionar custo</button></div>
     ${officeCoberturaBox(D)}
     ${D.custos.length?D.custos.map(v=>officeCompromissoHTML(D,'custo_direto',v)).join('')
-      :`<div class="office-vazio prj-vazio"><p>Nenhum custo direto cadastrado.</p><button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovoCustoV3('${pid}')">＋ Adicionar custo</button></div>`}
+      :`<div class="office-vazio prj-vazio"><p>Nenhum custo direto cadastrado.</p><button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovoCustoV3(${jsArg(D.projetoId)})">＋ Adicionar custo</button></div>`}
     <div class="ov-nota">Custo previsto não é despesa: só reduz o caixa quando é pago.</div></section>`;
 }
 function officeAbaRrts(D){
-  const pid=esc(D.projetoId), req=D.rrtRequirement;
+  const req=D.rrtRequirement;
   const reqTag={pending:['⚠','RRT ainda não definida','badge-yellow'],not_required:['✓','RRT dispensada','badge-ok'],required:['●','Projeto com RRT','badge-blue']}[req];
   const padrao=getOfficeRrtValorPadrao();
   return `<section class="ov-painel" id="ocRrts"><div class="ov-cab"><span><span class="ov-titulo">RRTs</span> ${officeTag(...reqTag)}</span>
-      <span style="display:flex;gap:6px;flex-wrap:wrap">${req!=='not_required'?`<button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovaRrtV3('${pid}')">＋ Adicionar RRT</button>`:''}<button type="button" class="btn btn-ghost btn-sm" onclick="abrirRrtRequirementV3('${pid}')">Situação da RRT</button></span></div>
+      <span style="display:flex;gap:6px;flex-wrap:wrap">${req!=='not_required'?`<button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovaRrtV3(${jsArg(D.projetoId)})">＋ Adicionar RRT</button>`:''}<button type="button" class="btn btn-ghost btn-sm" onclick="abrirRrtRequirementV3(${jsArg(D.projetoId)})">Situação da RRT</button></span></div>
     ${req==='pending'?'<div class="office-alerta warn" style="display:block;margin-bottom:10px">⚠ Defina se o projeto terá RRT. Até lá, os recebimentos entram no caixa mas não são distribuídos.</div>':''}
     ${req==='not_required'?'<div class="office-vazio prj-vazio"><p>RRT dispensada para este projeto.</p></div>'
       :`${D.rrts.length?officeCoberturaBox(D)+D.rrts.map(v=>officeCompromissoHTML(D,'rrt',v)).join('')
-        :`<div class="office-vazio prj-vazio"><p>Nenhuma RRT cadastrada.</p><button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovaRrtV3('${pid}')">＋ Adicionar RRT</button></div>`}`}
+        :`<div class="office-vazio prj-vazio"><p>Nenhuma RRT cadastrada.</p><button type="button" class="btn btn-ghost btn-sm" onclick="abrirNovaRrtV3(${jsArg(D.projetoId)})">＋ Adicionar RRT</button></div>`}`}
     ${req!=='not_required'&&padrao!==null?`<div class="ov-nota">Valor sugerido para nova RRT: ${fmtBRL(padrao)} (Configurações). Mudar o valor sugerido não altera RRTs já cadastradas.</div>`:''}</section>`;
 }
 function officeAbaTributacao(D){
-  const T=D.tributacao, pid=esc(D.projetoId);
+  const T=D.tributacao;
   const aliq=T.tributavel===false?'—':T.aliquotaBp!==null?officeFmtBp(T.aliquotaBp):'<span class="ov-subt">a definir</span>';
   const origem=T.origem==='propria'?'Alíquota própria deste contrato.':T.origem==='padrao_na_criacao'?'Alíquota gravada neste contrato a partir do padrão do escritório. Mudar o padrão depois não altera este contrato.'
     :T.origem==='aguardando_padrao'?'Este contrato ainda não tem alíquota: aguarda a alíquota padrão do escritório ou uma alíquota própria.':'';
-  const pags=T.pagamentos.map(d=>`<li>${officeDataBR(d.data)} · ${d.estornoDe?'Estorno':'Pagamento'} <span class="mono">${officeFmtPagamento(d)}</span>${d.estornavelCent>0?` <button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="abrirEstornoV3('${esc(d.despesaId)}')">Estornar</button>`:''}</li>`).join('');
-  return `<section class="ov-painel" id="ocTributos"><div class="ov-cab"><span class="ov-titulo">Tributação deste contrato</span>${T.tributavel===false?'':`<span style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn btn-ghost btn-sm" onclick="abrirAliquotaContratoV3('${pid}')">Alterar alíquota do contrato</button><button type="button" class="btn btn-ghost btn-sm" onclick="abrirPagamentoTributoV3('${pid}')">Registrar pagamento de imposto</button></span>`}</div>
+  const pags=T.pagamentos.map(d=>`<li>${officeDataBR(d.data)} · ${d.estornoDe?'Estorno':'Pagamento'} <span class="mono">${officeFmtPagamento(d)}</span>${d.estornavelCent>0?` <button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="abrirEstornoV3(${jsArg(d.despesaId)})">Estornar</button>`:''}</li>`).join('');
+  return `<section class="ov-painel" id="ocTributos"><div class="ov-cab"><span class="ov-titulo">Tributação deste contrato</span>${T.tributavel===false?'':`<span style="display:flex;gap:6px;flex-wrap:wrap"><button type="button" class="btn btn-ghost btn-sm" onclick="abrirAliquotaContratoV3(${jsArg(D.projetoId)})">Alterar alíquota do contrato</button><button type="button" class="btn btn-ghost btn-sm" onclick="abrirPagamentoTributoV3(${jsArg(D.projetoId)})">Registrar pagamento de imposto</button></span>`}</div>
     ${T.motivo==='tax_config_pending'?`<div class="office-alerta warn" style="display:block;margin-bottom:10px">⚠ Configuração tributária necessária: confirme a alíquota do escritório. Até lá, os recebimentos deste contrato entram no caixa sem imposto provisionado nem distribuição. <button type="button" class="btn btn-ghost btn-sm" onclick="switchOfficeTab('config')">Abrir Configurações</button></div>`:''}
     <dl class="ov-pares prj-pares-estreito">
       ${officePar('Tributável',T.tributavel===true?'Sim':T.tributavel===false?'Não':'Não informado','txt')}
@@ -13070,12 +13068,11 @@ function officeAbaDistribuicao(D){
       <div class="office-tabela-wrap"><table class="pm-table prj-tabela-resp" id="ocEventosDist"><thead><tr><td>Data</td><td>Evento</td><td class="num">Recebido / liberado</td><td class="num">Imposto provisionado</td><td class="num">Cobertura reservada</td><td class="num">Distribuído no evento</td><td>Regra</td></tr></thead><tbody>${X.eventos.map(evento).join('')}</tbody></table></div></section>`;
 }
 function officeAbaHistorico(D){
-  const pid=esc(D.projetoId);
   const itens=D.historico.map(e=>`<li class="prj-hist-item office-hist-${e.tipo}"><span class="prj-hist-data">${officeDataBR(e.data)}</span><span class="prj-hist-desc">${esc(e.descricao)}${e.previsao?' '+officeTag('◌','previsto','badge-blue'):''}${e.motivo?` <span class="ov-subt">${esc(e.motivo)}</span>`:''}</span><span class="prj-hist-val mono">${officeHistValor(e)}</span></li>`).join('');
   return `<section class="ov-painel" id="ocHistorico"><div class="ov-cab"><span class="ov-titulo">Histórico financeiro</span><span class="ov-subt">em ordem de data; estornos aparecem como eventos próprios</span></div>
       <ul class="prj-hist">${itens}</ul>
       <div class="ov-nota">Mudanças de status do projeto não são registradas no histórico (somente o status atual).</div>
-      ${D.podeExcluir?`<div class="prj-acoes-sec"><button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="delOfficeProjeto('${pid}');fecharContratoV3()">Excluir projeto (sem movimentação)</button></div>`:''}</section>`;
+      ${D.podeExcluir?`<div class="prj-acoes-sec"><button type="button" class="btn btn-ghost btn-sm prj-perigo" onclick="delOfficeProjeto(${jsArg(D.projetoId)});fecharContratoV3()">Excluir projeto (sem movimentação)</button></div>`:''}</section>`;
 }
 const OFFICE_ABA_RENDER={resumo:officeAbaResumo, recebimentos:officeAbaRecebimentos, custos:officeAbaCustos, rrts:officeAbaRrts, tributacao:officeAbaTributacao, distribuicao:officeAbaDistribuicao, historico:officeAbaHistorico};
 function officeAbasTeclado(ev){
@@ -13088,9 +13085,9 @@ function renderContratoV3Detalhe(id){
   const D=getOfficeProjetoDetalheV3(id);
   if(!D){ officeContratoAberto=null; renderOfficeProjetosTab(); return; }
   if(!OFFICE_ABA_RENDER[officeContratoAba]) officeContratoAba='resumo';
-  const pid=esc(id), R=D.resumo, st=D.statusOperacional;
+  const R=D.resumo, st=D.statusOperacional;
   const bloq=R.bloqueioDistribuicao&&st!=='potencial'&&st!=='cancelado'?`<div class="office-alerta warn" style="display:block">⏸ Distribuição aguardando: ${esc(OFFICE_V3_ERRO_LABEL[R.bloqueioDistribuicao]||R.bloqueioDistribuicao)}${(R.bloqueioDistribuicao==='tax_config_pending'||R.bloqueioDistribuicao==='distribuicao_config_pendente')?` <button type="button" class="btn btn-ghost btn-sm" onclick="switchOfficeTab('config')">Configurar</button>`:''}</div>`:'';
-  el.innerHTML=`<div id="officeContratoDetalhe" data-projeto="${pid}" class="prj-detalhe">
+  el.innerHTML=`<div id="officeContratoDetalhe" data-projeto="${esc(id)}" class="prj-detalhe">
     <div class="prj-cabecalho">
       <button type="button" class="btn btn-ghost btn-sm" onclick="fecharContratoV3()">← Projetos</button>
       <div class="prj-cab-id"><h2 class="prj-titulo office-quebra">${esc(D.nome)}</h2><div class="ov-subt office-quebra">${esc(D.cliente||'—')}${D.dataContrato?' · contrato de '+officeDataBR(D.dataContrato):''}</div>
@@ -13098,10 +13095,10 @@ function renderContratoV3Detalhe(id){
       <div class="prj-cab-valor"><span class="ov-subt">Contrato</span><strong class="mono">${fmtCentsBRL(D.contrato.atualCent)}</strong>
         <span class="ov-subt">${D.statusFinanceiro==='quitado'?'quitado':D.statusFinanceiro==='cancelado'?'cancelado':fmtCentsBRL(R.aReceberCent)+' a receber'}</span></div>
       <div class="form-group prj-cab-status"><label for="ocStatusOp">Status operacional</label>
-        <select id="ocStatusOp" onchange="setStatusOperacionalUI('${pid}', this.value)">${Object.keys(STATUS_OP_LABEL).map(k=>`<option value="${k}" ${k===st?'selected':''}>${STATUS_OP_LABEL[k]}</option>`).join('')}</select></div>
+        <select id="ocStatusOp" onchange="setStatusOperacionalUI(${jsArg(id)}, this.value)">${Object.keys(STATUS_OP_LABEL).map(k=>`<option value="${k}" ${k===st?'selected':''}>${STATUS_OP_LABEL[k]}</option>`).join('')}</select></div>
     </div>
     ${bloq}${R.disponibilidadeGerencialCent<0?`<div class="office-alerta danger" style="display:block">▼ Déficit de cobertura neste contrato: ${fmtCentsBRL(R.disponibilidadeGerencialCent)} — pagamentos acima do que os recebimentos já cobriram. Os próximos recebimentos absorvem o déficit antes de distribuir.</div>`:''}
-    <div class="prj-abas" id="ocAbas" role="tablist" aria-label="Seções do projeto" onkeydown="officeAbasTeclado(event)">${OFFICE_PROJETO_ABAS.map(([k,rot])=>`<button type="button" role="tab" class="prj-aba" data-aba="${k}" aria-selected="${k===officeContratoAba}" tabindex="${k===officeContratoAba?0:-1}" aria-controls="ocAbaConteudo" onclick="abrirAbaContratoV3('${k}')">${rot}</button>`).join('')}</div>
+    <div class="prj-abas" id="ocAbas" role="tablist" aria-label="Seções do projeto" onkeydown="officeAbasTeclado(event)">${OFFICE_PROJETO_ABAS.map(([k,rot])=>`<button type="button" role="tab" class="prj-aba" data-aba="${k}" aria-selected="${k===officeContratoAba}" tabindex="${k===officeContratoAba?0:-1}" aria-controls="ocAbaConteudo" onclick="abrirAbaContratoV3(${jsArg(k)})">${rot}</button>`).join('')}</div>
     <div class="form-group prj-abas-select"><label for="ocAbaSelect">Seção do projeto</label><select id="ocAbaSelect" onchange="abrirAbaContratoV3(this.value)">${OFFICE_PROJETO_ABAS.map(([k,rot])=>`<option value="${k}" ${k===officeContratoAba?'selected':''}>${rot}</option>`).join('')}</select></div>
     <div id="ocAbaConteudo" role="tabpanel" data-aba="${officeContratoAba}">${OFFICE_ABA_RENDER[officeContratoAba](D)}</div>
   </div>`;
@@ -13124,7 +13121,7 @@ function abrirRecebimentoV3(parcelaId){
       <div class="form-group full"><label for="orConta">Conta de destino</label><select id="orConta">${officeContasOpts(parc.contaDestino)}</select></div></div>
     <div class="card-sub" style="margin-top:6px">Valor menor que o pendente registra recebimento parcial; a parcela continua aberta pelo restante. Imposto, cobertura e distribuição são calculados pelo motor depois de registrar.</div>
     <div id="orErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" id="btnConfirmarRecebimento" onclick="confirmarRecebimentoV3('${esc(parcelaId)}')">Registrar recebimento</button>`);
+    <button class="btn btn-primary mt-16" id="btnConfirmarRecebimento" onclick="confirmarRecebimentoV3(${jsArg(parcelaId)})">Registrar recebimento</button>`);
 }
 function confirmarRecebimentoV3(parcelaId){
   const r=registrarRecebimentoV3(parcelaId, {valorCent:officeInputCent(document.getElementById('orValor').value), data:document.getElementById('orData').value, contaId:document.getElementById('orConta').value});
@@ -13158,12 +13155,12 @@ function abrirPagamentoV3(tipo, pid, itemId){
   const contaP=(getParcelasV3(pid).find(r=>r.contaDestino)||{}).contaDestino;
   officeModal(tipo==='rrt'?'Pagar RRT':'Pagar custo', `<div class="card-sub">${esc(item.descricao||item.tipo)} · pendente ${fmtCentsBRL(v.pendenteCent)}</div>
     <div class="form-grid" style="margin-top:10px">
-      <div class="form-group"><label for="opValor">Valor pago (R$)</label><input type="number" step="0.01" min="0" id="opValor" value="${(v.pendenteCent/100).toFixed(2)}" oninput="invalidarPreviaPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')" onchange="invalidarPreviaPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')"></div>
-      <div class="form-group"><label for="opData">Data do pagamento</label><input type="date" id="opData" value="${officeHojeISO()}" oninput="invalidarPreviaPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')" onchange="invalidarPreviaPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')"></div>
-      <div class="form-group full"><label for="opConta">Conta de saída</label><select id="opConta" onchange="invalidarPreviaPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')">${officeContasOpts(contaP)}</select></div></div>
+      <div class="form-group"><label for="opValor">Valor pago (R$)</label><input type="number" step="0.01" min="0" id="opValor" value="${(v.pendenteCent/100).toFixed(2)}" oninput="invalidarPreviaPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})" onchange="invalidarPreviaPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})"></div>
+      <div class="form-group"><label for="opData">Data do pagamento</label><input type="date" id="opData" value="${officeHojeISO()}" oninput="invalidarPreviaPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})" onchange="invalidarPreviaPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})"></div>
+      <div class="form-group full"><label for="opConta">Conta de saída</label><select id="opConta" onchange="invalidarPreviaPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})">${officeContasOpts(contaP)}</select></div></div>
     <div class="card-sub" style="margin-top:6px">Valor menor que o pendente registra pagamento parcial.</div>
     <div id="opAlerta"></div><div id="opErros" class="office-erros" role="alert"></div>
-    <div style="display:flex;gap:8px;margin-top:16px" id="opBotoes"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="btnPagarCompromisso" onclick="verificarPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')">Pagar</button></div>`);
+    <div style="display:flex;gap:8px;margin-top:16px" id="opBotoes"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="btnPagarCompromisso" onclick="verificarPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})">Pagar</button></div>`);
 }
 function lerPagamentoV3(){ return {valorCent:officeInputCent(document.getElementById('opValor').value), data:document.getElementById('opData').value, contaId:document.getElementById('opConta').value}; }
 // Simula com os dados ATUAIS e guarda a prévia (dados + impacto). Sem alerta,
@@ -13173,7 +13170,7 @@ function verificarPagamentoV3(tipo, pid, itemId, aviso, opts){
   const d=lerPagamentoV3();
   officePagamentoPrevia=null;
   document.getElementById('opErros').innerHTML='';
-  const botaoPagar=`<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="btnPagarCompromisso" onclick="verificarPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')">Pagar</button>`;
+  const botaoPagar=`<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" id="btnPagarCompromisso" onclick="verificarPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})">Pagar</button>`;
   const s=simularPagamentoCompromissoV3(tipo, pid, itemId, d);
   if(!s.ok){
     document.getElementById('opErros').innerHTML='⚠ '+esc(officeErroMsg(s));
@@ -13189,7 +13186,7 @@ function verificarPagamentoV3(tipo, pid, itemId, aviso, opts){
   document.getElementById('opAlerta').innerHTML=`<div class="office-alerta danger" id="opAlertaNegativo" style="margin-top:10px;display:block">${aviso?`<strong>${esc(aviso)}</strong><br>`:''}⚠ Este pagamento de <strong>${fmtCentsBRL(d.valorCent)}</strong> excede a cobertura financeira disponível para o contrato em <strong>${fmtCentsBRL(s.excedeCoberturaContratoCent)}</strong>.<br>
     Após o pagamento, a disponibilidade gerencial do escritório será de <strong>${fmtCentsBRL(s.disponibilidadeDepoisCent)}</strong>.<br>
     O pagamento utilizará recursos que ainda não foram financiados pelo fluxo deste contrato. Nenhuma reserva é movimentada automaticamente.</div>`;
-  document.getElementById('opBotoes').innerHTML=`<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" id="btnConfirmarPagamentoNegativo" onclick="executarPagamentoV3('${tipo}','${esc(pid)}','${esc(itemId)}')">Confirmar pagamento</button>`;
+  document.getElementById('opBotoes').innerHTML=`<button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-danger" id="btnConfirmarPagamentoNegativo" onclick="executarPagamentoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})">Confirmar pagamento</button>`;
 }
 // Defesa no handler final: só grava se os dados atuais forem exatamente os da
 // prévia válida desta abertura do modal E o impacto recalculado agora for o
@@ -13211,7 +13208,7 @@ function abrirQuitacaoV3(tipo, pid, itemId){
   const p=findOfficeProjeto(pid); const item=(p[OFFICE_COMPROMISSO_LISTA[tipo]]||[]).find(x=>x.id===itemId); const v=getCompromissoV3View(item, tipo, pid);
   officeModal('Quitar abaixo do previsto', `<div class="card-sub">Registra que ${esc(item.descricao||item.tipo)} foi acertado por <strong>${fmtCentsBRL(v.pagoCent)}</strong> (previsto ${fmtCentsBRL(v.previstoCent)}). A diferença de ${fmtCentsBRL(v.previstoCent-v.pagoCent)} deixa de ser obrigação e pode virar cobertura liberável — só por liberação explícita.</div>
     <div id="oqErros" class="office-erros" role="alert"></div>
-    <div style="display:flex;gap:8px;margin-top:16px"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarQuitacaoV3('${tipo}','${esc(pid)}','${esc(itemId)}')">Confirmar quitação</button></div>`);
+    <div style="display:flex;gap:8px;margin-top:16px"><button class="btn btn-ghost" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="confirmarQuitacaoV3(${jsArg(tipo)},${jsArg(pid)},${jsArg(itemId)})">Confirmar quitação</button></div>`);
 }
 function confirmarQuitacaoV3(tipo, pid, itemId){
   const r=quitarCompromissoV3(tipo, pid, itemId);
@@ -13233,7 +13230,7 @@ function abrirEstornoV3(despesaId){
       <div class="form-group full"><label for="oeMotivo">Motivo</label><input id="oeMotivo" placeholder="Ex.: pagamento em duplicidade"></div></div>
     <div class="card-sub" style="margin-top:6px">O pagamento original continua no histórico; o estorno é um lançamento compensatório e reabre o pendente.</div>
     <div id="oeErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" onclick="confirmarEstornoV3('${esc(despesaId)}')">Registrar estorno</button>`);
+    <button class="btn btn-primary mt-16" onclick="confirmarEstornoV3(${jsArg(despesaId)})">Registrar estorno</button>`);
 }
 function confirmarEstornoV3(despesaId){
   const r=estornarPagamentoV3(despesaId, {valorCent:officeInputCent(document.getElementById('oeValor').value), data:document.getElementById('oeData').value, motivo:document.getElementById('oeMotivo').value});
@@ -13250,7 +13247,7 @@ function abrirNovaRrtV3(pid){
       <div class="form-group"><label for="onrData">Data prevista</label><input type="date" id="onrData"></div></div>
     ${getOfficeRrtValorPadrao()===null?'':'<div class="card-sub" style="margin-top:6px">O valor vem da sugestão de Configurações; ajuste se for diferente. Mudar a sugestão depois não altera RRTs já cadastradas.</div>'}
     <div id="onrErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" onclick="confirmarNovaRrtV3('${esc(pid)}')">Adicionar RRT</button>`);
+    <button class="btn btn-primary mt-16" onclick="confirmarNovaRrtV3(${jsArg(pid)})">Adicionar RRT</button>`);
 }
 function confirmarNovaRrtV3(pid){
   const desc=document.getElementById('onrDesc').value.trim();
@@ -13266,7 +13263,7 @@ function abrirNovoCustoV3(pid){
       <div class="form-group"><label for="oncData">Data prevista</label><input type="date" id="oncData"></div></div>
     <div class="card-sub" style="margin-top:6px">Custo previsto não é despesa: só reduz o caixa quando for pago.</div>
     <div id="oncErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" onclick="confirmarNovoCustoV3('${esc(pid)}')">Adicionar custo</button>`);
+    <button class="btn btn-primary mt-16" onclick="confirmarNovoCustoV3(${jsArg(pid)})">Adicionar custo</button>`);
 }
 function confirmarNovoCustoV3(pid){
   const r=adicionarCustoDiretoV3(pid, {descricao:document.getElementById('oncDesc').value.trim(), categoria:document.getElementById('oncCat').value.trim()||'Outros', valorPrevistoCent:officeInputCent(document.getElementById('oncValor').value), dataPrevista:document.getElementById('oncData').value||null});
@@ -13280,7 +13277,7 @@ function abrirRrtRequirementV3(pid){
     <label class="office-opcao" style="margin-top:8px"><input type="checkbox" id="orqConfirma"> Confirmo esta decisão</label>
     <div class="card-sub" style="margin-top:6px">"Não exige RRT" só é aceito sem RRT ativa. "Exige RRT" precisa de pelo menos uma RRT ativa.</div>
     <div id="orqErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" onclick="confirmarRrtRequirementV3('${esc(pid)}')">Salvar</button>`);
+    <button class="btn btn-primary mt-16" onclick="confirmarRrtRequirementV3(${jsArg(pid)})">Salvar</button>`);
 }
 function confirmarRrtRequirementV3(pid){
   const st=document.querySelector('input[name="orqStatus"]:checked')?.value;
@@ -13300,7 +13297,7 @@ function abrirPagamentoTributoV3(pid){
       <div class="form-group"><label for="otConta">Conta</label><select id="otConta">${officeContasOpts()}</select></div></div>
     <div class="card-sub" style="margin-top:6px">O pagamento baixa o imposto pendente e reduz o caixa uma única vez; não altera distribuições já feitas.</div>
     <div id="otErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" onclick="confirmarPagamentoTributoV3('${esc(pid)}')">Registrar pagamento</button>`);
+    <button class="btn btn-primary mt-16" onclick="confirmarPagamentoTributoV3(${jsArg(pid)})">Registrar pagamento</button>`);
 }
 function confirmarPagamentoTributoV3(pid){
   const r=pagarTributoEscritorio({valorCent:officeInputCent(document.getElementById('otValor').value), data:document.getElementById('otData').value, contaId:document.getElementById('otConta').value, projetoId:pid, competencia:document.getElementById('otComp').value||null});
@@ -13313,7 +13310,7 @@ function abrirAliquotaContratoV3(pid){
   officeModal('Alíquota deste contrato', `<div class="card-sub">Vale para os próximos recebimentos deste contrato. Os recebimentos já registrados mantêm o imposto provisionado na época.</div>
     <div class="form-grid" style="margin-top:10px"><div class="form-group"><label for="oacPercent">Alíquota (%)</label><input type="text" inputmode="decimal" id="oacPercent" value="${D.tributacao.aliquotaBp===null?'':officeBpParaTexto(D.tributacao.aliquotaBp)}" autocomplete="off"></div></div>
     <div id="oacErros" class="office-erros" role="alert"></div>
-    <button type="button" class="btn btn-primary mt-16" id="btnSalvarAliquotaContrato" onclick="confirmarAliquotaContratoV3('${esc(pid)}')">Salvar alíquota</button>`);
+    <button type="button" class="btn btn-primary mt-16" id="btnSalvarAliquotaContrato" onclick="confirmarAliquotaContratoV3(${jsArg(pid)})">Salvar alíquota</button>`);
 }
 function confirmarAliquotaContratoV3(pid){
   const bp=officePercentTextoParaBp(document.getElementById('oacPercent').value);
@@ -13337,7 +13334,7 @@ function abrirLiberacaoV3(pid){
       <div class="form-group"><label for="olConta">Conta</label><select id="olConta">${officeContasOpts((getParcelasV3(pid)[0]||{}).contaDestino)}</select></div></div>
     <label class="office-opcao" style="margin-top:8px"><input type="checkbox" id="olConfirma"> Confirmo a liberação</label>
     <div id="olErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" id="btnConfirmarLiberacao" onclick="confirmarLiberacaoV3('${esc(pid)}')">Liberar</button>`);
+    <button class="btn btn-primary mt-16" id="btnConfirmarLiberacao" onclick="confirmarLiberacaoV3(${jsArg(pid)})">Liberar</button>`);
 }
 function confirmarLiberacaoV3(pid){
   if(!document.getElementById('olConfirma').checked){ document.getElementById('olErros').innerHTML='⚠ Confirme a liberação.'; return; }
@@ -13356,7 +13353,7 @@ function abrirAditivoV3(pid){
     <div class="card-sub" style="margin:6px 0">O valor original do contrato não muda; o aditivo soma ao valor atual com parcelas próprias. Redução de valor ainda não é suportada.</div>
     ${planoEditorHTML('oa', null, [])}
     <div id="oaErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" onclick="confirmarAditivoV3('${esc(pid)}')">Registrar aditivo</button>`);
+    <button class="btn btn-primary mt-16" onclick="confirmarAditivoV3(${jsArg(pid)})">Registrar aditivo</button>`);
   planoAtualizar('oa');
 }
 function confirmarAditivoV3(pid){
@@ -13387,7 +13384,7 @@ function abrirConversaoV3(pid){
       :`<div class="card-sub" style="margin-top:10px">Os recebíveis existentes fecham o contrato e viram as parcelas: ${prep.recebiveisAtivos.map(r=>fmtCentsBRL(r.valorCent)+' em '+officeDataBR(r.dataPrevista)).join(' · ')}.</div>`}
     <label class="office-opcao" style="margin-top:10px"><input type="checkbox" id="cvConfirma"> Confirmo a conversão deste projeto para a regra atual (não pode ser desfeita)</label>
     <div id="cvErros" class="office-erros" role="alert"></div>
-    <button class="btn btn-primary mt-16" id="btnConfirmarConversao" onclick="confirmarConversaoV3UI('${esc(pid)}', ${precisaPlano})">Converter</button>`);
+    <button class="btn btn-primary mt-16" id="btnConfirmarConversao" onclick="confirmarConversaoV3UI(${jsArg(pid)}, ${precisaPlano})">Converter</button>`);
   if(precisaPlano) planoAtualizar('cv');
 }
 function confirmarConversaoV3UI(pid, comPlano){
@@ -13407,7 +13404,7 @@ function renderOfficeProjetosTab(){
     officeProjetoAnteriorAberto=null;
   }
   const contaOptsProj = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   el.innerHTML=`
     ${renderProjetosLista()}
@@ -13692,17 +13689,17 @@ function renderProjetoRrtSection(p){
       <div class="item-row-info">
         <div class="item-row-name">${RRT_TIPO_LABEL[r.tipo]||r.tipo}</div>
         <div class="item-row-meta">
-          <input type="number" id="eRrtValor_${r.id}" value="${r.valor}" min="0" step="0.01" style="width:110px;display:inline-block">
-          <select id="eRrtStatus_${r.id}" style="display:inline-block;width:auto">
+          <input type="number" id="eRrtValor_${esc(r.id)}" value="${r.valor}" min="0" step="0.01" style="width:110px;display:inline-block">
+          <select id="eRrtStatus_${esc(r.id)}" style="display:inline-block;width:auto">
             ${Object.entries(RRT_STATUS_LABEL).map(([v,l])=>`<option value="${v}" ${r.status===v?'selected':''}>${l}</option>`).join('')}
           </select>
-          Nº <input type="text" id="eRrtNumero_${r.id}" value="${esc(r.numero||'')}" style="width:90px;display:inline-block">
-          Emissão <input type="date" id="eRrtDataEmissao_${r.id}" value="${r.dataEmissao||''}" style="display:inline-block">
-          Pagamento <input type="date" id="eRrtDataPagamento_${r.id}" value="${r.dataPagamento||''}" style="display:inline-block">
+          Nº <input type="text" id="eRrtNumero_${esc(r.id)}" value="${esc(r.numero||'')}" style="width:90px;display:inline-block">
+          Emissão <input type="date" id="eRrtDataEmissao_${esc(r.id)}" value="${r.dataEmissao||''}" style="display:inline-block">
+          Pagamento <input type="date" id="eRrtDataPagamento_${esc(r.id)}" value="${r.dataPagamento||''}" style="display:inline-block">
         </div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="saveProjetoRRT('${p.id}','${r.id}')">Salvar RRT</button>
-      <button class="btn btn-ghost btn-sm" onclick="delProjetoRRT('${p.id}','${r.id}')">🗑</button>
+      <button class="btn btn-ghost btn-sm" onclick="saveProjetoRRT(${jsArg(p.id)},${jsArg(r.id)})">Salvar RRT</button>
+      <button class="btn btn-ghost btn-sm" onclick="delProjetoRRT(${jsArg(p.id)},${jsArg(r.id)})">🗑</button>
     </div>`).join('');
 
   let listaRrt='';
@@ -13712,8 +13709,8 @@ function renderProjetoRrtSection(p){
     const tiposPresentes=(p.rrts||[]).map(r=>r.tipo);
     const podeAdicionar=!materializado && (p.rrts||[]).length<maxRrts;
     const addBtns=[];
-    if(podeAdicionar && !tiposPresentes.includes('projeto')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','projeto')">+ RRT de Projeto</button>`);
-    if(podeAdicionar && !tiposPresentes.includes('execucao')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT('${p.id}','execucao')">+ RRT de Execução</button>`);
+    if(podeAdicionar && !tiposPresentes.includes('projeto')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT(${jsArg(p.id)},'projeto')">+ RRT de Projeto</button>`);
+    if(podeAdicionar && !tiposPresentes.includes('execucao')) addBtns.push(`<button class="btn btn-ghost btn-sm" onclick="addProjetoRRT(${jsArg(p.id)},'execucao')">+ RRT de Execução</button>`);
     listaRrt=`<div class="item-row-meta" style="margin:6px 0">${faltam>0?`Faltam ${faltam} RRT(s) pra liberar a distribuição.`:'RRT(s) completa(s) — distribuição liberada.'}</div>
       ${rows || '<div class="info-box">Nenhuma RRT cadastrada ainda.</div>'}
       <div style="margin-top:8px">${addBtns.join(' ')}</div>`;
@@ -13731,7 +13728,7 @@ function renderProjetoRrtSection(p){
       <div class="form-group full" id="eProjRrtNoneConfirmWrap" style="display:${req==='none'?'block':'none'}">
         <label><input type="checkbox" id="eProjRrtNoneConfirm"> Confirmo que este projeto não exige RRT</label>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="salvarDecisaoRrtRequirement('${p.id}')">Salvar decisão de RRT</button>`;
+      <button class="btn btn-ghost btn-sm" onclick="salvarDecisaoRrtRequirement(${jsArg(p.id)})">Salvar decisão de RRT</button>`;
 
   return `<div class="card-title" style="font-size:14px;margin-top:14px">RRT do projeto</div>${decisaoBlock}<div style="margin-top:10px">${listaRrt}</div>`;
 }
@@ -13773,7 +13770,7 @@ function openEditOfficeProjeto(id){
     </div>
     ${projetoUsaRegraV2(p) ? renderProjetoRrtSection(p) : '<div class="info-box" style="margin-top:10px">Projeto na regra de distribuição legada — sem gestão de RRT nesta tela.</div>'}
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditOfficeProjeto('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditOfficeProjeto(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -13803,8 +13800,8 @@ function addProjetoRRT(projetoId, tipo){
       <div class="form-group"><label>Valor (R$)</label><input type="number" id="novaProjRrtValor" min="0" step="0.01" placeholder="0,00" value="${padrao===null?'':padrao}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="confirmarAddProjetoRRT('${projetoId}','${tipo}')">Confirmar RRT</button>
-      <button class="btn btn-ghost" onclick="openEditOfficeProjeto('${projetoId}')">Cancelar</button>
+      <button class="btn btn-success" onclick="confirmarAddProjetoRRT(${jsArg(projetoId)},${jsArg(tipo)})">Confirmar RRT</button>
+      <button class="btn btn-ghost" onclick="openEditOfficeProjeto(${jsArg(projetoId)})">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
 }
@@ -13950,10 +13947,10 @@ function renderOfficeRecebiveisTab(){
   const statusLabelProj={potencial:'Potencial',contratado:'Contratado',concluido:'Concluído',cancelado:'Cancelado'};
   const projetosAntigos=(state.office.projetos||[]).filter(p=>!projetoUsaRegraV3(p)); // parcelas v3 nascem do contrato
   const projetoOpts = projetosAntigos.length
-    ? projetosAntigos.map(p=>`<option value="${p.id}">${esc(p.nome)} (${statusLabelProj[p.status]||p.status})</option>`).join('')
+    ? projetosAntigos.map(p=>`<option value="${esc(p.id)}">${esc(p.nome)} (${statusLabelProj[p.status]||p.status})</option>`).join('')
     : `<option value="">— Cadastre um projeto primeiro —</option>`;
   const contaOpts = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const estadoLabel={previsto:'Previsto',recebido:'Recebido',cancelado:'Cancelado'};
   const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
@@ -13979,8 +13976,8 @@ function renderOfficeRecebiveisTab(){
         <div class="item-row-meta">${esc(projeto?projeto.nome:'—')} · Previsto: ${r.dataPrevista||'—'}${r.dataRecebimento?' · Recebido: '+r.dataRecebimento:''}</div>
       </div>
       <div class="item-row-val ${r.estado==='recebido'?'pos':'muted'}">${fmtBRL(r.valor||0)}</div>
-      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeRecebivel('${r.id}')">Editar</button>
-      <button class="btn btn-ghost btn-sm" onclick="delOfficeRecebivel('${r.id}')">🗑</button>
+      <button class="btn btn-ghost btn-sm" onclick="openEditOfficeRecebivel(${jsArg(r.id)})">Editar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeRecebivel(${jsArg(r.id)})">🗑</button>
     </div>`;
   }).join('') || '<div class="info-box">Nenhum recebível cadastrado ainda.</div>';
   el.innerHTML=`
@@ -14031,7 +14028,7 @@ function openEditOfficeRecebivel(id){
   // desabilitar visualmente, ver comentário lá).
   const materializado=projetoUsaRegraV2(projeto) && recebivelV2Materializado(r);
   const contaOpts = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}" ${r.contaDestino===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}" ${r.contaDestino===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Recebível';
   document.getElementById('modalBody').innerHTML=`
@@ -14051,7 +14048,7 @@ function openEditOfficeRecebivel(id){
       <div class="form-group full"><label>Conta empresarial de destino</label><select id="eRecebConta" ${materializado?'disabled':''}>${contaOpts}</select></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditOfficeRecebivel('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditOfficeRecebivel(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -14114,9 +14111,9 @@ function delOfficeRecebivel(id){
 function renderOfficeDespesasTab(){
   const el=document.getElementById('escritorioSubContent'); if(!el) return;
   const contaOpts = (state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
-  const projetoOpts = `<option value="">— Sem projeto vinculado —</option>` + (state.office.projetos||[]).map(p=>`<option value="${p.id}">${esc(p.nome)}</option>`).join('');
+  const projetoOpts = `<option value="">— Sem projeto vinculado —</option>` + (state.office.projetos||[]).map(p=>`<option value="${esc(p.id)}">${esc(p.nome)}</option>`).join('');
   const despesas=(state.office.despesas||[]).slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
   const rows=despesas.map(d=>{
     const projeto=(state.office.projetos||[]).find(p=>p.id===d.projetoId);
@@ -14128,7 +14125,7 @@ function renderOfficeDespesasTab(){
         <div class="item-row-meta">${esc(d.categoria||'—')} · ${conta?esc(conta.name):'—'} · ${d.data||'—'}${projeto?' · '+esc(projeto.nome):''}</div>
       </div>
       <div class="item-row-val neg">${fmtBRL(d.valor||0)}</div>
-      <button class="btn btn-ghost btn-sm" onclick="delOfficeDespesa('${d.id}')">🗑</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeDespesa(${jsArg(d.id)})">🗑</button>
     </div>`;
   }).join('') || '<div class="info-box">Nenhuma despesa empresarial cadastrada ainda.</div>';
   el.innerHTML=`
@@ -14189,9 +14186,9 @@ function renderOfficeReservasTab(){
       <div style="width:12px;height:12px;border-radius:50%;background:${safeCssColor(r.color,'#5b7fff')};flex-shrink:0"></div>
       <div class="item-row-info"><div class="item-row-name">${esc(r.nome)}</div><div class="item-row-meta">${finalidadeLabel[r.finalidade]||r.finalidade||'—'}</div></div>
       <div class="item-row-val muted">${fmtBRL(getSaldoOfficeReserva(r.id))}</div>
-      <button class="btn btn-ghost btn-sm" onclick="openAplicarOfficeReserva('${r.id}')">+ Aplicar</button>
-      <button class="btn btn-ghost btn-sm" onclick="openResgatarOfficeReserva('${r.id}')">Resgatar</button>
-      <button class="btn btn-ghost btn-sm" onclick="delOfficeReserva('${r.id}')">🗑</button>
+      <button class="btn btn-ghost btn-sm" onclick="openAplicarOfficeReserva(${jsArg(r.id)})">+ Aplicar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openResgatarOfficeReserva(${jsArg(r.id)})">Resgatar</button>
+      <button class="btn btn-ghost btn-sm" onclick="delOfficeReserva(${jsArg(r.id)})">🗑</button>
     </div>`).join('') || '<div class="info-box">Nenhuma reserva empresarial cadastrada ainda.</div>';
   el.innerHTML=`
     <div class="two-col" style="align-items:start;margin-bottom:16px">
@@ -14247,7 +14244,7 @@ function delOfficeReserva(id){
 }
 function openAplicarOfficeReserva(reservaId){
   const contaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Aplicar na Reserva';
   document.getElementById('modalBody').innerHTML=`
@@ -14258,7 +14255,7 @@ function openAplicarOfficeReserva(reservaId){
       <div class="form-group full"><label>Observação (opcional)</label><input type="text" id="aplicOReservaObs" placeholder="opcional"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-primary" onclick="confirmarAplicarOfficeReserva('${reservaId}')">Aplicar</button>
+      <button class="btn btn-primary" onclick="confirmarAplicarOfficeReserva(${jsArg(reservaId)})">Aplicar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -14279,7 +14276,7 @@ function openResgatarOfficeReserva(reservaId){
   const r=(state.office.reservas||[]).find(x=>x.id===reservaId); if(!r) return;
   const saldo=getSaldoOfficeReserva(reservaId);
   const contaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Resgatar da Reserva — '+r.nome;
   document.getElementById('modalBody').innerHTML=`
@@ -14290,7 +14287,7 @@ function openResgatarOfficeReserva(reservaId){
       <div class="form-group full"><label>Observação (opcional)</label><input type="text" id="resgOReservaObs" placeholder="opcional"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-primary" onclick="confirmarResgatarOfficeReserva('${reservaId}')">Resgatar</button>
+      <button class="btn btn-primary" onclick="confirmarResgatarOfficeReserva(${jsArg(reservaId)})">Resgatar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -14312,10 +14309,10 @@ function confirmarResgatarOfficeReserva(reservaId){
 function renderOfficeRepassesTab(){
   const el=document.getElementById('escritorioSubContent'); if(!el) return;
   const officeContaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const personalContaOpts=(state.contas||[]).length
-    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
   const estadoLabel={previsto:'Previsto',recebido:'Realizado',cancelado:'Cancelado'};
   const estadoBadge={previsto:'badge-yellow',recebido:'badge-ok',cancelado:'badge-red'};
@@ -14330,9 +14327,9 @@ function renderOfficeRepassesTab(){
         <div class="item-row-meta">${recebivel?esc(recebivel.descricao||''):'—'} · Previsto: ${rp.dataPrevista||'—'}${rp.dataRecebimento?' · Realizado: '+rp.dataRecebimento:''}${baixado?' · Baixado: '+esc(rp.dataBaixa||'—')+(rp.obs?' · '+esc(rp.obs):'')+((rp.retiradasVinculadas||[]).length?' · '+rp.retiradasVinculadas.length+' retirada(s) vinculada(s)':''):''}</div>
       </div>
       <div class="item-row-val ${rp.estado==='recebido'?'pos':'muted'}">${fmtBRL(rp.valor||0)}</div>
-      ${rp.estado==='previsto'?`<button class="btn btn-primary btn-sm" onclick="openRealizarOfficeRepasse('${rp.id}')">Realizar</button>
-      <button class="btn btn-ghost btn-sm" onclick="openBaixarOfficeRepasse('${rp.id}')">Já coberto / dar baixa</button>`:''}
-      ${baixado?`<button class="btn btn-ghost btn-sm" onclick="desfazerBaixaOfficeRepasseUI('${rp.id}')">Desfazer baixa</button>`:''}
+      ${rp.estado==='previsto'?`<button class="btn btn-primary btn-sm" onclick="openRealizarOfficeRepasse(${jsArg(rp.id)})">Realizar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openBaixarOfficeRepasse(${jsArg(rp.id)})">Já coberto / dar baixa</button>`:''}
+      ${baixado?`<button class="btn btn-ghost btn-sm" onclick="desfazerBaixaOfficeRepasseUI(${jsArg(rp.id)})">Desfazer baixa</button>`:''}
     </div>`;
   }).join('') || '<div class="info-box">Nenhum repasse planejado ainda — cadastre um recebível de um projeto contratado e configure a regra de distribuição em "Contas &amp; Regras".</div>';
   const retiradasExtraord=(state.office.movimentacoesContas||[]).filter(m=>m.tipoRetirada==='extraordinaria').slice().sort((a,b)=>(b.data||'').localeCompare(a.data||''));
@@ -14360,10 +14357,10 @@ function renderOfficeRepassesTab(){
 function openRealizarOfficeRepasse(repasseId){
   const rp=(state.office.repasses||[]).find(x=>x.id===repasseId); if(!rp) return;
   const officeContaOpts=(state.office.contas||[]).length
-    ? state.office.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
+    ? state.office.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)} (${fmtBRL(calcSaldoOfficeConta(c.id))})</option>`).join('')
     : `<option value="">— Cadastre uma conta empresarial primeiro —</option>`;
   const personalContaOpts=(state.contas||[]).length
-    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta pessoal primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Realizar Repasse';
   document.getElementById('modalBody').innerHTML=`
@@ -14374,7 +14371,7 @@ function openRealizarOfficeRepasse(repasseId){
       <div class="form-group full"><label>Conta pessoal de destino</label><select id="realizRepasseContaDestino">${personalContaOpts}</select></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-primary" onclick="confirmarRealizarOfficeRepasse('${repasseId}')">Confirmar Repasse</button>
+      <button class="btn btn-primary" onclick="confirmarRealizarOfficeRepasse(${jsArg(repasseId)})">Confirmar Repasse</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -14413,7 +14410,7 @@ function openBaixarOfficeRepasse(repasseId){
       <div class="form-group full"><label>Retiradas extraordinárias que cobriram (opcional)</label>${retiradasHTML}</div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-primary" onclick="confirmarBaixarOfficeRepasse('${repasseId}')">Confirmar Baixa</button>
+      <button class="btn btn-primary" onclick="confirmarBaixarOfficeRepasse(${jsArg(repasseId)})">Confirmar Baixa</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -14506,8 +14503,8 @@ function renderOfficeConfigTab(){
       <div style="width:12px;height:12px;border-radius:50%;background:${safeCssColor(c.color)};flex-shrink:0"></div>
       <div class="item-row-info"><div class="item-row-name">${contaLabelHTML(c)}</div></div>
       <div class="item-row-val muted">${fmtBRL(calcSaldoOfficeConta(c.id))}</div>
-      <button type="button" class="btn btn-ghost btn-sm" onclick="openEditOfficeConta('${c.id}')">Editar</button>
-      <button type="button" class="btn btn-ghost btn-sm" aria-label="Excluir conta" onclick="delOfficeConta('${c.id}')">🗑</button>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="openEditOfficeConta(${jsArg(c.id)})">Editar</button>
+      <button type="button" class="btn btn-ghost btn-sm" aria-label="Excluir conta" onclick="delOfficeConta(${jsArg(c.id)})">🗑</button>
     </div>`).join('') || '<div class="ov-ok">Nenhuma conta do escritório cadastrada ainda.</div>';
   const passo=(n,tit,txt)=>`<li class="cfg-passo"><span class="cfg-passo-n" aria-hidden="true">${n}</span><span class="cfg-passo-t">${tit}</span><span class="cfg-passo-d">${txt}</span></li>`;
   const hist=D.historico.map(h=>`<li><span class="prj-hist-data">${h.em?officeDataBR(officeDiaCivil(h.em)):'—'}</span><span>${h.origem==='herdada'?'Configuração inicial herdada do comportamento anterior do sistema':'Distribuição alterada'}${h.por?' por '+esc(h.por):''}
@@ -14537,9 +14534,9 @@ function renderOfficeConfigTab(){
       ${D.status!=='configurada'?'<div class="office-alerta warn" style="display:block;margin-bottom:10px">⚠ Enquanto a distribuição não for configurada, os recebimentos entram no caixa, mas nenhuma distribuição é gerada. Nenhum percentual é assumido.</div>'
         :D.origem==='herdada'?'<div class="office-alerta" style="display:block;margin-bottom:10px">Estes são os percentuais que o sistema aplicava antes de existir esta configuração. Revise e salve para confirmar a política do escritório.</div>':''}
       <div class="cfg-destinos" role="group" aria-label="Percentual de cada destino">
-        ${D.destinos.map(d=>`<div class="cfg-destino"><label for="cfgDist_${d.id}">${esc(d.nome)}</label>
-          <div class="cfg-destino-campo"><input type="text" inputmode="decimal" id="cfgDist_${d.id}" value="${esc(d.texto)}" autocomplete="off" aria-describedby="cfgDistAjuda_${d.id}" oninput="cfgDistAtualizar()"><span aria-hidden="true">%</span></div>
-          <div class="cfg-destino-ajuda" id="cfgDistAjuda_${d.id}">${esc(d.ajuda)}</div></div>`).join('')}
+        ${D.destinos.map(d=>`<div class="cfg-destino"><label for="cfgDist_${esc(d.id)}">${esc(d.nome)}</label>
+          <div class="cfg-destino-campo"><input type="text" inputmode="decimal" id="cfgDist_${esc(d.id)}" value="${esc(d.texto)}" autocomplete="off" aria-describedby="cfgDistAjuda_${esc(d.id)}" oninput="cfgDistAtualizar()"><span aria-hidden="true">%</span></div>
+          <div class="cfg-destino-ajuda" id="cfgDistAjuda_${esc(d.id)}">${esc(d.ajuda)}</div></div>`).join('')}
       </div>
       <div class="cfg-total" id="cfgDistTotal" aria-live="polite"></div>
       <div id="cfgDistErros" class="office-erros" role="alert"></div>
@@ -14628,7 +14625,7 @@ function openEditOfficeConta(id){
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eOContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditOfficeConta('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditOfficeConta(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
