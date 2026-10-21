@@ -267,6 +267,10 @@ const FILES = [
   'card-invoice-payment-date.test.mjs',
   // Coluna de data nas listas de transações (só exibição)
   'transaction-date-column.test.mjs',
+  // SEC-1 — XSS na renderização: nomes de categorias, cartões, subcategorias,
+  // pessoas, cofrinhos e perfis escapados; delSubcat e handlers de perfis com
+  // jsArg; cores validadas só na renderização (safeCssColor/safeColorInput).
+  'sec1-xss-render.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;
