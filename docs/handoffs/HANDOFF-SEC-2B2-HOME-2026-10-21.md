@@ -35,9 +35,9 @@ Relatórios principais:
 Em um clone existente:
 
 ```powershell
-git fetch origin sec/2-office-id-hardening:refs/remotes/origin/sec/2-office-id-hardening
 git switch sec/2-office-id-hardening
-git pull --ff-only origin sec/2-office-id-hardening
+git fetch origin sec/2-office-id-hardening
+git merge --ff-only FETCH_HEAD
 git status --short --branch
 git log --oneline -4
 ```
@@ -45,16 +45,18 @@ git log --oneline -4
 Se a branch ainda não existir localmente:
 
 ```powershell
-git fetch origin sec/2-office-id-hardening:refs/remotes/origin/sec/2-office-id-hardening
-git switch --track origin/sec/2-office-id-hardening
+git fetch origin sec/2-office-id-hardening
+git switch -c sec/2-office-id-hardening FETCH_HEAD
 git status --short --branch
 git log --oneline -4
 ```
 
-O `fetch` acima é intencionalmente explícito: o clone da Prefeitura possui um
-`remote.origin.fetch` restrito a poucas branches, portanto um `git fetch
-origin` genérico pode não criar `origin/sec/2-office-id-hardening`. O comando
-explícito funciona mesmo em clones com esse filtro.
+O `fetch` acima e o uso de `FETCH_HEAD` são intencionais: o clone da Prefeitura
+possui um `remote.origin.fetch` restrito a poucas branches. Assim, um `git fetch
+origin` genérico pode não criar `origin/sec/2-office-id-hardening`, e até uma
+referência criada manualmente pode não ser reconhecida como upstream. Esses
+comandos funcionam sem depender dessa configuração e nunca criam merge commit,
+porque exigem avanço estritamente fast-forward.
 
 Antes de trabalhar, confirmar que aparecem na história, nesta ordem:
 
