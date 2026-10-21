@@ -271,6 +271,11 @@ const FILES = [
   // pessoas, cofrinhos e perfis escapados; delSubcat e handlers de perfis com
   // jsArg; cores validadas só na renderização (safeCssColor/safeColorInput).
   'sec1-xss-render.test.mjs',
+  // SEC-2B1 — IDs do domínio pessoal em handlers inline (jsArg) e atributos
+  // (esc): verificador estático com autoteste e teste de navegador
+  // independente (Codex) com importação JSON e Drive simulado.
+  'sec2-id-lint.mjs',
+  'sec2-id-render.test.mjs',
 ];
 
 let totalPass = 0, totalFail = 0, anyFail = false;

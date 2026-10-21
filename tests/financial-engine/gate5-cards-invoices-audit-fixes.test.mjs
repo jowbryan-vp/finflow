@@ -27,11 +27,14 @@ await check('AUDIT1_DESPESAS_NO_ITEM_NO_PAY_BUTTON', async () => {
     currentMonth = 9; currentYear = 2026;
     navigate('despesas');
     const html = document.getElementById('despesasList').innerHTML;
+    // SEC-2B1: compara o comando do handler decodificado (ID como literal JSON via jsArg).
+    const temComando = (sel, fn, arg) => [...document.querySelectorAll(`${sel} [onclick]`)]
+      .some((el) => el.getAttribute('onclick').split(';').map((s) => s.trim()).includes(`${fn}(${JSON.stringify(arg)})`));
     return {
       htmlIncludesCredit: html.includes('Compra auditada'),
       htmlIncludesPayInvoice: /Pagar fatura/.test(html),
       totalStillVisible: html.includes('150,00') || html.includes('R$ 150,00'),
-      hasLinkToCartoes: /navigateToDespesasCartao\('nu'\)/.test(html),
+      hasLinkToCartoes: temComando('#despesasList', 'navigateToDespesasCartao', 'nu'),
     };
   });
   const ok = !r.htmlIncludesCredit && !r.htmlIncludesPayInvoice && r.totalStillVisible && r.hasLinkToCartoes;
@@ -44,10 +47,12 @@ await check('AUDIT1_DESPESAS_DETALHADA_STATUS_FILTER', async () => {
     window._despFiltro = 'pendentes';
     navigate('despesas');
     const html = document.getElementById('despesasList').innerHTML;
+    const temComando = (sel, fn, arg) => [...document.querySelectorAll(`${sel} [onclick]`)]
+      .some((el) => el.getAttribute('onclick').split(';').map((s) => s.trim()).includes(`${fn}(${JSON.stringify(arg)})`));
     return {
       htmlIncludesCreditItem: html.includes('Compra auditada'),
-      htmlIncludesEditButtonForCredit: /abrirEdicaoDespesaNaAreaCerta\('compraNu'\)/.test(html),
-      hasResumoCartao: /navigateToDespesasCartao\('nu'\)/.test(html) && html.includes('150,00'),
+      htmlIncludesEditButtonForCredit: temComando('#despesasList', 'abrirEdicaoDespesaNaAreaCerta', 'compraNu'),
+      hasResumoCartao: temComando('#despesasList', 'navigateToDespesasCartao', 'nu') && html.includes('150,00'),
     };
   });
   await page.evaluate(() => { window._despFiltro = 'todas'; });
@@ -213,8 +218,9 @@ await check('AUDIT4_ADJUST_STILL_AVAILABLE_ON_EMPTY_INVOICE', async () => {
   const r = await page.evaluate(() => {
     state.faturasPagas = {};
     navigate('cartoes'); selecionarFaturaCartao('nu');
-    const html = document.getElementById('cartaoFaturaResumo').innerHTML;
-    return { temAjustar: /openAjustarFaturaModal\('nu'\)/.test(html) };
+    const temAjustar = [...document.querySelectorAll('#cartaoFaturaResumo [onclick]')]
+      .some((el) => el.getAttribute('onclick').split(';').map((s) => s.trim()).includes(`openAjustarFaturaModal(${JSON.stringify('nu')})`));
+    return { temAjustar };
   });
   const ok = r.temAjustar;
   return { ok, detail: `mesmo com fatura vazia, "Ajustar Fatura" continua disponível — é o caminho pra corrigir um total que o app ainda não calculou (ex: taxa não lançada) antes de pagar — obtido=${JSON.stringify(r)}` };

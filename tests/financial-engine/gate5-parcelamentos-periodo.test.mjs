@@ -25,7 +25,20 @@ function visivel(html, despesaId) {
   // Cartões/Faturas e Despesas conforme d.cartao e então abre o mesmo
   // openEditDespesa(). A regra de PERÍODO testada aqui (achado 1) não muda —
   // só o destino da edição, verificado à parte em gate5-cards-invoices-ui.test.mjs.
-  return html.includes(`abrirEdicaoDespesaNaAreaCerta('${despesaId}')`);
+  // SEC-2B1: o ID chega ao handler como literal JSON (jsArg), serializado no
+  // innerHTML com &quot;. A verificação lê os atributos on* decodificados e
+  // exige um comando EXATAMENTE igual a abrirEdicaoDespesaNaAreaCerta(<id>):
+  // função errada, ID diferente ou botão ausente continuam reprovando.
+  return temComando(html, 'abrirEdicaoDespesaNaAreaCerta', despesaId);
+}
+function comandosHandlers(html) {
+  return [...html.matchAll(/\son[a-z]+="([^"]*)"/g)]
+    .map((m) => m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&'))
+    .flatMap((h) => h.split(';').map((s) => s.trim()));
+}
+function temComando(html, fn, ...args) {
+  const alvo = `${fn}(${args.map((a) => JSON.stringify(a)).join(',')})`;
+  return comandosHandlers(html).includes(alvo);
 }
 
 // P5-01: título do card atualizado

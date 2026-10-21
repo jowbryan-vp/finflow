@@ -330,8 +330,11 @@ await check('PROJECTION_TIMELINE_ASC_TRANSFERS_COFRINHO_DESC_UNCHANGED', async (
     // não pela data formatada em texto — new Date(string ISO).toLocaleDateString
     // já desloca a exibição conforme o fuso local (comportamento existente,
     // não tocado por este gate), então comparar strings de data fixas seria frágil.
-    const posTB = htmlTransfer.indexOf(`editTransferencia('tB')`); // data mais recente (2026-09-10)
-    const posTA = htmlTransfer.indexOf(`editTransferencia('tA')`); // data mais antiga (2026-09-01)
+    // SEC-2B1: o ID chega como literal JSON (jsArg); a ordem é a posição do
+    // botão de editar no DOM, comparando o comando decodificado exato.
+    const edits = [...document.querySelectorAll('#transferenciasList [onclick]')].map((el) => el.getAttribute('onclick').trim());
+    const posTB = edits.indexOf(`editTransferencia(${JSON.stringify('tB')})`); // data mais recente (2026-09-10)
+    const posTA = edits.indexOf(`editTransferencia(${JSON.stringify('tA')})`); // data mais antiga (2026-09-01)
     const transferenciasDesc = posTB !== -1 && posTA !== -1 && posTB < posTA;
 
     // Cofrinho: a função de listagem (linha ~7670) já ordena

@@ -87,10 +87,13 @@ await check('ADJUSTED_TOTAL_NO_PURCHASES_STILL_SHOWN_AGRUPADA', async () => {
     currentMonth = 9; currentYear = 2026;
     navigate('despesas');
     const html = document.getElementById('despesasList').innerHTML;
+    // SEC-2B1: compara o comando do handler decodificado (ID como literal JSON via jsArg).
+    const hasLinkToCartoes = [...document.querySelectorAll('#despesasList [onclick]')]
+      .some((el) => el.getAttribute('onclick').split(';').map((s) => s.trim()).includes(`navigateToDespesasCartao(${JSON.stringify('nu')})`));
     return {
       showsEmptyState: /Nenhuma despesa neste mês/.test(html),
       shows80: html.includes('80,00'),
-      hasLinkToCartoes: /navigateToDespesasCartao\('nu'\)/.test(html),
+      hasLinkToCartoes,
     };
   });
   const ok = !r.showsEmptyState && r.shows80 && r.hasLinkToCartoes;

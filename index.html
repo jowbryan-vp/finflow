@@ -6688,7 +6688,7 @@ function toggleContribuicaoPaga(){
 function openPagarContribuicaoModal(){
   const valor=calcContribuicao(currentMonth,currentYear);
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Pagar Contribuição';
   document.getElementById('modalBody').innerHTML=`
@@ -6740,7 +6740,7 @@ function openEditarDataPagamentoFaturaModal(cardId,mesParam,anoParam){
       <div class="form-group full"><label for="editarFaturaData">Data do pagamento</label><input type="date" id="editarFaturaData" value="${atual||getTodayISO()}" max="${getTodayISO()}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="salvarDataPagamentoFatura('${cardId}',${mes},${ano})">✓ Salvar data</button>
+      <button class="btn btn-success" onclick="salvarDataPagamentoFatura(${jsArg(cardId)},${mes},${ano})">✓ Salvar data</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -6799,7 +6799,7 @@ function openPagarFaturaModal(cardId,mesParam,anoParam){
   // (ver toggleFaturaPaga) — só o pagamento de uma fatura vazia é bloqueado.
   if(!(valor>0)){ toast('Não há valor nessa fatura para pagar'); return; }
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Pagar Fatura — '+(card?.name||cardId);
   document.getElementById('modalBody').innerHTML=`
@@ -6809,7 +6809,7 @@ function openPagarFaturaModal(cardId,mesParam,anoParam){
       <div class="form-group full"><label for="pagarFaturaData">Data do pagamento</label><input type="date" id="pagarFaturaData" value="${getTodayISO()}" max="${getTodayISO()}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="confirmarPagamentoFatura('${cardId}',${mes},${ano})">✓ Confirmar pagamento</button>
+      <button class="btn btn-success" onclick="confirmarPagamentoFatura(${jsArg(cardId)},${mes},${ano})">✓ Confirmar pagamento</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -6865,8 +6865,8 @@ function openAjustarFaturaModal(cardId,mesParam,anoParam){
       <div class="form-group full"><label>Valor real cobrado pelo banco (R$)</label><input type="number" id="ajusteFaturaValor" value="${(jaAjustado?state.faturasAjustes[k]:valorCalculado).toFixed(2)}" step="0.01" min="0"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-primary" onclick="confirmarAjusteFatura('${cardId}',${mes},${ano})">Salvar Ajuste</button>
-      ${jaAjustado?`<button class="btn btn-ghost" onclick="removerAjusteFatura('${cardId}',${mes},${ano})">Remover ajuste</button>`:''}
+      <button class="btn btn-primary" onclick="confirmarAjusteFatura(${jsArg(cardId)},${mes},${ano})">Salvar Ajuste</button>
+      ${jaAjustado?`<button class="btn btn-ghost" onclick="removerAjusteFatura(${jsArg(cardId)},${mes},${ano})">Remover ajuste</button>`:''}
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -6929,7 +6929,7 @@ function renderResumoPagar(t){
     const valor=byCard[c.id]||0;
     if(valor>0 && !isFaturaPaga(c.id,currentMonth,currentYear)){
       itens.push({tipo:'fatura',nome:'Fatura '+esc(c.name),valor,cor:c.color,
-        acaoLabel:'Marcar como Paga', acao:`toggleFaturaPaga('${c.id}')`, verLink:`navigateToDespesasCartao('${c.id}')`});
+        acaoLabel:'Marcar como Paga', acao:`toggleFaturaPaga(${jsArg(c.id)})`, verLink:`navigateToDespesasCartao(${jsArg(c.id)})`});
     }
   });
   if(contrib>0 && !isContribuicaoPaga(currentMonth,currentYear)){
@@ -6939,7 +6939,7 @@ function renderResumoPagar(t){
   desps.filter(d=>!isCartaoDeCredito(d.cartao) && !d._pago).forEach(d=>{
     itens.push({tipo:'despesa',nome:esc(d.desc),valor:d._valorParcela,cor:'#94a3b8',
       acaoLabel:'Pago',
-      acao:`togglePago('${d.id}',${currentMonth},${currentYear})`, verLink:null});
+      acao:`togglePago(${jsArg(d.id)},${currentMonth},${currentYear})`, verLink:null});
   });
   itens.sort((a,b)=>b.valor-a.valor);
 
@@ -7440,15 +7440,15 @@ function renderDashboard(){
     const btn=isCC
       ?(paga
         ?`<div style="display:flex;gap:6px;margin-top:8px">
-            <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">Desmarcar</button>
-            <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openEditarDataPagamentoFaturaModal('${c.id}')" title="Data do pagamento">📅</button>
+            <button class="btn btn-ghost btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga(${jsArg(c.id)})">Desmarcar</button>
+            <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openEditarDataPagamentoFaturaModal(${jsArg(c.id)})" title="Data do pagamento">📅</button>
           </div>`
         :`<div style="display:flex;gap:6px;margin-top:8px">
-            <button class="btn btn-ok btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga('${c.id}')">✓ Marcar como Paga</button>
-            <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openAjustarFaturaModal('${c.id}')" title="Ajustar Fatura">⚖</button>
+            <button class="btn btn-ok btn-sm" style="flex:1" onclick="event.stopPropagation();toggleFaturaPaga(${jsArg(c.id)})">✓ Marcar como Paga</button>
+            <button class="btn btn-ghost btn-icon btn-sm" onclick="event.stopPropagation();openAjustarFaturaModal(${jsArg(c.id)})" title="Ajustar Fatura">⚖</button>
           </div>`)
       :'';
-    billHTML+=`<div class="bill-card" style="border-top-color:${safeCssColor(c.color)};cursor:pointer" onclick="navigateToDespesasCartao('${c.id}')">
+    billHTML+=`<div class="bill-card" style="border-top-color:${safeCssColor(c.color)};cursor:pointer" onclick="navigateToDespesasCartao(${jsArg(c.id)})">
       <div class="bill-name">${esc(c.name)} <span style="font-size:10px;color:var(--muted);font-weight:400">→ ver</span></div>
       ${statusBadge}
       <div class="bill-value" style="color:${isCC&&paga?'var(--ok)':isCC?'var(--danger)':'var(--text)'}">${fmtBRL(valor)}</div>
@@ -7877,7 +7877,7 @@ function renderReceitas(){
   const recContaSel=document.getElementById('recConta');
   if(recContaSel){
     recContaSel.innerHTML = state.contas.length
-      ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+      ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
   }
   let recs=getReceitasForMonth(currentMonth,currentYear);
@@ -7942,8 +7942,8 @@ function renderReceitas(){
 
     if(r._isParcela){
       const statusBtn=r._parcelaRecebida
-        ?`<button class="btn btn-ok btn-sm" onclick="toggleParcelaReceita('${r.id}',${r._parcelaIdx})">✓ Recebida</button>`
-        :`<button class="btn btn-warn btn-sm" onclick="toggleParcelaReceita('${r.id}',${r._parcelaIdx})">⏳ Prevista</button>`;
+        ?`<button class="btn btn-ok btn-sm" onclick="toggleParcelaReceita(${jsArg(r.id)},${r._parcelaIdx})">✓ Recebida</button>`
+        :`<button class="btn btn-warn btn-sm" onclick="toggleParcelaReceita(${jsArg(r.id)},${r._parcelaIdx})">⏳ Prevista</button>`;
       html+=`<div class="item-row ${r._parcelaRecebida?'pago':'previsto'}">
         ${itemRowDateHTML(getDataExibicaoReceita(r))}
         <div class="item-row-info">
@@ -7952,15 +7952,15 @@ function renderReceitas(){
         </div>
         <div class="item-row-val ${r._parcelaRecebida?'pos':'muted'}">${fmtBRL(r._parcelaValor)}</div>
         ${statusBtn}
-        <button class="btn btn-danger btn-icon btn-sm" onclick="delReceita('${r.id}')">✕</button>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="delReceita(${jsArg(r.id)})">✕</button>
       </div>`;
     } else {
       // Check button para TODAS as receitas (incluindo salário)
       let checkBtn='';
       if(recebida){
-        checkBtn=`<button class="btn btn-ok btn-sm" onclick="toggleReceitaRecebida('${r.id}')">✓ Recebida</button>`;
+        checkBtn=`<button class="btn btn-ok btn-sm" onclick="toggleReceitaRecebida(${jsArg(r.id)})">✓ Recebida</button>`;
       } else {
-        checkBtn=`<button class="btn btn-warn btn-sm" onclick="toggleReceitaRecebida('${r.id}')">⏳ Prevista</button>`;
+        checkBtn=`<button class="btn btn-warn btn-sm" onclick="toggleReceitaRecebida(${jsArg(r.id)})">⏳ Prevista</button>`;
       }
       html+=`<div class="item-row ${recebida?'pago':'previsto'}">
         ${itemRowDateHTML(getDataExibicaoReceita(r))}
@@ -7974,8 +7974,8 @@ function renderReceitas(){
         </div>
         <div class="item-row-val ${recebida?'pos':'muted'}">${fmtBRL(r.valor)}</div>
         ${checkBtn}
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditReceita('${r.id}')" title="Editar">✎</button>
-        <button class="btn btn-danger btn-icon btn-sm" onclick="delReceita('${r.id}')">✕</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditReceita(${jsArg(r.id)})" title="Editar">✎</button>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="delReceita(${jsArg(r.id)})">✕</button>
       </div>`;
     }
   });
@@ -8056,7 +8056,7 @@ function openConfirmarReceitaRecebidaModal(recId){
       <div class="form-group full"><label>Data real de recebimento</label><input type="date" id="confRecDataRecebimento" value="${hojeISO}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-primary" onclick="confirmarReceitaRecebidaComData('${recId}')">Confirmar</button>
+      <button class="btn btn-primary" onclick="confirmarReceitaRecebidaComData(${jsArg(recId)})">Confirmar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -8119,7 +8119,7 @@ function openEditReceita(id){
   const tipos={salario:'Salário Fixo',decimo:'13º Salário',ferias:'1/3 de Férias',extra:'Projeto Extra',repasse:'Reembolso de compra no cartão',resgate:'Resgate do Cofrinho'};
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
-      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
+      state.contas.map(c=>`<option value="${esc(c.id)}" ${r.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Receita';
   document.getElementById('modalBody').innerHTML=`
@@ -8139,7 +8139,7 @@ function openEditReceita(id){
       ${legacySalaryConversionHTML(r)}
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditReceita('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditReceita(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -8215,7 +8215,7 @@ function openEditReceitaNovoModelo(id){
   const r=state.receitas.find(x=>x.id===id);if(!r)return;
   const contaOpts = state.contas.length
     ? `<option value="" ${!r.conta?'selected':''}>— Sem conta vinculada —</option>` +
-      state.contas.map(c=>`<option value="${c.id}" ${r.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
+      state.contas.map(c=>`<option value="${esc(c.id)}" ${r.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   document.getElementById('modalTitle').textContent='Editar Receita';
   if(r.recorrencia){
@@ -8228,7 +8228,7 @@ function openEditReceitaNovoModelo(id){
         <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature,r)}</select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
-        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
+        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo(${jsArg(id)})">Salvar</button>
         <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       </div>`;
   } else {
@@ -8261,7 +8261,7 @@ function openEditReceitaNovoModelo(id){
         <div class="form-group full"><label for="eRecNatureza2">Natureza da receita</label><select id="eRecNatureza2">${incomeNatureOptionsHTML(r.incomeNature,r)}</select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:20px">
-        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo('${id}')">Salvar</button>
+        <button class="btn btn-success" onclick="saveEditReceitaNovoModelo(${jsArg(id)})">Salvar</button>
         <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
       </div>`;
   }
@@ -8329,7 +8329,7 @@ function navigateToDespesasCartao(cartaoId){
 
 function populateDespForma(){
   const catSel=document.getElementById('despCat');
-  if(catSel){catSel.innerHTML=state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');updateSubcats();}
+  if(catSel){catSel.innerHTML=state.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');updateSubcats();}
   const cardSel=document.getElementById('despCartao');
   if(cardSel){
     // Despesas foca pagamentos diretos (PIX/dinheiro/débito) — compra no
@@ -8338,12 +8338,12 @@ function populateDespForma(){
     // mostrando todos os cartões (ver openEditDespesa), só o cadastro NOVO
     // por aqui é restrito.
     const diretos=state.cards.filter(c=>!isCartaoDeCredito(c.id));
-    cardSel.innerHTML=diretos.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    cardSel.innerHTML=diretos.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   }
   const contaSel=document.getElementById('despConta');
   if(contaSel){
     contaSel.innerHTML = state.contas.length
-      ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+      ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
       : `<option value="">— Cadastre uma conta primeiro —</option>`;
   }
   // Data da compra: preenche com a data real de hoje por padrão (editável) —
@@ -8475,7 +8475,7 @@ function renderResultadoPesquisaLancamentos(){
           <div class="item-row-meta">${esc(cat?.name||'')} · ${esc(card?.name||d.cartao)} · ${MONTHS[d.mesInicio-1]} ${d.anoInicio} · ${jaPago?'<span style="color:var(--accent2)">Pago</span>':'<span style="color:var(--warn)">Previsto</span>'}</div>
         </div>
         <div class="item-row-val neg">${fmtBRL(d.valor)}</div>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();abrirEdicaoDespesaNaAreaCerta('${d.id}')" title="Editar">✎</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();abrirEdicaoDespesaNaAreaCerta(${jsArg(d.id)})" title="Editar">✎</button>
       </div>`;
     }).join('');
   }
@@ -8490,7 +8490,7 @@ function renderResultadoPesquisaLancamentos(){
           <div class="item-row-meta">${MONTHS[r.mes-1]} ${r.ano} · ${jaRecebida?'<span style="color:var(--accent2)">Recebida</span>':'<span style="color:var(--warn)">Prevista</span>'}</div>
         </div>
         <div class="item-row-val pos">${fmtBRL(r.valor)}</div>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();navigate('receitas');setTimeout(()=>openEditReceita('${r.id}'),150)" title="Editar">✎</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="closeModal();navigate('receitas');setTimeout(()=>openEditReceita(${jsArg(r.id)}),150)" title="Editar">✎</button>
       </div>`;
     }).join('');
   }
@@ -8655,8 +8655,8 @@ function despItemHTML(d){
   dots+='</div>';
   const actions=isDinheiroPix
     ?(d._pago
-      ?`<button class="btn btn-ok btn-sm" onclick="togglePago('${d.id}',${currentMonth},${currentYear})">✓ Pago</button>`
-      :`<button class="btn btn-warn btn-sm" onclick="togglePago('${d.id}',${currentMonth},${currentYear})">⏳ Previsto</button>`)
+      ?`<button class="btn btn-ok btn-sm" onclick="togglePago(${jsArg(d.id)},${currentMonth},${currentYear})">✓ Pago</button>`
+      :`<button class="btn btn-warn btn-sm" onclick="togglePago(${jsArg(d.id)},${currentMonth},${currentYear})">⏳ Previsto</button>`)
     :'';
   const splitBadge=(d.split&&d.split.length)
     ?`<span class="badge badge-yellow">👥</span>`:'';
@@ -8669,8 +8669,8 @@ function despItemHTML(d){
     </div>
     <div class="item-row-val ${isDinheiroPix&&!d._pago?'muted':'neg'}">${fmtBRL(d._valorParcela)}</div>
     ${actions}
-    <button class="btn btn-ghost btn-icon btn-sm" onclick="abrirEdicaoDespesaNaAreaCerta('${d.id}')" title="Editar">✎</button>
-    <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa('${d.id}')">✕</button>
+    <button class="btn btn-ghost btn-icon btn-sm" onclick="abrirEdicaoDespesaNaAreaCerta(${jsArg(d.id)})" title="Editar">✎</button>
+    <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa(${jsArg(d.id)})">✕</button>
   </div>`;
 }
 
@@ -8727,7 +8727,7 @@ function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
     if(isCC){
       const paga=isFaturaPaga(g.card.id,currentMonth,currentYear);
       const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
-      html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${g.card.id}')">
+      html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao(${jsArg(g.card.id)})">
         ${itemRowDateHTML(null)}
         <div style="width:14px;height:14px;border-radius:50%;background:${safeCssColor(g.card.color)};flex-shrink:0"></div>
         <div class="item-row-info">
@@ -8735,14 +8735,14 @@ function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
           <div class="item-row-meta">${g.items.length} compra${g.items.length!==1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
         </div>
         <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(totalEfetivo)}</span>
-        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao('${g.card.id}')">Ver fatura →</button>
+        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao(${jsArg(g.card.id)})">Ver fatura →</button>
       </div>`;
       return;
     }
     if(!g.items.length) return;
     const accId=g.card.id.replace(/[^a-z0-9]/gi,'_');
     html+=`<div class="accordion">
-      <div class="accordion-head" onclick="toggleAccordion('${accId}')">
+      <div class="accordion-head" onclick="toggleAccordion(${jsArg(accId)})">
         <div style="width:14px;height:14px;border-radius:50%;background:${safeCssColor(g.card.color)};flex-shrink:0"></div>
         <div class="accordion-head-info">
           <div class="accordion-head-name">${esc(g.card.name)}</div>
@@ -8750,10 +8750,10 @@ function renderDespesasAgrupadas(despsFiltradas, contrib, byCardEfetivo){
         </div>
         <div class="accordion-head-right">
           <span class="mono" style="font-size:15px;font-weight:600;color:var(--danger)">${fmtBRL(g.total)}</span>
-          <span class="accordion-chevron" id="acc-chev-${accId}">▶</span>
+          <span class="accordion-chevron" id="acc-chev-${esc(accId)}">▶</span>
         </div>
       </div>
-      <div class="accordion-body" id="acc-body-${accId}">
+      <div class="accordion-body" id="acc-body-${esc(accId)}">
         ${g.items.map(d=>despItemHTML(d)).join('')}
       </div>
     </div>`;
@@ -8809,7 +8809,7 @@ function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard, byCardEfeti
     const paga=isFaturaPaga(cardId,currentMonth,currentYear);
     const statusBadge=paga?'<span class="badge badge-ok">✓ Fatura Paga</span>':'<span class="badge badge-yellow">⏳ Pendente</span>';
     const totalEfetivo=(byCardEfetivo&&byCardEfetivo[cardId]!==undefined)?byCardEfetivo[cardId]:g.total;
-    html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao('${cardId}')">
+    html+=`<div class="item-row" style="cursor:pointer" onclick="navigateToDespesasCartao(${jsArg(cardId)})">
       ${itemRowDateHTML(null)}
       <div style="width:14px;height:14px;border-radius:50%;background:${safeCssColor(card.color)};flex-shrink:0"></div>
       <div class="item-row-info">
@@ -8817,7 +8817,7 @@ function renderDespesasDetalhadas(despsFiltradas, contrib, filtCard, byCardEfeti
         <div class="item-row-meta">${g.items.length} compra${g.items.length!==1?'s':''} no cartão · gerenciado em Cartões / Faturas</div>
       </div>
       <span class="mono" style="font-size:15px;font-weight:600;color:${paga?'var(--ok)':'var(--danger)'}">${fmtBRL(totalEfetivo)}</span>
-      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao('${cardId}')">Ver fatura →</button>
+      <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();navigateToDespesasCartao(${jsArg(cardId)})">Ver fatura →</button>
     </div>`;
   });
   html+='</div>';
@@ -8843,11 +8843,11 @@ function delDespesa(id){
 
 function openEditDespesa(id){
   const d=state.despesas.find(x=>x.id===id);if(!d)return;
-  const catOpts=state.categories.map(c=>`<option value="${c.id}" ${d.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
-  const cardOpts=state.cards.map(c=>`<option value="${c.id}" ${d.cartao===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  const catOpts=state.categories.map(c=>`<option value="${esc(c.id)}" ${d.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  const cardOpts=state.cards.map(c=>`<option value="${esc(c.id)}" ${d.cartao===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
   const contaOpts = state.contas.length
     ? `<option value="" ${!d.conta?'selected':''}>— Sem conta vinculada —</option>` +
-      state.contas.map(c=>`<option value="${c.id}" ${d.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
+      state.contas.map(c=>`<option value="${esc(c.id)}" ${d.conta===c.id?'selected':''}>${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Nenhuma conta cadastrada —</option>`;
   const cat=state.categories.find(c=>c.id===d.cat);
   const subOpts=(cat?.subs||[]).map(s=>`<option value="${esc(s)}" ${d.subcat===s?'selected':''}>${esc(s)}</option>`).join('');
@@ -8868,7 +8868,7 @@ function openEditDespesa(id){
       <div class="form-group"><label>Ano Início</label><input type="number" id="eDespAno" value="${d.anoInicio}" min="2020" max="2040"></div>
       <div class="form-group full" id="eDespDataCompraGroup">
         <label>Data da compra</label>
-        <input type="date" id="eDespDataCompra" value="${d.dataCompra||''}" onchange="eOnDataCompraChange('${id}')">
+        <input type="date" id="eDespDataCompra" value="${d.dataCompra||''}" onchange="eOnDataCompraChange(${jsArg(id)})">
         ${!d.dataCompra?'<div style="font-size:10px;color:var(--muted);margin-top:3px">Lançamento antigo, sem data exata registrada — deixe em branco pra manter o comportamento de sempre (mês da compra + 1 pro cartão). Preencher uma data real pode mudar em qual fatura essa compra aparece; o app avisa antes de aplicar.</div>':''}
         <div id="eDespDataCompraWarn" style="display:none"></div>
       </div>
@@ -8906,7 +8906,7 @@ function openEditDespesa(id){
       </div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditDespesa('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditDespesa(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -8939,7 +8939,7 @@ function eRenderSplitRows(){
   if(!list)return;
   let html='';
   currentSplitRows.forEach((row,idx)=>{
-    const opts=state.pessoas.map(p=>`<option value="${p.id}" ${row.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
+    const opts=state.pessoas.map(p=>`<option value="${esc(p.id)}" ${row.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
     html+=`<div class="item-row">
       <select style="flex:1" onchange="eUpdateSplitRow(${idx},'personId',this.value)">${opts}</select>
       <input type="number" min="0" max="100" step="1" value="${row.percent}" style="width:80px" onchange="eUpdateSplitRow(${idx},'percent',this.value)">
@@ -9125,8 +9125,8 @@ function renderParcelamentos(){
       <td style="min-width:100px"><div style="font-size:11px;color:var(--muted)">${pct}%</div><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div></td>
       <td class="mono" style="color:var(--danger)">${fmtBRL(d.valor/d.parcelas)}</td>
       <td style="display:flex;gap:6px">
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="abrirEdicaoDespesaNaAreaCerta('${d.id}')">✎</button>
-        <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa('${d.id}')">✕</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="abrirEdicaoDespesaNaAreaCerta(${jsArg(d.id)})">✎</button>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="delDespesa(${jsArg(d.id)})">✕</button>
       </td>
     </tr>`;
   });
@@ -9281,7 +9281,7 @@ function executarLimpezaDuplicados(){
 
 function renderCategorias(){
   const sel=document.getElementById('subcatParent');
-  if(sel)sel.innerHTML=state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  if(sel)sel.innerHTML=state.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   let html='<div class="item-list">';
   if(!state.categories.length) html+='<div class="empty-state">Nenhuma categoria cadastrada ainda. Adicione a primeira ao lado.</div>';
   state.categories.forEach(cat=>{
@@ -9289,7 +9289,7 @@ function renderCategorias(){
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius) var(--radius) 0 0">
         <span style="font-weight:600;font-size:13px">${esc(cat.name)}</span>
         <div style="display:flex;gap:6px;align-items:center">
-          <button class="btn btn-danger btn-icon btn-sm" onclick="delCategoria('${cat.id}')">✕</button>
+          <button class="btn btn-danger btn-icon btn-sm" onclick="delCategoria(${jsArg(cat.id)})">✕</button>
         </div>
       </div>
       <div style="background:var(--input-bg);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--radius) var(--radius);padding:10px 14px;display:flex;flex-wrap:wrap;gap:6px">
@@ -9348,7 +9348,7 @@ function openEditCartao(id){
       <div class="form-group"><label>Pagamento (dia)</label><input type="number" id="eCardPaga" value="${c.paga||''}" min="1" max="31" placeholder="Ex: 20"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditCartao('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditCartao(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -9366,7 +9366,7 @@ function renderCartoes(){
   if(faturaCartaoSel){
     const cartoesCredito=state.cards.filter(c=>c.id!=='dinheiro');
     faturaCartaoSel.innerHTML = cartoesCredito.length
-      ? cartoesCredito.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')
+      ? cartoesCredito.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
       : `<option value="">— Cadastre um cartão primeiro —</option>`;
   }
   let html='<div class="item-list">';
@@ -9380,8 +9380,8 @@ function renderCartoes(){
         <div class="item-row-meta">${c.fecha?`Fecha dia ${c.fecha} · Paga dia ${c.paga||'—'}`:'Sem datas configuradas'}</div>
       </div>
       ${isDef?'<span class="tag">Padrão</span>':''}
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditCartao('${c.id}')">✎</button>
-      ${!isDef?`<button class="btn btn-danger btn-icon btn-sm" onclick="delCartao('${c.id}')">✕</button>`:''}
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditCartao(${jsArg(c.id)})">✎</button>
+      ${!isDef?`<button class="btn btn-danger btn-icon btn-sm" onclick="delCartao(${jsArg(c.id)})">✕</button>`:''}
     </div>`;
   });
   html+='</div>';document.getElementById('cartoesList').innerHTML=html;
@@ -9442,7 +9442,7 @@ function renderFaturaCartoes(){
   }
   const cardId=window._faturaCartaoSelecionado;
   const card=cartoesCredito.find(c=>c.id===cardId);
-  if(sel) sel.innerHTML=cartoesCredito.map(c=>`<option value="${c.id}" ${c.id===cardId?'selected':''}>${esc(c.name)}</option>`).join('');
+  if(sel) sel.innerHTML=cartoesCredito.map(c=>`<option value="${esc(c.id)}" ${c.id===cardId?'selected':''}>${esc(c.name)}</option>`).join('');
   document.getElementById('cartaoFaturaPeriodo').textContent=`${MONTHS[currentMonth-1]} ${currentYear}`;
 
   const byCard=calcByCardForMonth(currentMonth,currentYear);
@@ -9461,13 +9461,13 @@ function renderFaturaCartoes(){
   // estado antigo já estiver marcado como pago, e "Ajustar Fatura" continua
   // acessível (é o jeito de corrigir um total que a compra ainda não reflete).
   const acaoBtn=paga
-    ?`<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga('${cardId}')">Desmarcar</button>
-      <button class="btn btn-ghost btn-sm" onclick="openEditarDataPagamentoFaturaModal('${cardId}')" title="Data do pagamento">📅 Data</button>`
+    ?`<button class="btn btn-ghost btn-sm" onclick="toggleFaturaPaga(${jsArg(cardId)})">Desmarcar</button>
+      <button class="btn btn-ghost btn-sm" onclick="openEditarDataPagamentoFaturaModal(${jsArg(cardId)})" title="Data do pagamento">📅 Data</button>`
     :(total>0
-      ?`<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${cardId}')">✓ Marcar como Paga</button>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`
+      ?`<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga(${jsArg(cardId)})">✓ Marcar como Paga</button>
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal(${jsArg(cardId)})" title="Ajustar Fatura">⚖</button>`
       :`<span style="font-size:12px;color:var(--muted)">Sem valor a pagar</span>
-        <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal('${cardId}')" title="Ajustar Fatura">⚖</button>`);
+        <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjustarFaturaModal(${jsArg(cardId)})" title="Ajustar Fatura">⚖</button>`);
   document.getElementById('cartaoFaturaResumo').innerHTML=`
     <div class="mini-grid" style="grid-template-columns:repeat(3,1fr)">
       <div class="mini-tile">
@@ -9526,8 +9526,8 @@ function openNovaCompraCartao(){
   const cartoesCredito=state.cards.filter(c=>isCartaoDeCredito(c.id));
   if(!cartoesCredito.length){ toast('Cadastre um cartão de crédito primeiro'); return; }
   const cartaoPreferido=cartoesCredito.some(c=>c.id===window._faturaCartaoSelecionado)?window._faturaCartaoSelecionado:cartoesCredito[0].id;
-  const catOpts=state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  const cardOpts=cartoesCredito.map(c=>`<option value="${c.id}" ${c.id===cartaoPreferido?'selected':''}>${esc(c.name)}</option>`).join('');
+  const catOpts=state.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  const cardOpts=cartoesCredito.map(c=>`<option value="${esc(c.id)}" ${c.id===cartaoPreferido?'selected':''}>${esc(c.name)}</option>`).join('');
   const primeiraCat=state.categories[0];
   const subOpts=(primeiraCat?.subs||[]).map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
   const hoje=new Date();
@@ -9700,7 +9700,7 @@ function abrirModalConferenciaFatura(cartaoId){
 }
 function renderFaturaConferenciaBody(cartaoId){
   const rows=faturaPdfItensExtraidos.map((it,i)=>{
-    const catOpts=state.categories.map(c=>`<option value="${c.id}" ${it.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+    const catOpts=state.categories.map(c=>`<option value="${esc(c.id)}" ${it.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
     const catObj=state.categories.find(c=>c.id===it.cat);
     const subOpts='<option value="">—</option>'+(catObj?.subs||[]).map(s=>`<option value="${esc(s)}" ${it.subcat===s?'selected':''}>${esc(s)}</option>`).join('');
     return `<tr>
@@ -9708,7 +9708,7 @@ function renderFaturaConferenciaBody(cartaoId){
       <td class="mono" style="font-size:12px;white-space:nowrap">${it.data}</td>
       <td><input type="text" value="${(it.desc||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:140px" onchange="faturaPdfItensExtraidos[${i}].desc=this.value"></td>
       <td class="mono"><input type="number" value="${it.valor}" step="0.01" style="width:90px" onchange="faturaPdfItensExtraidos[${i}].valor=parseFloat(this.value)||0"></td>
-      <td><select onchange="faturaPdfItensExtraidos[${i}].cat=this.value;faturaPdfItensExtraidos[${i}].subcat='';renderModalFaturaTabela('${cartaoId}')">${catOpts}</select></td>
+      <td><select onchange="faturaPdfItensExtraidos[${i}].cat=this.value;faturaPdfItensExtraidos[${i}].subcat='';renderModalFaturaTabela(${jsArg(cartaoId)})">${catOpts}</select></td>
       <td><select onchange="faturaPdfItensExtraidos[${i}].subcat=this.value">${subOpts}</select></td>
     </tr>`;
   }).join('');
@@ -9720,7 +9720,7 @@ function renderFaturaConferenciaBody(cartaoId){
       </table>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="confirmarLancamentosFatura('${cartaoId}')">✓ Confirmar Lançamentos</button>
+      <button class="btn btn-success" onclick="confirmarLancamentosFatura(${jsArg(cartaoId)})">✓ Confirmar Lançamentos</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
 }
@@ -9803,7 +9803,7 @@ function openEditConta(id){
       <div class="form-group"><label>Saldo inicial</label><input type="number" id="eContaSaldoInicial" value="${c.saldoInicial}" step="0.01"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditConta('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditConta(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -9828,7 +9828,7 @@ function openAjusteSaldoConta(id){
       <div class="form-group full"><label>Motivo do ajuste (opcional)</label><input type="text" id="ajusteContaObs" placeholder="Ex: conferência com extrato do banco"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="salvarAjusteSaldoConta('${id}')">Salvar ajuste</button>
+      <button class="btn btn-success" onclick="salvarAjusteSaldoConta(${jsArg(id)})">Salvar ajuste</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -9863,7 +9863,7 @@ function openTransferenciaModal(editId){
       existente={origemId:saida.contaId,destinoId:entrada.contaId,valor:Math.abs(saida.valor),data:saida.data,obs:obsLimpa};
     }
   }
-  const opts=c=>state.contas.map(x=>`<option value="${x.id}" ${x.id===c?'selected':''}>${contaLabelHTML(x)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
+  const opts=c=>state.contas.map(x=>`<option value="${esc(x.id)}" ${x.id===c?'selected':''}>${contaLabelHTML(x)} (${fmtBRL(calcSaldoConta(x.id))})</option>`).join('');
   document.getElementById('modalTitle').textContent=existente?'Editar Transferência':'Transferir entre Contas';
   document.getElementById('modalBody').innerHTML=`
     <div class="form-grid">
@@ -9874,7 +9874,7 @@ function openTransferenciaModal(editId){
       <div class="form-group full"><label>Descrição (opcional)</label><input type="text" id="transfObs" placeholder="Ex: repasse para pagar fatura do cartão" value="${existente?esc(existente.obs):''}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="salvarTransferencia(${editId?`'${editId}'`:'null'})">${existente?'Salvar alterações':'Transferir'}</button>
+      <button class="btn btn-success" onclick="salvarTransferencia(${editId?jsArg(editId):'null'})">${existente?'Salvar alterações':'Transferir'}</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -10056,9 +10056,9 @@ function renderContas(){
         <div class="item-row-meta">Saldo inicial: ${fmtBRL(c.saldoInicial)}</div>
       </div>
       <div class="item-row-val ${saldo>=0?'pos':'neg'}" style="font-size:15px">${fmtBRL(saldo)}</div>
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjusteSaldoConta('${c.id}')" title="Ajustar saldo">⚖</button>
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditConta('${c.id}')">✎</button>
-      <button class="btn btn-danger btn-icon btn-sm" onclick="delConta('${c.id}')">✕</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openAjusteSaldoConta(${jsArg(c.id)})" title="Ajustar saldo">⚖</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditConta(${jsArg(c.id)})">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delConta(${jsArg(c.id)})">✕</button>
     </div>`;
   });
   html+='</div>';document.getElementById('contasList').innerHTML=html;
@@ -10130,8 +10130,8 @@ function renderTransferencias(){
         <div class="item-row-meta">${obsLimpa?esc(obsLimpa):''}</div>
       </div>
       <div class="item-row-val" style="font-size:15px">${fmtBRL(t.valor)}</div>
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="editTransferencia('${transferId}')" title="Editar">✎</button>
-      <button class="btn btn-danger btn-icon btn-sm" onclick="delTransferencia('${transferId}')" title="Excluir">✕</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="editTransferencia(${jsArg(transferId)})" title="Editar">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delTransferencia(${jsArg(transferId)})" title="Excluir">✕</button>
     </div>`;
   });
   html+='</div>';
@@ -10203,12 +10203,12 @@ function cashObligationAction(e){
   const parts=e.id.split(':'),key=parts[parts.length-1],ref=parts.slice(1,-1).join(':');
   const [ano,mes]=(key||'').split('-').map(Number);
   if(!ano||!mes) return '';
-  if(e.kind==='invoice') return `<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga('${esc(ref)}',${mes},${ano})">✓ Pago</button>`;
+  if(e.kind==='invoice') return `<button class="btn btn-ok btn-sm" onclick="toggleFaturaPaga(${jsArg(ref)},${mes},${ano})">✓ Pago</button>`;
   if(e.kind==='expense'){
     const d=(state.despesas||[]).find(x=>x.id===ref);
     if(!d) return '';
     if(d.debitoAutomatico) return '<span class="badge badge-blue">🔁 Débito automático</span>';
-    return `<button class="btn btn-ok btn-sm" onclick="togglePago('${esc(ref)}',${mes},${ano})">✓ Pago</button>`;
+    return `<button class="btn btn-ok btn-sm" onclick="togglePago(${jsArg(ref)},${mes},${ano})">✓ Pago</button>`;
   }
   return ''; // contribuição: marcada como paga no painel Destinação
 }
@@ -10298,7 +10298,7 @@ function openEditPessoa(id){
       <div class="form-group"><label>Cor</label><input type="color" id="ePersonColor" value="${safeColorInput(p.color)}" oninput="this.dataset.colorEdited='1'" style="height:38px;padding:4px"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="saveEditPessoa('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="saveEditPessoa(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -10316,8 +10316,8 @@ function renderPessoas(){
     html+=`<div class="item-row">
       <div style="width:16px;height:16px;border-radius:50%;background:${safeCssColor(p.color)};flex-shrink:0"></div>
       <div class="item-row-info"><div class="item-row-name">${esc(p.name)}</div></div>
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditPessoa('${p.id}')">✎</button>
-      <button class="btn btn-danger btn-icon btn-sm" onclick="delPessoa('${p.id}')">✕</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditPessoa(${jsArg(p.id)})">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delPessoa(${jsArg(p.id)})">✕</button>
     </div>`;
   });
   html+='</div>';document.getElementById('pessoasList').innerHTML=html;
@@ -10354,7 +10354,7 @@ function renderSplitRows(){
   if(!list)return;
   let html='';
   currentSplitRows.forEach((row,idx)=>{
-    const opts=state.pessoas.map(p=>`<option value="${p.id}" ${row.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
+    const opts=state.pessoas.map(p=>`<option value="${esc(p.id)}" ${row.personId===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
     html+=`<div class="item-row">
       <select style="flex:1" onchange="updateSplitRow(${idx},'personId',this.value)">${opts}</select>
       <input type="number" min="0" max="100" step="1" value="${row.percent}" style="width:80px" onchange="updateSplitRow(${idx},'percent',this.value)">
@@ -10471,7 +10471,7 @@ function renderRelatorioPessoas(){
     const pendente=p.totalDevido-p.totalRecebido;
     const accId='pessoa_'+p.id.replace(/[^a-z0-9]/gi,'_');
     html+=`<div class="accordion" style="margin-bottom:14px">
-      <div class="accordion-head" onclick="toggleAccordion('${accId}')">
+      <div class="accordion-head" onclick="toggleAccordion(${jsArg(accId)})">
         <div style="width:14px;height:14px;border-radius:50%;background:${safeCssColor(p.color)};flex-shrink:0"></div>
         <div class="accordion-head-info">
           <div class="accordion-head-name">${esc(p.name)}</div>
@@ -10481,13 +10481,13 @@ function renderRelatorioPessoas(){
           </div>
         </div>
         <div class="accordion-head-right">
-          ${pendente>0?`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();openRegistrarRepasse('${p.id}',${currentMonth},${currentYear},${pendente.toFixed(2)})">💰 Registrar recebimento</button>`:'<span class="badge badge-ok">✓ Tudo recebido</span>'}
-          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();exportarRepassePessoaPDF('${p.id}')" title="Exportar PDF">🖨 Exportar PDF</button>
+          ${pendente>0?`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();openRegistrarRepasse(${jsArg(p.id)},${currentMonth},${currentYear},${pendente.toFixed(2)})">💰 Registrar recebimento</button>`:'<span class="badge badge-ok">✓ Tudo recebido</span>'}
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();exportarRepassePessoaPDF(${jsArg(p.id)})" title="Exportar PDF">🖨 Exportar PDF</button>
           <span class="mono" style="font-size:14px;font-weight:600">${fmtBRL(p.totalDevido)}</span>
-          <span class="accordion-chevron" id="acc-chev-${accId}">▶</span>
+          <span class="accordion-chevron" id="acc-chev-${esc(accId)}">▶</span>
         </div>
       </div>
-      <div class="accordion-body" id="acc-body-${accId}">
+      <div class="accordion-body" id="acc-body-${esc(accId)}">
         ${p.items.map(r=>{
           const cat=state.categories.find(c=>c.id===r.cat);
           return `<div class="item-row ${r.recebido?'pago':'previsto'}">
@@ -10498,8 +10498,8 @@ function renderRelatorioPessoas(){
             </div>
             <div class="item-row-val ${r.recebido?'pos':'muted'}">${fmtBRL(r.valorPessoa)}</div>
             ${r.recebido
-              ?`<button class="btn btn-ok btn-sm" onclick="toggleRepasse('${r.despesaId}','${r.personId}',${r.mes},${r.ano},${r.comoReceita})">✓ Recebido</button>`
-              :`<button class="btn btn-warn btn-sm" onclick="openRepasseChoice('${r.despesaId}','${r.personId}',${r.mes},${r.ano})">⏳ Pendente</button>`}
+              ?`<button class="btn btn-ok btn-sm" onclick="toggleRepasse(${jsArg(r.despesaId)},${jsArg(r.personId)},${r.mes},${r.ano},${r.comoReceita})">✓ Recebido</button>`
+              :`<button class="btn btn-warn btn-sm" onclick="openRepasseChoice(${jsArg(r.despesaId)},${jsArg(r.personId)},${r.mes},${r.ano})">⏳ Pendente</button>`}
           </div>`;
         }).join('')}
       </div>
@@ -10529,7 +10529,7 @@ function openRegistrarRepasse(personId, mes, ano, pendente){
       </div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="confirmarRegistroRepasse('${personId}',${mes},${ano})">💰 Confirmar recebimento</button>
+      <button class="btn btn-success" onclick="confirmarRegistroRepasse(${jsArg(personId)},${mes},${ano})">💰 Confirmar recebimento</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -10574,10 +10574,10 @@ function openRepasseChoice(despesaId,personId,mes,ano){
   document.getElementById('modalBody').innerHTML=`
     <div class="info-box" style="margin-bottom:16px">Como você quer registrar esse reembolso recebido?</div>
     <div style="display:flex;flex-direction:column;gap:10px">
-      <button class="btn btn-success" onclick="toggleRepasse('${despesaId}','${personId}',${mes},${ano},true);closeModal()">
+      <button class="btn btn-success" onclick="toggleRepasse(${jsArg(despesaId)},${jsArg(personId)},${mes},${ano},true);closeModal()">
         💰 Lançar como Receita (entra no saldo do mês)
       </button>
-      <button class="btn btn-primary" onclick="toggleRepasse('${despesaId}','${personId}',${mes},${ano},false);closeModal()">
+      <button class="btn btn-primary" onclick="toggleRepasse(${jsArg(despesaId)},${jsArg(personId)},${mes},${ano},false);closeModal()">
         📝 Só abater valor pendente (não mexe no saldo)
       </button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
@@ -10638,17 +10638,17 @@ function populateFiltros(){
   // Popula apenas as opções dos selects — NÃO reseta os valores selecionados
   const catSel=document.getElementById('filtCat');
   const catAtual=catSel.value; // preserva seleção atual
-  catSel.innerHTML='<option value="">Todas</option>'+state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  catSel.innerHTML='<option value="">Todas</option>'+state.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   if(catAtual) catSel.value=catAtual;
 
   const cardSel=document.getElementById('filtCartao');
   const cardAtual=cardSel.value;
-  cardSel.innerHTML='<option value="">Todos</option>'+state.cards.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  cardSel.innerHTML='<option value="">Todos</option>'+state.cards.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   if(cardAtual) cardSel.value=cardAtual;
 
   const pessoaSel=document.getElementById('filtPessoa');
   const pessoaAtual=pessoaSel.value;
-  pessoaSel.innerHTML='<option value="">Todas</option>'+state.pessoas.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  pessoaSel.innerHTML='<option value="">Todas</option>'+state.pessoas.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
   if(pessoaAtual) pessoaSel.value=pessoaAtual;
 
   onFiltCatChange();
@@ -10956,7 +10956,7 @@ function renderComparativo(){
     const cor=COMP_COLORS[compCatsSelecionadas.indexOf(catId)>=0?compCatsSelecionadas.indexOf(catId)%COMP_COLORS.length:i%COMP_COLORS.length];
     const marcado=compCatsSelecionadas.includes(catId);
     return `<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:${marcado?'var(--text)':'var(--muted)'}">
-      <input type="checkbox" style="width:auto" ${marcado?'checked':''} onchange="compToggleCat('${catId}')">
+      <input type="checkbox" style="width:auto" ${marcado?'checked':''} onchange="compToggleCat(${jsArg(catId)})">
       <span style="width:10px;height:10px;border-radius:3px;background:${cor};flex-shrink:0"></span>
       ${esc(cat?.name||catId)}
     </label>`;
@@ -11117,7 +11117,7 @@ function openEditSaldoInicialCofrinho(id){
       <div class="form-group full"><label>Saldo inicial (R$)</label><input type="number" id="editSaldoInicialVal" value="${c.saldoInicial||0}" min="0" step="0.01"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:20px">
-      <button class="btn btn-success" onclick="salvarSaldoInicialCofrinho('${id}')">Salvar</button>
+      <button class="btn btn-success" onclick="salvarSaldoInicialCofrinho(${jsArg(id)})">Salvar</button>
       <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
     </div>`;
   document.getElementById('modalOverlay').classList.add('open');
@@ -11143,9 +11143,9 @@ function getSaldoTotalCofrinho(){
 }
 
 function openDepositarCofrinho(){
-  const opts=state.cofrinhos.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const opts=state.cofrinhos.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Depositar no Cofrinho';
   document.getElementById('modalBody').innerHTML=`
@@ -11200,9 +11200,9 @@ function renderCofrinho(){
         <div class="progress-bar" style="margin-top:4px"><div class="progress-fill" style="width:${total>0?(saldo/total*100).toFixed(0):0}%;background:${safeCssColor(c.color)}"></div></div>
       </div>
       <div class="item-row-val pos">${fmtBRL(saldo)}</div>
-      <button class="btn btn-warn btn-sm" onclick="openResgatarCofrinho('${c.id}')" ${saldo<=0?'disabled':''}>↩ Resgatar</button>
-      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSaldoInicialCofrinho('${c.id}')" title="Editar saldo inicial">✎</button>
-      <button class="btn btn-danger btn-icon btn-sm" onclick="delCofrinho('${c.id}')">✕</button>
+      <button class="btn btn-warn btn-sm" onclick="openResgatarCofrinho(${jsArg(c.id)})" ${saldo<=0?'disabled':''}>↩ Resgatar</button>
+      <button class="btn btn-ghost btn-icon btn-sm" onclick="openEditSaldoInicialCofrinho(${jsArg(c.id)})" title="Editar saldo inicial">✎</button>
+      <button class="btn btn-danger btn-icon btn-sm" onclick="delCofrinho(${jsArg(c.id)})">✕</button>
     </div>`;
   });
   if(!state.cofrinhos.length) saldoHTML+='<div class="empty-state">Nenhum cofrinho</div>';
@@ -11226,7 +11226,7 @@ function renderCofrinho(){
       <td><span style="display:inline-flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:${safeCssColor(c?.color,'#999')};display:inline-block"></span>${esc(c?.name||'—')}</span></td>
       <td style="color:var(--muted);font-size:12px">${esc(m.obs||'—')}</td>
       <td class="mono" style="color:${mIsResgate?'var(--warn)':'var(--accent2)'}">${mIsResgate?'-':''}${fmtBRL(m.valor)}</td>
-      <td><button class="btn btn-danger btn-icon btn-sm" onclick="delMovimentacaoCofrinho('${m.id}')">✕</button></td>
+      <td><button class="btn btn-danger btn-icon btn-sm" onclick="delMovimentacaoCofrinho(${jsArg(m.id)})">✕</button></td>
     </tr>`;
   });
   html+='</tbody></table>';
@@ -11382,8 +11382,8 @@ function renderEseParcelaInfo(id){
 }
 
 function renderEseItemList(){
-  const catOpts=state.categories.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
-  const cardOpts=state.cards.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const catOpts=state.categories.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  const cardOpts=state.cards.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
   const mesOpts=MONTHS.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('');
 
   const hint=document.getElementById('eseEmptyHint');
@@ -11393,45 +11393,45 @@ function renderEseItemList(){
 
   let html='';
   eseItens.forEach((item,idx)=>{
-    const catOptsSelected=state.categories.map(c=>`<option value="${c.id}" ${item.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
-    const cardOptsSelected=state.cards.map(c=>`<option value="${c.id}" ${item.cartao===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+    const catOptsSelected=state.categories.map(c=>`<option value="${esc(c.id)}" ${item.cat===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+    const cardOptsSelected=state.cards.map(c=>`<option value="${esc(c.id)}" ${item.cartao===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
     const mesOptsSelected=MONTHS.map((m,i)=>`<option value="${i+1}" ${item.mesInicio===i+1?'selected':''}>${m}</option>`).join('');
     html+=`<div style="background:var(--input-bg);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <span style="font-weight:600;font-size:13px;color:var(--accent)">Compra ${idx+1}</span>
-        <button class="btn btn-danger btn-icon btn-sm" onclick="removeEseItem('${item.id}')">✕</button>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="removeEseItem(${jsArg(item.id)})">✕</button>
       </div>
       <div class="form-grid">
         <div class="form-group full">
           <label>Descrição</label>
-          <input type="text" value="${esc(item.desc)}" placeholder="Ex: Notebook Dell, Monitor 4K..." onchange="eseItens.find(x=>x.id==='${item.id}').desc=this.value">
+          <input type="text" value="${esc(item.desc)}" placeholder="Ex: Notebook Dell, Monitor 4K..." onchange="eseItens.find(x=>x.id===${jsArg(item.id)}).desc=this.value">
         </div>
         <div class="form-group">
           <label>Valor Total (R$)</label>
-          <input type="number" value="${item.valor||''}" min="0" step="0.01" placeholder="0,00" oninput="updateEseItem('${item.id}','valor',this.value)">
+          <input type="number" value="${item.valor||''}" min="0" step="0.01" placeholder="0,00" oninput="updateEseItem(${jsArg(item.id)},'valor',this.value)">
         </div>
         <div class="form-group">
           <label>Nº de Parcelas</label>
-          <input type="number" value="${item.parcelas||1}" min="1" max="120" oninput="updateEseItem('${item.id}','parcelas',this.value)">
+          <input type="number" value="${item.parcelas||1}" min="1" max="120" oninput="updateEseItem(${jsArg(item.id)},'parcelas',this.value)">
         </div>
-        <div class="form-group full" id="ese-parcel-info-${item.id}" style="display:${item.parcelas>1&&item.valor>0?'block':'none'};background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.2);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted)">
+        <div class="form-group full" id="ese-parcel-info-${esc(item.id)}" style="display:${item.parcelas>1&&item.valor>0?'block':'none'};background:rgba(91,127,255,.08);border:1px solid rgba(91,127,255,.2);border-radius:var(--radius);padding:8px 12px;font-size:12px;color:var(--muted)">
           ${item.parcelas>1&&item.valor>0?`${item.parcelas}x de ${fmtBRL(item.valor/item.parcelas)} = Total ${fmtBRL(item.valor)}`:''}
         </div>
         <div class="form-group">
           <label>Mês início</label>
-          <select onchange="updateEseItem('${item.id}','mesInicio',this.value)">${mesOptsSelected}</select>
+          <select onchange="updateEseItem(${jsArg(item.id)},'mesInicio',this.value)">${mesOptsSelected}</select>
         </div>
         <div class="form-group">
           <label>Ano início</label>
-          <input type="number" value="${item.anoInicio}" min="2020" max="2040" oninput="updateEseItem('${item.id}','anoInicio',this.value)">
+          <input type="number" value="${item.anoInicio}" min="2020" max="2040" oninput="updateEseItem(${jsArg(item.id)},'anoInicio',this.value)">
         </div>
         <div class="form-group">
           <label>Categoria</label>
-          <select onchange="updateEseItem('${item.id}','cat',this.value)">${catOptsSelected}</select>
+          <select onchange="updateEseItem(${jsArg(item.id)},'cat',this.value)">${catOptsSelected}</select>
         </div>
         <div class="form-group">
           <label>Cartão / Origem</label>
-          <select onchange="updateEseItem('${item.id}','cartao',this.value)">${cardOptsSelected}</select>
+          <select onchange="updateEseItem(${jsArg(item.id)},'cartao',this.value)">${cardOptsSelected}</select>
         </div>
       </div>
     </div>`;
@@ -11659,7 +11659,7 @@ function openResgatarCofrinho(cofrinhoId){
   const saldoDisp=getSaldoCofrinho(cofrinhoId);
   const nomeCofr=cofr?cofr.name:'Cofrinho';
   const contaOpts = state.contas.length
-    ? state.contas.map(c=>`<option value="${c.id}">${contaLabelHTML(c)}</option>`).join('')
+    ? state.contas.map(c=>`<option value="${esc(c.id)}">${contaLabelHTML(c)}</option>`).join('')
     : `<option value="">— Cadastre uma conta primeiro —</option>`;
   document.getElementById('modalTitle').textContent='Resgatar do '+nomeCofr;
   const mesOpts=MONTHS.map((m,i)=>'<option value="'+(i+1)+'"'+(i+1===currentMonth?' selected':'')+'>'+m+'</option>').join('');
